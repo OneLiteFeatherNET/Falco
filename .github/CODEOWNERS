@@ -3,24 +3,23 @@
 # Two rules of this file are easy to get wrong, so they are spelled out here:
 #
 #  1. GitHub silently drops any owner that lacks write access to this
-#     repository. A rule naming a non-existent team or a read-only collaborator
-#     looks correct in review and does nothing. Every handle below is a current
-#     admin of this repository.
+#     repository. A rule naming a team without access looks correct in review and
+#     does nothing at all — no warning, no failed check. @OneLiteFeatherNET/falco-maintainers
+#     holds admin here, which is what makes the rules below take effect.
 #  2. Unlike .gitignore, the LAST matching rule wins. Order matters.
 #
-# Why handles and not a team: the sister repositories own their code through a
-# per-repository maintainers team (Cyano uses @OneLiteFeatherNET/cyano-maintainers,
-# Aves uses @OneLiteFeatherNET/aves-maintainers). Falco has no equivalent —
-# `falco-maintainers` does not exist in the organisation, and no team at all is
-# granted access to this repository, so a team entry would be ignored without a
-# warning. Once a `falco-maintainers` team exists and holds write access, it
-# should replace the handles below and this file falls back in line with the
-# rest of the organisation.
+# The team follows the convention of the sister repositories, which own their code
+# through a per-repository maintainers team: Cyano through cyano-maintainers, Aves
+# through aves-maintainers. Membership is managed on the team, not in this file, so
+# adding a maintainer never means editing CODEOWNERS.
+#
+# Verify after any change: `gh api repos/OneLiteFeatherNET/Falco/codeowners/errors`
+# returns an empty list when every owner here is honoured.
 
 # Default owners for everything, including the Java modules falco-anvil,
 # falco-light, falco-instance and falco-benchmarks, and the documentation under
 # docs/.
-*                               @TheMeinerLP @theEvilReaper
+*                               @OneLiteFeatherNET/falco-maintainers
 
 # Release, publishing and CI surface.
 #
@@ -32,13 +31,13 @@
 # of the shared OneLiteFeatherNET/workflows jobs that run with `secrets: inherit`.
 # A mistake here ships a broken or mis-versioned artefact instead of failing a
 # build, which is why they are pinned explicitly and not left to the default line
-# alone. The owners are the same as above today; the point is that widening the
+# alone. The owner is the same as above today; the point is that widening the
 # default to a broader team later must not silently widen who can approve a
 # release.
-/build.gradle.kts               @TheMeinerLP @theEvilReaper
-/settings.gradle.kts            @TheMeinerLP @theEvilReaper
-/gradle/wrapper/                @TheMeinerLP @theEvilReaper
-/release-please-config.json     @TheMeinerLP @theEvilReaper
-/.release-please-manifest.json  @TheMeinerLP @theEvilReaper
-/CHANGELOG.md                   @TheMeinerLP @theEvilReaper
-/.github/                       @TheMeinerLP @theEvilReaper
+/build.gradle.kts               @OneLiteFeatherNET/falco-maintainers
+/settings.gradle.kts            @OneLiteFeatherNET/falco-maintainers
+/gradle/wrapper/                @OneLiteFeatherNET/falco-maintainers
+/release-please-config.json     @OneLiteFeatherNET/falco-maintainers
+/.release-please-manifest.json  @OneLiteFeatherNET/falco-maintainers
+/CHANGELOG.md                   @OneLiteFeatherNET/falco-maintainers
+/.github/                       @OneLiteFeatherNET/falco-maintainers
