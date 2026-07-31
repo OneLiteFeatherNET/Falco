@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -162,6 +163,108 @@ class ChunkLightStateTest {
         assertEquals(0, state.get(9, 8, 8), "the new block itself carries no light");
         ChunkLightState fresh = ChunkLightState.blockLight(tables(sections));
         assertEquals(fresh.get(10, 8, 8), state.get(10, 8, 8));
+    }
+
+    @Test
+    void testRemovingABlockingBlockLetsTheLightThrough() {
+        // The mirror image of the case above, and the one an update gets wrong most easily: the
+        // position that opened up holds no light of its own, so a retraction finds nothing to follow
+        // and the sources around it are all still at the level they belong at. Nothing in the chunk
+        // moves unless the neighbours of the opened position are offered to the second pass.
+        // The wall stands six blocks away from the source rather than next to it, which is the part
+        // that matters: a second pass which only offers the sources again dies at their first
+        // neighbour, because that neighbour already carries the level it belongs at.
+        List<int[]> sections = airChunk(2);
+        sections.get(0)[index(2, 8, 8)] = LAMP;
+
+        for (int y = 0; y < LightNibbles.DIMENSION; y++) {
+            for (int z = 0; z < LightNibbles.DIMENSION; z++) {
+                sections.get(0)[index(8, y, z)] = STONE;
+            }
+        }
+        ChunkLightState state = ChunkLightState.blockLight(tables(sections));
+
+        assertEquals(0, state.get(8, 8, 8), "the wall starts out dark");
+        assertEquals(0, state.get(9, 8, 8), "and so does everything behind it");
+
+        sections.get(0)[index(8, 8, 8)] = AIR;
+        state.update(tables(sections), 8, 8, 8);
+
+        assertEquals(9, state.get(8, 8, 8), "the light has to reach the position that opened up");
+        assertEquals(8, state.get(9, 8, 8), "and it has to carry on behind it");
+    }
+
+    @Test
+    void testASequenceOfBlockChangesStillMatchesAFullRecalculation() {
+        // A fixed seed keeps the sequence reproducible while covering combinations no handwritten
+        // case would reach: sources placed and removed, walls raised in front of them and taken down
+        // again, and every one of those next to the ones before it.
+        Random random = new Random(20_260_731L);
+        List<int[]> sections = airChunk(2);
+        ChunkLightState state = ChunkLightState.blockLight(tables(sections));
+
+        for (int change = 0; change < 120; change++) {
+            int x = random.nextInt(LightNibbles.DIMENSION);
+            int y = random.nextInt(2 * LightNibbles.DIMENSION);
+            int z = random.nextInt(LightNibbles.DIMENSION);
+
+            sections.get(y >> 4)[index(x, y & 15, z)] = switch (random.nextInt(6)) {
+                case 0 -> LAMP;
+                case 1, 2, 3 -> STONE;
+                default -> AIR;
+            };
+            state.update(tables(sections), x, y, z);
+
+            ChunkLightState fresh = ChunkLightState.blockLight(tables(sections));
+
+            for (int level = 0; level < 2 * LightNibbles.DIMENSION; level++) {
+                for (int column = 0; column < LightNibbles.DIMENSION; column++) {
+                    for (int row = 0; row < LightNibbles.DIMENSION; row++) {
+                        assertEquals(fresh.get(row, level, column), state.get(row, level, column),
+                                "mismatch at " + row + "/" + level + "/" + column
+                                        + " after change " + change + " at " + x + "/" + y + "/" + z);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void testACopyHoldsTheSameLightAndIsIndependent() {
+        List<int[]> sections = airChunk(2);
+        sections.get(0)[index(8, 8, 8)] = LAMP;
+        ChunkLightState state = ChunkLightState.blockLight(tables(sections));
+
+        ChunkLightState copy = state.copy();
+
+        assertEquals(15, copy.get(8, 8, 8));
+        assertEquals(14, copy.get(9, 8, 8));
+
+        sections.get(0)[index(8, 8, 8)] = AIR;
+        copy.update(tables(sections), 8, 8, 8);
+
+        assertEquals(0, copy.get(8, 8, 8), "the copy follows the change");
+        assertEquals(15, state.get(8, 8, 8), "and the state it came from does not");
+    }
+
+    @Test
+    void testACopiedSkyStateKeepsItsOwnHeightmap() {
+        // The heightmap is the one piece of a sky state that is not the light itself, so a copy that
+        // shared it would let an update of one state move the other one's idea of where the sky ends.
+        List<int[]> sections = airChunk(2);
+        ChunkLightState state = ChunkLightState.skyLight(tables(sections));
+        ChunkLightState copy = state.copy();
+
+        sections.get(1)[index(8, 4, 8)] = STONE;
+        copy.update(tables(sections), 8, 20, 8);
+
+        assertEquals(0, copy.get(8, 20, 8));
+        assertEquals(15, state.get(8, 20, 8), "the state the copy came from must not have moved");
+
+        state.update(tables(sections), 8, 20, 8);
+
+        assertEquals(0, state.get(8, 20, 8), "and it has to be able to follow the same change itself");
+        assertEquals(14, state.get(8, 19, 8));
     }
 
     @Test

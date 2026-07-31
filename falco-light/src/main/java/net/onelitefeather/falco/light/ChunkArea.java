@@ -28,12 +28,12 @@ import java.util.Set;
  * </p>
  * <p>
  * <b>An area has an upper bound, and the bound is not optional.</b> Lighting an area keeps one
- * {@link ChunkLightState} per chunk, and such a state is roughly 980 KB of buffers. A build spread
- * across a hundred connected chunks would form a single area of about a hundred megabytes plus the
- * ring around it, which is a memory profile no server can absorb inside a tick. The flood fill
- * therefore stops adding to an area once it holds the maximum, and the chunks which are left over
- * start the next one. The seam between the two parts settles on the following tick, because each
- * part reads the other as part of its ring.
+ * {@link ChunkLightState} per chunk and per ring chunk, reads the block states of every one of them
+ * and builds their opacity tables, all inside a single tick. A build spread across a hundred
+ * connected chunks would do that for well over a hundred chunks at once, which is not a cost a tick
+ * can absorb. The flood fill therefore stops adding to an area once it holds the maximum, and the
+ * chunks which are left over start the next one. The seam between the two parts settles on the
+ * following tick, because each part reads the other as part of its ring.
  * </p>
  * <p>
  * This type is experimental. The light engine is new and its API may still change.

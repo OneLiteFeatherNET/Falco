@@ -52,14 +52,25 @@ public final class ChunkLightState {
      */
     private static final int OPEN_COLUMN = -1;
 
+    /**
+     * The amount of entries the working queues start with.
+     * <p>
+     * A queue sized for one entry per position would be correct and would cost about 860 KB per
+     * state, which is nine tenths of everything a state occupies — for buffers that an update of a
+     * single block fills a few dozen entries of. They therefore start small and grow, which is what
+     * makes a state cheap enough to be kept between two passes rather than thrown away after each.
+     * </p>
+     */
+    private static final int INITIAL_QUEUE_SIZE = 1024;
+
     private final byte[] levels;
     private final int sectionCount;
     private final int height;
     private final boolean sky;
     private final int[] skyTop;
 
-    private final int[] removalQueue;
-    private final byte[] removalLevels;
+    private int[] removalQueue;
+    private byte[] removalLevels;
     private int[] additionQueue;
 
     /**
@@ -76,11 +87,35 @@ public final class ChunkLightState {
         this.height = sectionCount * LightNibbles.DIMENSION;
         this.sky = sky;
         this.skyTop = skyTop;
-        this.removalQueue = new int[levels.length];
-        this.removalLevels = new byte[levels.length];
-        this.additionQueue = new int[levels.length];
+        this.removalQueue = new int[INITIAL_QUEUE_SIZE];
+        this.removalLevels = new byte[INITIAL_QUEUE_SIZE];
+        this.additionQueue = new int[INITIAL_QUEUE_SIZE];
     }
 
+    /**
+     * Returns an independent state which holds the same light as this one.
+     * <p>
+     * This is what lets a computed light be kept and updated instead of being calculated again. A
+     * border exchange raises the levels of everything it touches, so the state it runs on is no
+     * longer the light of that chunk alone and cannot serve as the starting point of the next
+     * update. The kept state stays untouched and the exchange runs on a copy of it.
+     * </p>
+     * <p>
+     * The working queues are not copied. They hold nothing between two calls, and a copy which
+     * carried them would defeat the point of keeping the state small.
+     * </p>
+     *
+     * @return a copy which shares nothing with this state
+     */
+    @Contract(pure = true)
+    public ChunkLightState copy() {
+        return new ChunkLightState(
+                this.levels.clone(),
+                this.sectionCount,
+                this.sky,
+                this.skyTop.length == 0 ? NO_HEIGHTMAP : this.skyTop.clone()
+        );
+    }
 
     /**
      * Makes room for one more entry in the addition queue.
@@ -96,6 +131,18 @@ public final class ChunkLightState {
     private void ensureRoom(int tail) {
         if (tail == this.additionQueue.length) {
             this.additionQueue = java.util.Arrays.copyOf(this.additionQueue, this.additionQueue.length * 2);
+        }
+    }
+
+    /**
+     * Makes room for one more entry in the retraction queue.
+     *
+     * @param tail the amount of entries the queue currently holds
+     */
+    private void ensureRemovalRoom(int tail) {
+        if (tail == this.removalQueue.length) {
+            this.removalQueue = java.util.Arrays.copyOf(this.removalQueue, this.removalQueue.length * 2);
+            this.removalLevels = java.util.Arrays.copyOf(this.removalLevels, this.removalLevels.length * 2);
         }
     }
 
@@ -204,6 +251,15 @@ public final class ChunkLightState {
 
     /**
      * Updates the light after the block at the given position changed.
+     * <p>
+     * The neighbours of the changed position are handed to the second pass together with the
+     * sources of the chunk, and that is not redundant. A block which stops blocking light holds none
+     * of its own, so the retraction finds nothing to follow, and offering the sources again reaches
+     * nothing either: their neighbours already carry exactly the level they belong at, so the search
+     * stops at the first of them and never travels the six blocks to the position that opened up.
+     * The position is only filled by the light standing right next to it, which is what these seeds
+     * are.
+     * </p>
      *
      * @param sections the light properties of every section, reflecting the change
      * @param x        the x coordinate inside the chunk
@@ -218,7 +274,7 @@ public final class ChunkLightState {
 
         int additions = retract(seedRemoval(0, index(x, y, z)));
         additions = seedEmission(sections, additions);
-        spread(sections, additions);
+        spread(sections, seedNeighbours(additions, x, y, z));
     }
 
     /**
@@ -276,6 +332,7 @@ public final class ChunkLightState {
      * @return the amount of queued positions
      */
     private int seedRemoval(int queued, int index) {
+        ensureRemovalRoom(queued);
         this.removalQueue[queued] = index;
         this.removalLevels[queued] = this.levels[index];
         this.levels[index] = 0;
@@ -291,6 +348,10 @@ public final class ChunkLightState {
      */
     private int seedSky(int queued, int index) {
         this.levels[index] = LightNibbles.MAX_LEVEL;
+        // Guarded like every other write into the queue since it stopped being sized for the whole
+        // chunk. A column which opens up cannot follow a retraction in the same call, so no reachable
+        // path arrives here with a full queue — which is a reason to keep the guard, not to drop it.
+        ensureRoom(queued);
         this.additionQueue[queued] = index;
         return queued + 1;
     }
@@ -372,6 +433,7 @@ public final class ChunkLightState {
                     continue;
                 }
                 if (level < removed) {
+                    ensureRemovalRoom(removalTail);
                     this.removalQueue[removalTail] = neighbourIndex;
                     this.removalLevels[removalTail++] = (byte) level;
                     this.levels[neighbourIndex] = 0;

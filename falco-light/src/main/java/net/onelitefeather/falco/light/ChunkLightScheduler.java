@@ -12,14 +12,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Predicate;
 
 /**
  * The {@link ChunkLightScheduler} class turns "a block changed somewhere" into "the light of that
@@ -53,6 +51,16 @@ import java.util.function.Predicate;
  * the update flag of the section and a wrong result would never be recomputed.
  * </p>
  * <p>
+ * <b>A changed block costs a changed block, not nine chunks.</b> The position of every block change
+ * is handed to the area together with the mark, and the area replays it on the light it already
+ * holds for that chunk instead of searching the chunk again. The eight chunks around it are marked
+ * as well, because light crosses borders, but nothing of theirs is thrown away: their own blocks did
+ * not move, and what reaches them across the border is derived again by every pass anyway. A change
+ * that cannot be placed — a chunk that was generated, loaded, or written past {@code setBlock} —
+ * goes through {@link #markChanged(Instance, int, int)} and is lit from the block states, which is
+ * what every change did before.
+ * </p>
+ * <p>
  * <b>One scheduler belongs to one instance.</b> The dirty set is keyed by chunk coordinates alone,
  * and every instance of a server ticks with the same timestamp, so a scheduler shared between two
  * instances would light the wrong chunks and would run its pass for only one of them per tick.
@@ -73,8 +81,10 @@ public final class ChunkLightScheduler {
     /**
      * The amount of chunks a single area holds at most when no other value is given.
      * <p>
-     * One {@link ChunkLightState} is roughly 980 KB of buffers, so sixteen chunks plus their ring
-     * is about the largest allocation that still fits comfortably inside a tick.
+     * One {@link ChunkLightState} is roughly 100 KB at the height of an overworld chunk, so sixteen
+     * chunks plus their ring is a few megabytes of working memory per pass — which is what an area
+     * this size is chosen against, since every chunk of it is also read and turned into opacity
+     * tables inside one tick.
      * </p>
      */
     public static final int DEFAULT_MAX_AREA_SIZE = 16;
@@ -83,6 +93,16 @@ public final class ChunkLightScheduler {
      * The tick timestamp of a scheduler that has never run a pass.
      */
     private static final long NEVER = Long.MIN_VALUE;
+
+    /**
+     * The amount of chunks a change reaches beyond the chunk it happened in.
+     * <p>
+     * A light level of fifteen drops to nothing after fifteen blocks and a chunk is sixteen blocks
+     * wide, so a change can raise or lower the light of the eight chunks around its own and of no
+     * chunk further out.
+     * </p>
+     */
+    private static final int AFFECTED_RADIUS = 1;
 
     private final ChunkLightArea area;
     private final Executor executor;
@@ -108,15 +128,29 @@ public final class ChunkLightScheduler {
      * @param service     the service which computes and writes the light
      * @param executor    the executor which runs one area per task
      * @param maxAreaSize the largest amount of chunks a single area may hold
-     * @throws IllegalArgumentException if the given area size is smaller than one
+     * @param maxCachedChunks the amount of chunks whose light is kept between two passes
+     * @throws IllegalArgumentException if the given area size is smaller than one or the given
+     *                                  amount of kept chunks is negative
      */
-    public ChunkLightScheduler(ChunkLightService service, Executor executor, int maxAreaSize) {
+    public ChunkLightScheduler(ChunkLightService service, Executor executor, int maxAreaSize, int maxCachedChunks) {
         if (maxAreaSize < 1) {
             throw new IllegalArgumentException("An area has to be able to hold at least one chunk but the cap was " + maxAreaSize);
         }
-        this.area = new ChunkLightArea(service);
+        this.area = new ChunkLightArea(service, maxCachedChunks);
         this.executor = executor;
         this.maxAreaSize = maxAreaSize;
+    }
+
+    /**
+     * Creates a scheduler which submits its areas to the given executor.
+     *
+     * @param service     the service which computes and writes the light
+     * @param executor    the executor which runs one area per task
+     * @param maxAreaSize the largest amount of chunks a single area may hold
+     * @throws IllegalArgumentException if the given area size is smaller than one
+     */
+    public ChunkLightScheduler(ChunkLightService service, Executor executor, int maxAreaSize) {
+        this(service, executor, maxAreaSize, ChunkLightArea.DEFAULT_MAX_CACHED_CHUNKS);
     }
 
     /**
@@ -176,6 +210,12 @@ public final class ChunkLightScheduler {
      * "nothing changed" — which would clear a chunk from the dirty set on the strength of a result
      * that is already wrong.
      * </p>
+     * <p>
+     * This says that a chunk changed without saying where, so the light kept for it is thrown away
+     * and the chunk is searched again. A caller which knows the position should say so through
+     * {@link #markChanged(Instance, int, int, int, int, int)} instead; this method marks the given
+     * chunk alone and leaves the eight around it to the caller, which is what it always did.
+     * </p>
      *
      * @param instance the instance the chunk belongs to
      * @param chunkX   the chunk x coordinate
@@ -184,7 +224,117 @@ public final class ChunkLightScheduler {
      */
     public void markDirty(Instance instance, int chunkX, int chunkZ) {
         bind(instance);
-        this.dirty.merge(new ChunkArea(chunkX, chunkZ), 1L, Long::sum);
+        ChunkArea position = new ChunkArea(chunkX, chunkZ);
+        // Nothing says which blocks moved, so the light of that chunk cannot be carried over.
+        this.area.forget(position);
+        this.dirty.merge(position, 1L, Long::sum);
+    }
+
+    /**
+     * Reports that the blocks of the given chunk changed without saying which ones.
+     * <p>
+     * This is what a chunk that was generated, loaded or written past {@code setBlock} reports. The
+     * light of the chunk is thrown away rather than guessed at, which costs one search of that chunk
+     * and is the only honest answer: light is written with the update flag of the section cleared,
+     * so a wrong guess here would never be corrected by anybody.
+     * </p>
+     *
+     * @param instance the instance the chunk belongs to
+     * @param chunkX   the chunk x coordinate
+     * @param chunkZ   the chunk z coordinate
+     * @throws IllegalStateException if the scheduler is already serving another instance
+     */
+    public void markChanged(Instance instance, int chunkX, int chunkZ) {
+        bind(instance);
+        this.area.forget(new ChunkArea(chunkX, chunkZ));
+        markNeighbourhood(chunkX, chunkZ);
+    }
+
+    /**
+     * Reports that one block of the given chunk changed.
+     * <p>
+     * This is the entry point that makes a placed torch cost a torch rather than nine chunks. The
+     * position is handed to the area, which replays it on the light it already has instead of
+     * searching the chunk again, and reaches the same result either way.
+     * </p>
+     * <p>
+     * The position is recorded <em>before</em> the chunks are marked, and that order is not
+     * cosmetic. A pass reads the revision of a chunk before it takes the recorded positions, so a
+     * position which is recorded first is either already in the list the pass takes or belongs to a
+     * revision the pass will see as newer and discard. The other order leaves a window in which a
+     * change is invisible to both, which would be committed as if it had never happened.
+     * </p>
+     *
+     * @param instance the instance the chunk belongs to
+     * @param chunkX   the chunk x coordinate
+     * @param chunkZ   the chunk z coordinate
+     * @param x        the x coordinate of the changed block
+     * @param y        the y coordinate of the changed block
+     * @param z        the z coordinate of the changed block
+     * @throws IllegalStateException if the scheduler is already serving another instance
+     */
+    public void markChanged(Instance instance, int chunkX, int chunkZ, int x, int y, int z) {
+        bind(instance);
+        ChunkArea position = new ChunkArea(chunkX, chunkZ);
+        int columnY = y - instance.getCachedDimensionType().minY();
+
+        if (columnY < 0 || columnY >= instance.getCachedDimensionType().height()) {
+            this.area.forget(position);
+        } else {
+            this.area.recordChange(position, x & 15, columnY, z & 15);
+        }
+        markNeighbourhood(chunkX, chunkZ);
+    }
+
+    /**
+     * Marks the given chunk and the eight around it as needing light.
+     * <p>
+     * Marking only the chunk that changed would leave a seam: a lamp on the eastern edge of a chunk
+     * belongs in the light of the chunk east of it, and that chunk would never be told. The ring
+     * around an area is read but never written, precisely because a ring chunk is missing the light
+     * from beyond it — so a chunk which has to change has to be part of an area, not part of a ring.
+     * </p>
+     * <p>
+     * The eight neighbours are marked but nothing of theirs is thrown away. Their own blocks did not
+     * move, so the light they carry is still the light of those blocks; all that changed for them is
+     * what arrives across the border, and that is derived again by every pass anyway.
+     * </p>
+     *
+     * @param chunkX the chunk x coordinate of the chunk that changed
+     * @param chunkZ the chunk z coordinate of the chunk that changed
+     */
+    private void markNeighbourhood(int chunkX, int chunkZ) {
+        for (int offsetZ = -AFFECTED_RADIUS; offsetZ <= AFFECTED_RADIUS; offsetZ++) {
+            for (int offsetX = -AFFECTED_RADIUS; offsetX <= AFFECTED_RADIUS; offsetX++) {
+                this.dirty.merge(new ChunkArea(chunkX + offsetX, chunkZ + offsetZ), 1L, Long::sum);
+            }
+        }
+    }
+
+    /**
+     * Returns how many chunks this scheduler has lit from scratch since it was created.
+     * <p>
+     * A number that keeps growing while the same chunks are being edited means the incremental path
+     * is not being taken, which is worth knowing before anything else about the light is measured.
+     * </p>
+     *
+     * @return the amount of chunks which were searched rather than updated
+     */
+    @Contract(pure = true)
+    public long fullPropagations() {
+        return this.area.fullPropagations();
+    }
+
+    /**
+     * Returns the revision the given chunk is currently at.
+     *
+     * @param position the chunk to look up
+     * @return the amount of times the chunk was marked, or {@link ChunkLightArea#CLEAN} if it is not
+     *         waiting for light at all
+     */
+    @Contract(pure = true)
+    private long revisionOf(ChunkArea position) {
+        return this.dirty.getOrDefault(position, ChunkLightArea.CLEAN);
     }
 
     /**
@@ -260,14 +410,13 @@ public final class ChunkLightScheduler {
             Map<ChunkArea, Long> recorded = new HashMap<>(group.size());
 
             for (ChunkArea position : group) {
-                recorded.put(position, this.dirty.getOrDefault(position, NEVER));
+                recorded.put(position, this.dirty.getOrDefault(position, ChunkLightArea.CLEAN));
             }
-            Predicate<ChunkArea> unchanged = position -> Objects.equals(this.dirty.get(position), recorded.get(position));
 
-            List<ChunkArea> written = this.area.compute(instance, group, false, unchanged);
+            List<ChunkArea> written = this.area.computeIncrementally(instance, group, false, this::revisionOf);
 
             if (instance.getCachedDimensionType().hasSkylight()) {
-                this.area.compute(instance, group, true, unchanged);
+                this.area.computeIncrementally(instance, group, true, this::revisionOf);
             }
 
             for (ChunkArea position : written) {

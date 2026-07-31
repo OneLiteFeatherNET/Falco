@@ -39,6 +39,12 @@ import org.jetbrains.annotations.Nullable;
  * finds it in one place rather than spread across a chunk and a scheduler.
  * </p>
  * <p>
+ * <b>What it reports is a position, not just a chunk.</b> {@code setBlock} knows exactly which block
+ * moved, and handing that on is what lets the engine replay one position instead of searching nine
+ * chunks. A chunk that arrives from a generator or a loader has no such position to offer, so
+ * {@code onLoad} reports the change as one of unknown extent and pays for one search of the chunk.
+ * </p>
+ * <p>
  * <b>{@code createLightData} is deliberately not overridden.</b> It reads the sections, and those
  * are exactly what the light is written into, so the inherited implementation already returns the
  * current state and already never blocks. An override would add a second path to the same data with
@@ -73,17 +79,6 @@ import org.jetbrains.annotations.Nullable;
 @ApiStatus.Experimental
 public class FalcoLightingChunk extends DynamicChunk implements LightUpdateAware {
 
-    /**
-     * The amount of chunks a change reaches beyond the chunk it happened in.
-     * <p>
-     * A light level of fifteen drops to nothing after fifteen blocks, and a chunk is sixteen blocks
-     * wide, so a change can raise or lower the light of the eight chunks around its own and of no
-     * chunk further out. This is the same radius {@code ChunkLightService} uses for its
-     * neighbourhood and it holds for the same reason.
-     * </p>
-     */
-    private static final int AFFECTED_RADIUS = 1;
-
     private final ChunkLightScheduler scheduler;
 
     /**
@@ -110,12 +105,27 @@ public class FalcoLightingChunk extends DynamicChunk implements LightUpdateAware
         this.scheduler = scheduler;
     }
 
+    /**
+     * Reports the changed position, which is what lets the light be updated rather than searched.
+     * <p>
+     * The block is written first and reported afterwards, so a pass which reads the block states of
+     * this chunk between the two either sees the new block and the position, or neither, and never
+     * the block without the position.
+     * </p>
+     *
+     * @param x         the x coordinate of the block
+     * @param y         the y coordinate of the block
+     * @param z         the z coordinate of the block
+     * @param block     the block to place
+     * @param placement the placement rule of the block, or null if there is none
+     * @param destroy   the destroy rule of the replaced block, or null if there is none
+     */
     @Override
     public void setBlock(int x, int y, int z, Block block,
                          @Nullable BlockHandler.Placement placement,
                          @Nullable BlockHandler.Destroy destroy) {
         super.setBlock(x, y, z, block, placement, destroy);
-        reportChanged();
+        this.scheduler.markChanged(this.instance, this.chunkX, this.chunkZ, x, y, z);
     }
 
     /**
@@ -126,33 +136,15 @@ public class FalcoLightingChunk extends DynamicChunk implements LightUpdateAware
      * generator. The neighbours are reported with it, because a chunk that appears next to an
      * already lit one can send light into it that was not there when it was lit.
      * </p>
+     * <p>
+     * The blocks of a freshly generated chunk arrive without passing {@code setBlock}, so this is
+     * reported as a change of an unknown extent and the chunk is lit from its block states once.
+     * </p>
      */
     @Override
     protected void onLoad() {
         super.onLoad();
-        reportChanged();
-    }
-
-    /**
-     * Reports this chunk and the eight chunks around it as needing light.
-     * <p>
-     * Marking only the chunk that changed would leave a seam: a lamp on the eastern edge of a chunk
-     * belongs in the light of the chunk east of it, and that chunk would never be told. The ring
-     * around an area is read but never written, precisely because a ring chunk is missing the light
-     * from beyond it — so a chunk which has to change has to be part of an area, not part of a ring.
-     * </p>
-     * <p>
-     * The nine chunks are face connected as a block, so they form one area rather than nine, and the
-     * whole neighbourhood is read once instead of nine times. Two changes in nearby chunks in the
-     * same tick merge into a single larger area for the same reason.
-     * </p>
-     */
-    private void reportChanged() {
-        for (int offsetZ = -AFFECTED_RADIUS; offsetZ <= AFFECTED_RADIUS; offsetZ++) {
-            for (int offsetX = -AFFECTED_RADIUS; offsetX <= AFFECTED_RADIUS; offsetX++) {
-                this.scheduler.markDirty(this.instance, this.chunkX + offsetX, this.chunkZ + offsetZ);
-            }
-        }
+        this.scheduler.markChanged(this.instance, this.chunkX, this.chunkZ);
     }
 
     @Override
