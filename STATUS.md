@@ -140,6 +140,23 @@ Verified against the sources or by running probe code. Knowing these prevents re
   `FalcoAnvilLoader#resolveRegionDirectory` handles both layouts. Found while building falco-demo,
   where a comparison that missed this would have reported a fictional speedup.
 
+**Two things this project ships that cannot be used together**
+- **`FalcoInstance` and `FalcoLightingChunk` are mutually exclusive.** `FalcoInstance` refuses any
+  chunk which is not a `FalcoChunk`, because `Chunk#onLoad` and `#unload` are package-private and
+  `FalcoChunk` exists to reopen them. `FalcoLightingChunk` extends `DynamicChunk`. Handing a
+  `FalcoInstance` the supplier of a `ChunkLightScheduler` therefore fails on the first chunk it
+  loads, not at startup. Either run the self-maintaining light on an `InstanceContainer`, or run a
+  `FalcoInstance` and drive `ChunkLightService` yourself. Found while building the demo servers; the
+  two features were developed separately and never met until then.
+- The way out would be a chunk that is both, which means either `FalcoChunk` growing the light
+  behaviour or `FalcoLightingChunk` growing the reopened hooks. Neither is written.
+
+**Which client speaks to which server**
+- Minestom `2026.06.20-26.1.2` is Minecraft **26.1.2**, protocol **775**. Read from
+  `MinecraftConstants` with `javap -constants` and confirmed against a real server list ping. It is
+  worth writing down because nothing in the dependency coordinate says so, and a mismatched client
+  fails with a message that names neither side.
+
 **What can and cannot be replaced**
 - `Palette` is `sealed ... permits PaletteImpl`. A foreign implementation is a hard compiler error,
   and `Section` is a record holding that exact type. Verified with javac and at runtime.
