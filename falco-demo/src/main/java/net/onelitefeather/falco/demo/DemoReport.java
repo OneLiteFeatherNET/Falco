@@ -209,9 +209,9 @@ public final class DemoReport {
     public static String missingWorld(Path worldsDirectory, WorldSearchResult.Missing missing) {
         StringBuilder report = new StringBuilder();
 
-        heading(report, "Falco chunk loading demo — nothing to measure");
+        heading(report, "Falco demo — there is no world to read");
         report.append('\n');
-        report.append("No world was measured, because ").append(missing.reason()).append(".\n");
+        report.append("Nothing was loaded, because ").append(missing.reason()).append(".\n");
         report.append('\n');
         report.append("Where the world goes\n");
         bullet(report, "Copy your world folder into " + worldsDirectory + " so that the result looks like "
@@ -223,12 +223,53 @@ public final class DemoReport {
         bullet(report, "Keep exactly one world in there. The demo will not guess between two.");
         bullet(report, "Nothing in that directory is ever committed; it is excluded by its own .gitignore.");
         report.append('\n');
-        report.append("Then run one of\n");
+        report.append("Then run one of the measurements\n");
         bullet(report, "./gradlew :falco-demo:runFalcoLoader");
         bullet(report, "./gradlew :falco-demo:runMinestomLoader");
         report.append('\n');
         report.append("Both accept -Pthreads=<n>, -Pchunks=<n>, -Pwarmup=<n>, -Prounds=<n> and\n");
-        report.append("-Pdimension=<key>. See falco-demo/README.md.\n");
+        report.append("-Pdimension=<key>.\n");
+        report.append('\n');
+        report.append("Or start a server and look at the world yourself\n");
+        bullet(report, "./gradlew :falco-demo:runFalcoServer");
+        bullet(report, "./gradlew :falco-demo:runMinestomServer");
+        report.append('\n');
+        report.append("Both accept -Pport=<n>, -PviewDistance=<n>, -Pdimension=<key> and\n");
+        report.append("-Preport=<seconds>. See falco-demo/README.md.\n");
+        report.append('\n');
+        rule(report);
+        return report.toString();
+    }
+
+    /**
+     * Renders the message for a server run whose command line could not be used.
+     * <p>
+     * Kept apart from {@link #invalidOptions(String)} because the two runs accept different options,
+     * and a list which mixed them would send the reader looking for a {@code -Pthreads} the server
+     * does not have.
+     * </p>
+     *
+     * @param message the reason the command line was refused
+     * @return the message, ready to be printed
+     */
+    public static String invalidServerOptions(String message) {
+        StringBuilder report = new StringBuilder();
+
+        heading(report, "Falco demo server — the server was not started");
+        report.append('\n');
+        report.append(message).append(".\n");
+        report.append('\n');
+        report.append("Accepted options, all of them optional except the stack\n");
+        bullet(report, "--stack=falco|minestom    which stack to run");
+        bullet(report, "--port=<n>                the port to listen on, default " + ServerOptions.DEFAULT_PORT);
+        bullet(report, "--dimension=<key>         default " + ServerOptions.DEFAULT_DIMENSION.asString());
+        bullet(report, "--report=<seconds>        seconds between two log lines, default "
+                + ServerOptions.DEFAULT_REPORT_INTERVAL_SECONDS);
+        report.append('\n');
+        report.append("Through gradle the same options are -Pport, -Pdimension and -Preport; the\n");
+        report.append("stack is chosen by the task. The view distance is -PviewDistance, which the\n");
+        report.append("task turns into the system property minestom.chunk-view-distance because\n");
+        report.append("Minestom reads it before any command line of ours could be applied.\n");
         report.append('\n');
         rule(report);
         return report.toString();

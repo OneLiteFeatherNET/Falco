@@ -11,6 +11,14 @@ dependencies {
     // with, so it needs Minestom on the runtime classpath. `implementation` gives it both.
     implementation(platform(libs.mycelium.bom))
     implementation(project(":falco-anvil"))
+    // The Falco server hands its instance a FalcoLightingChunk through ChunkLightScheduler, which is
+    // the half of the stack the loader cannot show: whether the light of a streamed-in chunk is
+    // right is the first thing anybody looks at while flying.
+    implementation(project(":falco-light"))
+    // Not used to run anything. FalcoInstance is named in the log and in the javadoc of ServerStack
+    // as the component this demo deliberately leaves out, and a reader following that explanation
+    // should land in the real type rather than in a string that was accurate when it was written.
+    implementation(project(":falco-instance"))
     implementation(libs.minestom)
     implementation(libs.slf4j.api)
 
@@ -90,4 +98,66 @@ tasks.register<JavaExec>("runFalcoLoader") {
 tasks.register<JavaExec>("runMinestomLoader") {
     configureDemo("minestom")
     description = "Measures chunk loading from falco-demo/world with net.minestom.server.instance.anvil.AnvilLoader."
+}
+
+// The second half of the module: a server somebody can join and judge by eye. It shares the world,
+// the toolchain and the option style with the measurement above, and for the same reason the two
+// measurement tasks share theirs — the comparison is only worth something if the two servers differ
+// in the stack and in nothing else, so everything except --stack is configured once here.
+val serverMain = "net.onelitefeather.falco.demo.DemoServer"
+
+// The view distance decides how many chunks are streamed at all and is therefore the condition the
+// whole session is read under. It has to be the same on both servers, which is why it is set here
+// and not per task.
+//
+// It travels as a jvm system property rather than as a command line argument, and that is forced by
+// Minestom: ServerFlag.CHUNK_VIEW_DISTANCE is a static final read from minestom.chunk-view-distance
+// when the class is initialised, which happens before main could apply anything. A -PviewDistance
+// that only reached our own option parser would be printed in the log while the server used eight.
+val viewDistance = providers.gradleProperty("viewDistance").orElse("10")
+
+fun JavaExec.configureServer(stack: String) {
+    group = demoGroup
+    mainClass.set(serverMain)
+    classpath = mainSourceSet.get().runtimeClasspath
+    javaLauncher.set(toolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(25))
+    })
+
+    systemProperty("falco.demo.world", layout.projectDirectory.dir("world").asFile.absolutePath)
+    systemProperty("minestom.chunk-view-distance", viewDistance.get())
+
+    // src/main/resources/simplelogger.properties turns the level down to warn, because the report of
+    // a measurement must not be buried under the registry start. A server is the opposite case: its
+    // output *is* the result, and Minestom's own startup lines are part of what tells the user that
+    // it came up. A system property wins over the properties file in slf4j-simple.
+    systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "info")
+    systemProperty("org.slf4j.simpleLogger.showDateTime", "true")
+    systemProperty("org.slf4j.simpleLogger.dateTimeFormat", "HH:mm:ss")
+
+    argumentProviders.add(CommandLineArgumentProvider {
+        val options = mutableListOf("--stack=$stack")
+        for (name in listOf("port", "dimension", "report")) {
+            providers.gradleProperty(name).orNull?.let { options += "--$name=$it" }
+        }
+        options
+    })
+
+    // Unlike the measurement, where a non-zero status really is a defect, the normal way to end a
+    // server is a signal — and a signal leaves the jvm at 130 or 143 no matter how cleanly it shut
+    // down. Without this, every session that was stopped with ctrl-c would end in a red BUILD
+    // FAILED under the shutdown lines that say the loader closed properly. A genuine failure still
+    // prints its stack trace to this console, which is the output somebody watching a server reads
+    // anyway.
+    isIgnoreExitValue = true
+}
+
+tasks.register<JavaExec>("runFalcoServer") {
+    configureServer("falco")
+    description = "Runs a joinable server on falco-demo/world with the Falco loader and the Falco light engine."
+}
+
+tasks.register<JavaExec>("runMinestomServer") {
+    configureServer("minestom")
+    description = "Runs a joinable server on falco-demo/world with Minestom's own AnvilLoader and LightingChunk."
 }

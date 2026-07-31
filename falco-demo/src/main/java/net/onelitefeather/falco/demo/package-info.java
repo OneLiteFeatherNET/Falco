@@ -1,9 +1,27 @@
 /**
- * A runnable comparison of the two Anvil chunk loaders on a world the user supplies.
+ * A runnable comparison of the Falco and the Minestom chunk stack on a world the user supplies, in
+ * two forms: a headless measurement and a server to walk into.
  * <p>
- * The entry point is {@link net.onelitefeather.falco.demo.ChunkLoadDemo}. It is started by the two
- * gradle tasks {@code runFalcoLoader} and {@code runMinestomLoader}, which differ in nothing but the
- * loader they hand to the identical measurement, so the two outputs can be put next to each other.
+ * The entry point of the measurement is {@link net.onelitefeather.falco.demo.ChunkLoadDemo}. It is
+ * started by the two gradle tasks {@code runFalcoLoader} and {@code runMinestomLoader}, which differ
+ * in nothing but the loader they hand to the identical measurement, so the two outputs can be put
+ * next to each other.
+ * </p>
+ * <p>
+ * The entry point of the server is {@link net.onelitefeather.falco.demo.DemoServer}, started by
+ * {@code runFalcoServer} and {@code runMinestomServer}. It exists because the measurement answers a
+ * question nobody plays: a reproducible figure over a fixed list of chunks says nothing about
+ * whether a world streams in smoothly while flying, whether the light is where it belongs, and
+ * whether the server keeps its tick while doing it. {@link net.onelitefeather.falco.demo.ServerStack}
+ * is the single place the two servers differ, {@link net.onelitefeather.falco.demo.TimingChunkLoader}
+ * measures the one call they differ in, {@link net.onelitefeather.falco.demo.LiveMetrics} and
+ * {@link net.onelitefeather.falco.demo.SampleWindow} keep the outliers a mean would remove, and
+ * {@link net.onelitefeather.falco.demo.LiveStatusLine} puts them where somebody flying can see them.
+ * </p>
+ * <p>
+ * The two halves are kept side by side on purpose. The measurement is reproducible and says nothing
+ * about how a world feels; the server is an impression and cannot be quoted. Neither replaces the
+ * other.
  * </p>
  * <p>
  * The types around it exist because the interesting part of a measurement is everything that is not
