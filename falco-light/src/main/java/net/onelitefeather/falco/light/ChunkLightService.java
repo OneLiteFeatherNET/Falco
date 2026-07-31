@@ -110,16 +110,23 @@ public final class ChunkLightService {
      * @param chunk the chunk to light
      */
     public void calculate(Chunk chunk) {
-        apply(chunk, new ChunkLightPropagator().propagate(opacityOf(chunk)), false);
+        applyLight(chunk, new ChunkLightPropagator().propagate(opacityOf(chunk)), false);
     }
 
     /**
      * Builds the opacity table of every section of the given chunk.
+     * <p>
+     * This is one half of the seam a scheduler builds on. Reading the block states of a chunk and
+     * turning them into opacity tables is the expensive part of the whole operation, and anything
+     * that lights more than one chunk at a time has to do it once per chunk rather than once per
+     * calculation. Exposing the step keeps that code in one place instead of copying it into every
+     * caller that needs a {@link ChunkLightState} of its own.
+     * </p>
      *
      * @param chunk the chunk to read
      * @return the opacity table of every section
      */
-    private List<SectionOpacity> opacityOf(Chunk chunk) {
+    public List<SectionOpacity> opacityOf(Chunk chunk) {
         List<int[]> states = readStates(chunk);
         List<SectionOpacity> opacity = new ArrayList<>(states.size());
 
@@ -131,12 +138,23 @@ public final class ChunkLightService {
 
     /**
      * Writes the calculated light into the sections of the given chunk.
+     * <p>
+     * This is the other half of the seam a scheduler builds on. A caller which computed the light
+     * of several chunks together hands every result over through this method, so the write path is
+     * the same one the service itself uses and a change to it cannot fall out of step.
+     * </p>
+     * <p>
+     * The write goes through {@link net.minestom.server.instance.light.Light#set(byte[])}, which
+     * also clears the update flag of the section. The server therefore does not recompute what was
+     * written here — a wrong result is never corrected on its own, which is why every caller of
+     * this method is covered by a test.
+     * </p>
      *
      * @param chunk the chunk which receives the light
      * @param light the calculated light of every section
      * @param sky   whether the sky light is written instead of the block light
      */
-    private static void apply(Chunk chunk, List<LightNibbles> light, boolean sky) {
+    public static void applyLight(Chunk chunk, List<LightNibbles> light, boolean sky) {
         chunk.lockWriteLock();
         try {
             List<Section> sections = chunk.getSections();
@@ -164,7 +182,7 @@ public final class ChunkLightService {
     public void calculateSky(Chunk chunk) {
         List<SectionOpacity> opacity = opacityOf(chunk);
         List<LightNibbles> light = new ChunkLightPropagator().propagateSky(opacity);
-        apply(chunk, light, true);
+        applyLight(chunk, light, true);
     }
 
     /**
@@ -203,7 +221,7 @@ public final class ChunkLightService {
             if (entry == null) {
                 continue;
             }
-            apply(entry.chunk(), entry.state().toSections(), false);
+            applyLight(entry.chunk(), entry.state().toSections(), false);
         }
     }
 
