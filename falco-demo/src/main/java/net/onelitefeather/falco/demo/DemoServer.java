@@ -156,7 +156,7 @@ public final class DemoServer {
                 .createInstanceContainer(dimensionType(options), loader);
         instance.setChunkSupplier(options.stack().chunkSupplier());
 
-        Pos spawn = spawn(instance, spawnChunk);
+        Pos spawn = new Pos(0, 65, 0);
 
         registerEvents(instance, spawn, options, metrics);
         AtomicReference<LiveMetrics.Snapshot> latest = scheduleReporting(instance, options, metrics);

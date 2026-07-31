@@ -178,8 +178,10 @@ public final class DemoReport {
                 + "nothing, so anything else running on the machine lands in one of them and not in the other.");
         bullet(report, "The page cache is warm after the warm-up, so this is not a measurement of your disk. "
                 + "It is a measurement of the code path above it, which is the part the two loaders differ in.");
-        bullet(report, "If the two runs return a different number of chunks they did not do the same work. The "
-                + "Falco loader skips a chunk which is not fully generated, the Minestom loader loads it.");
+        bullet(report, "If the two runs return a different number of chunks they did not do the same work, and "
+                + "the times are not comparable. Both loaders skip a chunk which is not fully generated -- "
+                + "Minestom logs it as \"Skipping partially generated chunk\" -- so a world which was never "
+                + "finished makes both of them return nothing rather than one of them look fast.");
         bullet(report, "Figures are printed to three significant digits, which is about what this instrument "
                 + "supports. More digits would be decoration.");
 
