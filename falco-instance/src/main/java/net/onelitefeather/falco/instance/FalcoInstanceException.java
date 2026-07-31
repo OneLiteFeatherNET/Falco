@@ -3,19 +3,23 @@ package net.onelitefeather.falco.instance;
 import org.jetbrains.annotations.ApiStatus;
 
 /**
- * The {@link FalcoInstanceException} is thrown when an instance of this module is asked for
- * something it deliberately cannot do yet.
+ * The {@link FalcoInstanceException} is thrown when an instance of this module cannot hand back the
+ * chunk that was asked of it.
  * <p>
- * The instance of this module is a smaller thing than the one Minestom ships with: the world
- * generator is not reimplemented, and every chunk has to be a {@link FalcoChunk} because the
- * lifecycle hooks of any other chunk are unreachable from this package. Both limits are easy to run
- * into by accident, and both would otherwise show up as a world that is quietly empty or a chunk
- * that never reports itself as unloaded. A refusal at the call site names the cause; a silent
- * fallback would surface much later and somewhere else.
+ * Two things cause that. Every chunk has to be a {@link FalcoChunk}, because the lifecycle hooks of
+ * any other chunk are unreachable from this package, so a foreign chunk would report itself as
+ * loaded for the rest of the life of the server. And a chunk whose load was still running when its
+ * instance was unregistered is thrown away rather than published, so the callers waiting for it are
+ * told instead of being handed a chunk which belongs to nothing.
  * </p>
  * <p>
- * One type covers both cases on purpose. They share the meaning "this instance does not do that
- * (yet)", and a caller which wants to react at all wants to react to the whole group.
+ * One type covers both cases on purpose. They share the meaning "the chunk you asked for is not
+ * coming", and a caller which wants to react at all wants to react to the whole group.
+ * </p>
+ * <p>
+ * A failure of the world generator is deliberately not wrapped in this type. It travels to the
+ * caller exactly as the generator threw it, because the generator is code the caller wrote and a
+ * wrapper would only put a layer between them.
  * </p>
  * <p>
  * This type is experimental. The instance module is new and its API may still change.

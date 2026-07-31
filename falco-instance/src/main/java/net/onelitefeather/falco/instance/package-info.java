@@ -16,15 +16,23 @@
  * re-exposes them; reflection would hide the coupling rather than solve it.
  * </p>
  * <p>
- * {@link net.onelitefeather.falco.instance.FalcoInstanceException} marks the two things this version
- * deliberately refuses: running a world generator, and managing a chunk which is not a
- * {@code FalcoChunk}.
+ * {@link net.onelitefeather.falco.instance.FalcoInstanceException} marks the two ways a chunk can
+ * fail to arrive: it was not a {@code FalcoChunk}, or its load was thrown away because the instance
+ * was unregistered while it ran.
  * </p>
  * <p>
  * This package is about clarity, not throughput. The parallelism of chunk and entity ticking lives
  * in the global {@code ThreadDispatcher} of the server process, so no instance implementation can
  * change it. What does change is that a block write is guarded by the lock of the chunk it touches
- * rather than by a monitor over the whole world.
+ * rather than by a monitor over the whole world, and that publishing a chunk and unloading one are
+ * a single step of the position they share, so neither of the two can leave half of the other
+ * behind.
+ * </p>
+ * <p>
+ * A world here comes from its chunk loader, from a
+ * {@code net.minestom.server.instance.generator.Generator}, or stays empty. The generator writes
+ * into copies of the palettes of the chunk which are moved over only once it returned, so a
+ * generator that fails halfway changes nothing and the failure reaches whoever asked for the chunk.
  * </p>
  * <p>
  * Every public type here is experimental and may still change in a minor release.

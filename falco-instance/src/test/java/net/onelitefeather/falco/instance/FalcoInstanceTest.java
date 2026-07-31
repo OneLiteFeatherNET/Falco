@@ -142,13 +142,11 @@ class FalcoInstanceTest {
     }
 
     @Test
-    void testAGeneratorIsRejectedInsteadOfBeingIgnored(Env env) {
+    void testAnInstanceHasNoGeneratorUntilItIsGivenOne(Env env) {
         final FalcoInstance instance = registered(env);
 
-        assertThrows(FalcoInstanceException.class, () -> instance.setGenerator(unit -> {
-        }));
-        assertThrows(FalcoInstanceException.class, () -> instance.generateChunk(0, 0, unit -> {
-        }));
+        // The generator path itself lives in FalcoInstanceGeneratorTest; this only pins that a world
+        // without one is a world of air rather than a failure.
         assertNull(instance.generator());
     }
 
