@@ -8,6 +8,9 @@ import net.minestom.testing.extension.MicrotusExtension;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -277,5 +280,32 @@ class ChunkLightServiceIntegrationTest {
         this.service.calculateWithNeighbours(instance, 0, 0);
 
         assertEquals(15, this.service.blockLightAt(chunk, 15, 40, 8));
+    }
+
+    @Test
+    void testOpacityOfExposesOneEntryPerSection(Env env) {
+        Instance instance = env.createEmptyInstance();
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        place(chunk, 8, 40, 8, Block.STONE);
+
+        List<SectionOpacity> opacity = this.service.opacityOf(chunk);
+
+        assertEquals(chunk.getSections().size(), opacity.size());
+    }
+
+    @Test
+    void testApplyLightWritesIntoTheSections(Env env) {
+        Instance instance = env.createEmptyInstance();
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        int sectionCount = chunk.getSections().size();
+        List<LightNibbles> light = new ArrayList<>(sectionCount);
+
+        for (int index = 0; index < sectionCount; index++) {
+            light.add(LightNibbles.uniform(7));
+        }
+
+        ChunkLightService.applyLight(chunk, light, false);
+
+        assertEquals(7, this.service.blockLightAt(chunk, 1, chunk.getMinSection() * 16 + 1, 1));
     }
 }
