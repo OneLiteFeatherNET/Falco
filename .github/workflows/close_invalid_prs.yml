@@ -7,5 +7,4 @@ on:
 jobs:
   close:
     uses: OneLiteFeatherNET/workflows/.github/workflows/close-invalid-prs.yml@v2.4.0
-    with:
-      protected-branch: "main"
+    secrets: inherit

@@ -1,4 +1,4 @@
-name: release-please
+name: Release
 
 on:
   push:
@@ -13,22 +13,26 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - id: release
+      - name: Run release-please
+        id: release
         uses: googleapis/release-please-action@v5
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
   # Both modules share one version and go out together, so a plain root-level publish is correct
-  # here. There is deliberately no tag-triggered publish workflow next to this one: Release Please
+  # here. There is deliberately no tag-triggered publish workflow next to this one: release-please
   # tags with the default GITHUB_TOKEN, which does not re-trigger tag-push workflows in the same
   # repository, so such a workflow would either never fire or race this job.
   publish:
+    name: Publish to OneLiteFeatherRepo
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     uses: OneLiteFeatherNET/workflows/.github/workflows/gradle-publish.yml@v2.4.0
     with:
       java-version: "25"
-      java-distribution: "temurin"
+      publish-task: "publish"
     secrets: inherit
