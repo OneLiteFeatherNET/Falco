@@ -1,6 +1,7 @@
 package net.onelitefeather.falco.light;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,11 +41,23 @@ import static org.junit.jupiter.api.Assertions.fail;
  * at once, which it can only do by giving every call its own propagator.
  * {@link ChunkLightServiceConcurrencyTest} holds it to that promise.
  * </p>
+ * <p>
+ * <b>These tests run on platform threads on purpose.</b> Two of them keep a writer mutating a
+ * source until a latch reports that the readers are done, which is a busy wait and needs a
+ * scheduler which can take the processor away. A virtual thread which never blocks never releases
+ * its carrier, and there are only as many carriers as processors, so on a two core machine the
+ * spinning tasks starve the ones they wait for and the test JVM hangs instead of failing. See
+ * {@code RegionFileConcurrencyTest} for the full account.
+ * </p>
  *
  * @author TheMeinerLP
  * @version 1.0.0
  * @since 0.1.0
  */
+// A stuck stress test has to end as a red test, not as a test JVM which never exits and a pipeline
+// which runs until someone cancels it. SEPARATE_THREAD is required, because the default mode only
+// checks the duration once the method returned.
+@Timeout(value = 5, unit = TimeUnit.MINUTES, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 class LightEngineConcurrencyTest {
 
     /**
@@ -120,7 +133,7 @@ class LightEngineConcurrencyTest {
         int rounds = 12;
         CountDownLatch start = new CountDownLatch(1);
 
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             List<Future<?>> futures = new ArrayList<>(threadCount);
 
             for (int thread = 0; thread < threadCount; thread++) {
@@ -158,7 +171,7 @@ class LightEngineConcurrencyTest {
         int rounds = 8;
         CountDownLatch start = new CountDownLatch(1);
 
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             List<Future<?>> futures = new ArrayList<>(threadCount);
 
             for (int thread = 0; thread < threadCount; thread++) {
@@ -193,7 +206,7 @@ class LightEngineConcurrencyTest {
         int rounds = 20;
         CountDownLatch start = new CountDownLatch(1);
 
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             List<Future<?>> futures = new ArrayList<>(threadCount);
 
             for (int thread = 0; thread < threadCount; thread++) {
@@ -236,7 +249,7 @@ class LightEngineConcurrencyTest {
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch readersDone = new CountDownLatch(readerCount);
 
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             List<Future<?>> futures = new ArrayList<>(readerCount + 1);
 
             for (int reader = 0; reader < readerCount; reader++) {
@@ -293,7 +306,7 @@ class LightEngineConcurrencyTest {
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch readersDone = new CountDownLatch(readerCount);
 
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             List<Future<?>> futures = new ArrayList<>(readerCount + 1);
 
             for (int reader = 0; reader < readerCount; reader++) {

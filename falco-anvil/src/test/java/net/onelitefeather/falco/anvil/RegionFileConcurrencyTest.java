@@ -1,6 +1,7 @@
 package net.onelitefeather.falco.anvil;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -43,11 +44,34 @@ import static org.junit.jupiter.api.Assertions.fail;
  * broken implementation, so none of the tests here stop at that. Each of them names the corruption
  * it detects in its own comment.
  * </p>
+ * <p>
+ * <b>These tests run on platform threads on purpose.</b> Every reader here keeps reading until a
+ * latch reports that the writers are done, which is a busy wait and therefore needs a scheduler
+ * which can take the processor away. Virtual threads are scheduled cooperatively: one which never
+ * blocks never releases its carrier, and the carrier count defaults to the number of processors. On
+ * a machine with two of them the readers occupy both carriers, the writers never run, the latch
+ * never reaches zero and the readers spin forever. {@code ExecutorService#close} then waits for
+ * tasks which cannot finish and the whole test JVM hangs instead of failing, which is far worse
+ * than a red test. It reproduces reliably under {@code taskset -c 0,1} and not at all on a
+ * developer machine with many cores. {@code Thread#yield} does not help, because a yielding virtual
+ * thread is rescheduled ahead of the parked writers.
+ * </p>
+ * <p>
+ * Nothing is lost by this: the work here is file input and output, which does not unmount a virtual
+ * thread either.
+ * </p>
  *
  * @author TheMeinerLP
  * @version 1.0.0
  * @since 0.1.0
  */
+// The timeout is a second line of defence, not a tuning knob. A stress test which stops making
+// progress used to hang the whole test JVM and with it the pipeline, for hours, with the last line
+// of output being a PASSED of the test before it. Twelve seconds is what all of these take together
+// on two cores, so five minutes per method cannot fire for a slow machine — only for a test which
+// is genuinely stuck. SEPARATE_THREAD is required: the default mode measures the duration after the
+// method returned, which never happens when it hangs.
+@Timeout(value = 5, unit = TimeUnit.MINUTES, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 class RegionFileConcurrencyTest extends FileTestBase {
 
     /**
@@ -233,7 +257,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
         CountDownLatch start = new CountDownLatch(1);
 
         try (RegionFile region = RegionFile.open(path);
-             ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+             ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             List<Future<?>> futures = new ArrayList<>(DISJOINT_CHUNK_COUNT);
 
             for (int index = 0; index < DISJOINT_CHUNK_COUNT; index++) {
@@ -290,7 +314,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
         CountDownLatch written = new CountDownLatch(TORN_CHUNK_COUNT);
 
         try (RegionFile region = RegionFile.open(path);
-             ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+             ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             for (int chunk = 0; chunk < TORN_CHUNK_COUNT; chunk++) {
                 region.writeRaw(chunk, 0, ChunkCompression.ZLIB, tornPayload(chunk, 0));
             }
@@ -412,7 +436,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
         CountDownLatch written = new CountDownLatch(1 + RECYCLE_FILLER_COUNT);
 
         try (RegionFile region = RegionFile.open(path);
-             ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+             ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             region.writeRaw(0, 0, ChunkCompression.ZLIB, large);
 
             List<Future<?>> futures = new ArrayList<>(1 + RECYCLE_FILLER_COUNT + RECYCLE_READER_COUNT);
@@ -502,7 +526,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
         CountDownLatch written = new CountDownLatch(1);
 
         try (RegionFile region = RegionFile.open(path);
-             ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+             ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             region.writeRaw(0, chunkZ, ChunkCompression.ZLIB, inline);
 
             List<Future<?>> futures = new ArrayList<>(2 + SWITCH_READER_COUNT);
@@ -596,7 +620,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
         CountDownLatch start = new CountDownLatch(1);
 
         try (RegionFile region = RegionFile.open(path);
-             ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+             ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             List<Future<?>> futures = new ArrayList<>(chunkCount);
 
             for (int index = 0; index < chunkCount; index++) {
@@ -668,7 +692,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
         List<AtomicReference<Throwable>> failures = new ArrayList<>(writerCount + readerCount);
 
         try (RegionFile region = RegionFile.open(path);
-             ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+             ExecutorService executor = Executors.newThreadPerTaskExecutor(Thread.ofPlatform().factory())) {
             for (int index = 0; index < prefilled; index++) {
                 region.writeRaw(index, 0, ChunkCompression.ZLIB, payloads.get(index));
             }
