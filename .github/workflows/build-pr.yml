@@ -1,0 +1,11 @@
+name: Build PR
+
+on: [pull_request]
+
+jobs:
+  build:
+    uses: OneLiteFeatherNET/workflows/.github/workflows/gradle-build-pr.yml@v2.4.0
+    with:
+      java-version: "25"
+      java-distribution: "temurin"
+    secrets: inherit

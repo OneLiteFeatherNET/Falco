@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>OneLiteFeatherNET/renovate:default(OneLiteFeatherNET/aves-maintainers)",
+    "github>OneLiteFeatherNET/renovate:minestom"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/README.md/"
+      ],
+      "matchStrings": [
+        "implementation\\(\"net\\.onelitefeather:falco-anvil:(?<currentValue>.*?)\""
+      ],
+      "datasourceTemplate": "maven",
+      "depNameTemplate": "net.onelitefeather:falco-anvil"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/README.md/"
+      ],
+      "matchStrings": [
+        "implementation\\(\"net\\.onelitefeather:falco-light:(?<currentValue>.*?)\""
+      ],
+      "datasourceTemplate": "maven",
+      "depNameTemplate": "net.onelitefeather:falco-light"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": ["net.onelitefeather:falco-anvil", "net.onelitefeather:falco-light"],
+      "registryUrls": [
+        "https://repo.onelitefeather.dev/onelitefeather"
+      ]
+    }
+  ]
+}
