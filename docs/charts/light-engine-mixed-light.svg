@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="716" height="320" viewBox="0 0 716 320" role="img" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<rect width="716" height="320" fill="#fcfcfb"/>
+<text x="20" y="27" font-size="14" font-weight="600" fill="#1a1a19">Light engine with sources of mixed brightness</text>
+<text x="20" y="46" font-size="11.5" fill="#5c5b55">Sources cycle through glowstone, lantern, torch, redstone torch and magma block, µs/op</text>
+<rect x="20" y="56" width="9" height="9" rx="2" fill="#2a78d6"/>
+<text x="34" y="64" font-size="11.5" fill="#5c5b55">Falco</text>
+<rect x="85" y="56" width="9" height="9" rx="2" fill="#eb6834"/>
+<text x="99" y="64" font-size="11.5" fill="#5c5b55">Minestom</text>
+<text x="138" y="100" font-size="11.5" text-anchor="end" fill="#1a1a19">8 sources, 0 % solid</text>
+<rect x="150" y="78" width="221.7" height="17" rx="4" fill="#2a78d6"/>
+<text x="379.7" y="91" font-size="11" fill="#5c5b55">118.97</text>
+<rect x="150" y="97" width="235.8" height="17" rx="4" fill="#eb6834"/>
+<text x="393.8" y="110" font-size="11" fill="#5c5b55">126.54</text>
+<text x="138" y="154" font-size="11.5" text-anchor="end" fill="#1a1a19">8 sources, 30 % solid</text>
+<rect x="150" y="132" width="217.1" height="17" rx="4" fill="#2a78d6"/>
+<text x="375.1" y="145" font-size="11" fill="#5c5b55">116.50</text>
+<rect x="150" y="151" width="375.4" height="17" rx="4" fill="#eb6834"/>
+<text x="533.4" y="164" font-size="11" fill="#5c5b55">201.46</text>
+<text x="138" y="208" font-size="11.5" text-anchor="end" fill="#1a1a19">64 sources, 0 % solid</text>
+<rect x="150" y="186" width="280.3" height="17" rx="4" fill="#2a78d6"/>
+<text x="438.3" y="199" font-size="11" fill="#5c5b55">150.42</text>
+<rect x="150" y="205" width="302.2" height="17" rx="4" fill="#eb6834"/>
+<text x="460.2" y="218" font-size="11" fill="#5c5b55">162.20</text>
+<text x="138" y="262" font-size="11.5" text-anchor="end" fill="#1a1a19">64 sources, 30 % solid</text>
+<rect x="150" y="240" width="278.4" height="17" rx="4" fill="#2a78d6"/>
+<text x="436.4" y="253" font-size="11" fill="#5c5b55">149.42</text>
+<rect x="150" y="259" width="470.0" height="17" rx="4" fill="#eb6834"/>
+<text x="628.0" y="272" font-size="11" fill="#5c5b55">252.26</text>
+<text x="20" y="304" font-size="10.5" fill="#5c5b55">Mixed brightness costs Falco about 33 % against uniform sources — the honest case, and it still leads.</text>
+</svg>

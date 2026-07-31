@@ -279,6 +279,36 @@ rebuild.
 is the measurement that turned the design claim into a number, and it is what made compression the
 optimisation target.
 
+### The region file against the one Minestom ships with
+
+`RegionFileComparisonBenchmark`, 200 distinct block states, one fork, 3 warmup and 5 measurement
+iterations of 2 s, on a 16 core machine. JMH takes one `-t` per run, so the thread count was varied
+by running it four times. µs/op:
+
+| Threads | Falco read | Minestom read | | Falco write | Minestom write |
+| ---: | ---: | ---: | --- | ---: | ---: |
+| 1 | 1 203 ± 123 | 1 060 ± 55 | 1.14× slower | 2 659 ± 212 | 2 601 ± 100 |
+| 2 | 1 181 ± 31 | 2 200 ± 445 | 1.86× faster | 2 637 ± 204 | 2 643 ± 153 |
+| 4 | 1 378 ± 84 | 11 021 ± 16 470 | 8.00× faster | 2 672 ± 43 | 2 678 ± 115 |
+| 8 | 2 438 ± 252 | 530 905 ± 1 928 261 | not usable | 3 098 ± 658 | 3 102 ± 245 |
+
+Three things this settles, two of which are not flattering:
+
+- **Single-threaded, this loader is the slower one** — by 14 % at 200 states and 20 % at 8. The
+  three-stage pipeline has a setup cost and no contention to win it back from. The claim was always
+  that the gain is in lock granularity; this is what that means when there is no lock to contend for.
+- **Writing is a tie at every thread count** (1.00× to 1.05×, either direction). Both take a lock for
+  the sector allocation and the header, so there is nothing to gain, and the numbers say so.
+- **Reading inverts from two threads on** and keeps going: 1.86×, then 8×. Falco's own time grows by
+  a factor of two from one thread to eight while Minestom's grows by a factor of five hundred.
+
+The eight thread row is reported but **must not be quoted as a factor**: its error is nearly four
+times its mean. What it shows is a loss of predictability, not a number — Minestom's read time
+scatters over three orders of magnitude there, while Falco stays inside ±10 %. For a server that
+is the worse failure of the two.
+
+The charts in the README are generated from exactly these figures by `docs/charts/generate.mjs`.
+
 ### Against the engine Minestom ships with
 
 `LightEngineComparisonBenchmark`, one section, `-f 1 -wi 5 -i 10`, µs/op. Both engines run to a

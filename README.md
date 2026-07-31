@@ -14,26 +14,138 @@ that should not be lost.
 
 ## What "high-performance" means here
 
-Measured, not asserted. Every figure below comes from a JMH benchmark in this repository, and the
-numbers plus the methodology are in [`docs/benchmarks.md`](docs/benchmarks.md) and
-[`STATUS.md`](STATUS.md).
+Measured, not asserted. Every figure below comes from a JMH benchmark in this repository; the
+methodology is in [`docs/benchmarks.md`](docs/benchmarks.md), the full numbers in
+[`STATUS.md`](STATUS.md). Expand a section for the chart and the table behind it.
 
-- **The light engine is 1.11× to 1.71× faster than Minestom's** across all six measured scenarios
-  (1, 8 and 64 light sources × empty and 30 % solid), while producing a **byte-identical** result —
-  a test asserts that equivalence on every build, so speed never comes at the cost of correctness.
-- **A uniform section costs 0.54 µs instead of 27.9 µs** to encode and 0.54 µs instead of 40.8 µs to
-  build an opacity table for — 51× and 76×, with no arrays allocated. Sections of pure air or pure
-  stone are the majority of every world.
-- **Chunk compression runs 1.83× faster** at zlib level 2 for about 3 % more bytes, and compression
-  is 63 % of what a save costs.
-- **The loader's advantage is lock granularity, so it appears under contention.** Single-threaded,
-  it and Minestom's are level; the gap opens as threads are added, which is what
-  `RegionFileComparisonBenchmark` parameterises on. Minestom's `RegionFile` reports
-  `supportsParallelLoading() == true` but serialises reading, decompression *and* NBT parsing
-  through one `ReentrantLock`.
+<details>
+<summary><b>Anvil loader as threads compete</b> — level on one thread, 8× on four</summary>
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/loader-contention-dark.svg">
+  <img alt="Ratio bars around a baseline of 1.0. On one thread Falco reads 1.14 times slower than Minestom; on two threads it is 1.86 times faster and on four threads 8 times faster." src="docs/charts/loader-contention-light.svg">
+</picture>
+
+Reading one chunk, 200 distinct block states, µs/op:
+
+| Threads | Falco | Minestom | |
+| ---: | ---: | ---: | --- |
+| 1 | 1 203 ± 123 | 1 060 ± 55 | 1.14× **slower** |
+| 2 | 1 181 ± 31 | 2 200 ± 445 | 1.86× faster |
+| 4 | 1 378 ± 84 | 11 021 ± 16 470 | 8.00× faster |
+| 8 | 2 438 ± 252 | 530 905 ± 1 928 261 | see below |
+
+**Single-threaded, Falco is the slower one.** The three-stage pipeline costs something to set up, and
+with no contention there is nothing to win back. From two threads on, the picture inverts, and it
+keeps inverting: Falco's own time grows by a factor of two from one thread to eight, Minestom's by
+a factor of five hundred.
+
+The eight-thread row is **not a usable figure** — its error bar is nearly four times its mean.
+What it does show is that Minestom's read time stops being predictable under load, which for a
+server is worse than being slow. Falco's error bar stays at ten percent of its mean throughout.
+
+**Writing is a tie** (1.00× to 1.05× either way, at every thread count). Both implementations take a
+lock to allocate sectors and update the header, so there is nothing to gain there — and claiming
+otherwise would be easy and wrong.
+
+<sub>Measured on a 16-core machine, JMH with one fork, 3 warmup and 5 measurement iterations of 2 s.
+One fork is few; treat the direction as solid and the exact factors as indicative.</sub>
+
+</details>
+
+<details>
+<summary><b>Light engine against Minestom's</b> — 1.11× to 1.71× faster, byte-identical output</summary>
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/light-engine-dark.svg">
+  <img alt="Grouped bars comparing Falco and Minestom light engines across six scenarios in microseconds per operation. Falco is faster in every one, by 1.11x to 1.71x." src="docs/charts/light-engine-light.svg">
+</picture>
+
+| Sources | Solid | Falco | Minestom | |
+| ---: | ---: | ---: | ---: | --- |
+| 1 | 0 % | 44.5 ± 0.6 | 49.4 ± 1.3 | 1.11× faster |
+| 1 | 30 % | 39.3 ± 0.8 | 62.0 ± 2.0 | 1.58× faster |
+| 8 | 0 % | 98.3 ± 2.4 | 121.1 ± 5.5 | 1.23× faster |
+| 8 | 30 % | 119.3 ± 3.5 | 204.2 ± 3.7 | **1.71× faster** |
+| 64 | 0 % | 109.2 ± 1.6 | 126.5 ± 5.6 | 1.16× faster |
+| 64 | 30 % | 122.6 ± 1.3 | 206.6 ± 4.2 | 1.68× faster |
+
+The lead grows exactly where a real world is hardest — with solid blocks in the section, which is
+every chunk that is not open sky. Both engines produce the same bytes, and
+`LightEngineEquivalenceTest` asserts that on every build, so this is not speed bought with accuracy.
+
+</details>
+
+<details>
+<summary><b>The same, with sources of mixed brightness</b> — the honest case</summary>
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/light-engine-mixed-dark.svg">
+  <img alt="Grouped bars for mixed-brightness light sources. Falco leads in all four scenarios, most clearly at 30 percent solid blocks." src="docs/charts/light-engine-mixed-light.svg">
+</picture>
+
+| Sources | Solid | Falco | Minestom | |
+| ---: | ---: | ---: | ---: | --- |
+| 8 | 0 % | 118.97 ± 8.89 | 126.54 ± 9.55 | 1.06× faster |
+| 8 | 30 % | 116.50 ± 7.63 | 201.46 ± 16.83 | 1.73× faster |
+| 64 | 0 % | 150.42 ± 32.73 | 162.20 ± 3.11 | 1.08× faster |
+| 64 | 30 % | 149.42 ± 12.64 | 252.26 ± 9.28 | 1.69× faster |
+
+Sources of differing brightness make a position get queued more than once, which costs Falco about
+33 % against uniform sources and shrinks the lead in the open-sky rows to a few percent. It is
+reported here rather than left out, because a benchmark that only shows its best case is worth
+nothing.
+
+</details>
+
+<details>
+<summary><b>Where a save spends its time</b> — 97 % of it outside any lock</summary>
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/save-stages-dark.svg">
+  <img alt="A single stacked bar splitting a chunk save into four stages. Snapshot and transfer hold a lock and take 81 microseconds together; codec and compression hold none and take 4057." src="docs/charts/save-stages-light.svg">
+</picture>
+
+| Stage | Time | Lock held |
+| --- | ---: | --- |
+| Snapshot | 64 µs | the read lock of the chunk |
+| Codec, without compression | 1 356 µs | none |
+| zlib compression | 2 701 µs | none |
+| Transfer | 17 µs | the region lock |
+
+This is the design claim as a number. Minestom's `RegionFile` reports
+`supportsParallelLoading() == true` but serialises reading, decompression **and** NBT parsing
+through a single `ReentrantLock`, so its parallelism is largely nominal. Moving that work out of the
+lock is what the three-stage pipeline is for. Compression being 63 % of a save is also what made it
+the optimisation target: at zlib level 2 it runs **1.83× faster** for about 3 % more bytes.
+
+</details>
+
+<details>
+<summary><b>Two fast paths worth 51× and 76×</b></summary>
+
+<br>
+
+A section of pure air or pure stone carries a palette of one entry, and the majority of every world
+looks like that. Detecting the case up front rather than walking 4 096 blocks:
+
+| Fast path for a uniform section | Before | After | |
+| --- | ---: | ---: | --- |
+| Palette encode | 27.9 µs | 0.54 µs | **51×** |
+| Opacity table | 40.8 µs | 0.54 µs | **76×**, and no arrays allocated |
+
+</details>
 
 Where an idea did **not** pay off, that is written down too — see the rejected optimisations in
-`STATUS.md`.
+`STATUS.md`, including the bucket queue that loses 5–7 % at equal source brightness.
 
 Both modules are **experimental**. Every public type carries `@ApiStatus.Experimental`; signatures
 and behaviour may still change in a minor release.

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="716" height="232" viewBox="0 0 716 232" role="img" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<rect width="716" height="232" fill="#0d1117"/>
+<text x="20" y="27" font-size="14" font-weight="600" fill="#f0f6fc">Where the time goes when saving a chunk</text>
+<text x="20" y="46" font-size="11.5" fill="#9198a1">ChunkSaveStageBenchmark, 24 sections, 200 block states — 4 138 µs in total</text>
+<rect x="20" y="56" width="9" height="9" rx="2" fill="#3987e5"/>
+<text x="34" y="64" font-size="11.5" fill="#9198a1">no lock held</text>
+<rect x="131.2" y="56" width="9" height="9" rx="2" fill="#d95926"/>
+<text x="145.2" y="64" font-size="11.5" fill="#9198a1">a lock held</text>
+<rect x="20.0" y="96" width="8.5" height="40" rx="4" fill="#d95926"/>
+<line x1="25.2" y1="136" x2="25.2" y2="148" stroke="#272c35" stroke-width="2"/>
+<text x="20.0" y="162" font-size="11" text-anchor="start" fill="#9198a1">Snapshot</text>
+<text x="20.0" y="176" font-size="11" text-anchor="start" fill="#9198a1">64 µs · 1.5 %</text>
+<rect x="30.5" y="96" width="219.5" height="40" rx="4" fill="#3987e5"/>
+<text x="141.2" y="121" font-size="11.5" font-weight="600" text-anchor="middle" fill="#0d1117">Codec</text>
+<text x="141.2" y="154" font-size="11" text-anchor="middle" fill="#9198a1">1356 µs · 33 %</text>
+<rect x="252.0" y="96" width="439.2" height="40" rx="4" fill="#3987e5"/>
+<text x="472.6" y="121" font-size="11.5" font-weight="600" text-anchor="middle" fill="#0d1117">zlib compression</text>
+<text x="472.6" y="154" font-size="11" text-anchor="middle" fill="#9198a1">2701 µs · 65 %</text>
+<rect x="693.2" y="96" width="1.0" height="40" rx="4" fill="#d95926"/>
+<line x1="694.6" y1="136" x2="694.6" y2="148" stroke="#272c35" stroke-width="2"/>
+<text x="696.0" y="162" font-size="11" text-anchor="end" fill="#9198a1">Transfer</text>
+<text x="696.0" y="176" font-size="11" text-anchor="end" fill="#9198a1">17 µs · 0.4 %</text>
+<text x="20" y="214" font-size="10.5" fill="#9198a1">About 97 % of a save runs outside any lock. That is the whole design claim, as a number.</text>
+</svg>
