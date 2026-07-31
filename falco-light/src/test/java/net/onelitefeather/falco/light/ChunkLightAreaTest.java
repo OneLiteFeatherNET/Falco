@@ -19,8 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The interesting property of an area is not that the light inside it is right — a single chunk
  * would manage that. It is that the chunks around it are read so the edge of the area is correct,
  * and that those chunks are then left alone. A ring chunk is missing the light from beyond it, so
- * writing its result back would replace correct light with a darker one, which is the defect
- * {@code calculateWithNeighbours} still has and which this type exists to avoid.
+ * writing its result back would replace correct light with a darker one — the same rule
+ * {@code calculateWithNeighbours} follows for the eight chunks around the one it writes.
  * </p>
  *
  * @author TheMeinerLP

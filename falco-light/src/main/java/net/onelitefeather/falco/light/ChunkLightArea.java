@@ -29,10 +29,10 @@ import java.util.function.ToLongFunction;
  * neighbours would end at a straight dark line every sixteen blocks, so every chunk which shares a
  * border with the area is read as well and takes part in the exchange. Writing those chunks back is
  * the tempting next step and it is wrong: a ring chunk only saw the light of the area, never the
- * light of whatever lies on its own far side, so its result is darker than its current one. That is
- * exactly the defect {@link ChunkLightService#calculateWithNeighbours(Instance, int, int)} still
- * has, where all nine chunks of the neighbourhood are written and the eight outer ones are darkened
- * in the process. Here it is designed out: the ring is scratch data.
+ * light of whatever lies on its own far side, so its result is darker than its current one. Here it
+ * is designed out: the ring is scratch data.
+ * {@link ChunkLightService#calculateWithNeighbours(Instance, int, int)} arrives at the same rule
+ * from the other side — it reads its whole 3×3 and writes only the chunk in the middle.
  * </p>
  * <p>
  * Computing a group together rather than one chunk after the other is the entire reason this type

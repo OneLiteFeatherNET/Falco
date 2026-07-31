@@ -186,7 +186,7 @@ public final class ChunkLightService {
     }
 
     /**
-     * Calculates the light of the given chunk and continues it into the chunks around it.
+     * Calculates the light of the given chunk from the chunks around it and writes that one chunk.
      * <p>
      * A chunk which is lit on its own ends its light at the border, which shows up as a straight
      * dark line every sixteen blocks. Handing the border to the direct neighbours once is not
@@ -199,6 +199,22 @@ public final class ChunkLightService {
      * and reaches the same result regardless of the order the borders are handed over in. A cap on
      * the amount of rounds keeps a case which should not exist from looping forever; hitting it is
      * reported instead of silently accepted.
+     * </p>
+     * <p>
+     * <b>The eight chunks around the middle are read but never written.</b> They only exchanged
+     * light inside the 3×3, so whatever they legitimately receive from further out is missing from
+     * their result and writing it back would replace their correct light with a darker one. The
+     * middle chunk does not have that problem, and provably so: a source outside the 3×3 is at
+     * least seventeen blocks away from it and no path can be shorter than the direct distance, so
+     * not even a level of fifteen survives the trip. Writing only the middle chunk is therefore
+     * both cheaper and correct, and it is the same rule {@link ChunkLightArea} follows.
+     * </p>
+     * <p>
+     * What this method still has over an area of one chunk is its reach: the 3×3 includes the four
+     * diagonal chunks, and a source in one of them arrives in the middle chunk through the chunk
+     * between them. An area reads only the chunks which share a border with it, so it does not see
+     * that source. Where several connected chunks are lit at once, {@link ChunkLightArea} is the
+     * cheaper path, because it reads every chunk once instead of once per neighbourhood.
      * </p>
      * <p>
      * Only chunks which the instance already holds take part. A neighbour which is not loaded is
@@ -217,12 +233,12 @@ public final class ChunkLightService {
         @Nullable NeighbourhoodEntry[] neighbourhood = readNeighbourhood(instance, chunkX, chunkZ);
         exchangeUntilSettled(neighbourhood, chunkX, chunkZ);
 
-        for (@Nullable NeighbourhoodEntry entry : neighbourhood) {
-            if (entry == null) {
-                continue;
-            }
-            applyLight(entry.chunk(), entry.state().toSections(), false);
+        @Nullable NeighbourhoodEntry middle = neighbourhood[slot(0, 0)];
+
+        if (middle == null) {
+            return;
         }
+        applyLight(middle.chunk(), middle.state().toSections(), false);
     }
 
     /**

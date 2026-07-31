@@ -207,54 +207,54 @@ class ChunkLightServiceIntegrationTest {
     }
 
     @Test
-    void testLightCrossesIntoTheNeighbouringChunk(Env env) {
+    void testLightCrossesInFromTheNeighbouringChunk(Env env) {
+        // Only the middle chunk is written, so the border is read from the side that keeps its
+        // light: the lamp sits in the neighbour and its light has to arrive in the middle chunk.
         Instance instance = env.createEmptyInstance();
-        Chunk west = instance.loadChunk(0, 0).join();
+        Chunk middle = instance.loadChunk(0, 0).join();
         Chunk east = instance.loadChunk(1, 0).join();
-        // The lamp sits on the eastern edge of the western chunk.
-        place(west, 15, 40, 8, Block.GLOWSTONE);
+        place(east, 0, 40, 8, Block.GLOWSTONE);
 
         this.service.calculateWithNeighbours(instance, 0, 0);
 
-        assertEquals(15, this.service.blockLightAt(west, 15, 40, 8));
-        assertEquals(14, this.service.blockLightAt(east, 0, 40, 8),
-                "the first block of the neighbouring chunk has to be lit");
-        assertEquals(13, this.service.blockLightAt(east, 1, 40, 8));
+        assertEquals(14, this.service.blockLightAt(middle, 15, 40, 8),
+                "the last block of the middle chunk has to be lit from across the border");
+        assertEquals(13, this.service.blockLightAt(middle, 14, 40, 8));
     }
 
     @Test
-    void testLightReachesTheChunkBehindTheNeighbour(Env env) {
+    void testLightArrivesFromTheChunkBehindTheNeighbour(Env env) {
+        // This is what the neighbourhood has over an area of a single chunk: the 3x3 covers the
+        // diagonal chunks, which share no border with the middle chunk, so their light can only
+        // arrive by travelling through one of the two chunks in between.
         Instance instance = env.createEmptyInstance();
-        Chunk origin = instance.loadChunk(0, 0).join();
-        Chunk east = instance.loadChunk(1, 0).join();
-        Chunk south = instance.loadChunk(0, 1).join();
+        Chunk middle = instance.loadChunk(0, 0).join();
         Chunk diagonal = instance.loadChunk(1, 1).join();
-        // The lamp sits in the corner of its chunk, so its light leaves through two borders and
-        // has to travel through one of the neighbours to arrive in the chunk behind them.
-        place(origin, 15, 40, 15, Block.GLOWSTONE);
+        instance.loadChunk(1, 0).join();
+        instance.loadChunk(0, 1).join();
+        place(diagonal, 0, 40, 0, Block.GLOWSTONE);
 
         this.service.calculateWithNeighbours(instance, 0, 0);
 
-        assertEquals(14, this.service.blockLightAt(east, 0, 40, 15));
-        assertEquals(14, this.service.blockLightAt(south, 15, 40, 0));
-        assertEquals(13, this.service.blockLightAt(diagonal, 0, 40, 0),
+        assertEquals(13, this.service.blockLightAt(middle, 15, 40, 15),
                 "the light has to continue through a neighbour into the chunk behind it");
     }
 
     @Test
     void testARepeatedExchangeKeepsTheSameResult(Env env) {
         Instance instance = env.createEmptyInstance();
-        Chunk origin = instance.loadChunk(0, 0).join();
+        Chunk middle = instance.loadChunk(0, 0).join();
         Chunk diagonal = instance.loadChunk(1, 1).join();
         instance.loadChunk(1, 0).join();
         instance.loadChunk(0, 1).join();
-        place(origin, 15, 40, 15, Block.GLOWSTONE);
+        place(diagonal, 0, 40, 0, Block.GLOWSTONE);
 
         this.service.calculateWithNeighbours(instance, 0, 0);
-        int first = this.service.blockLightAt(diagonal, 0, 40, 0);
+        int first = this.service.blockLightAt(middle, 15, 40, 15);
         this.service.calculateWithNeighbours(instance, 0, 0);
 
-        assertEquals(first, this.service.blockLightAt(diagonal, 0, 40, 0),
+        assertTrue(first > 0, "the exchange has to deliver something before stability means anything");
+        assertEquals(first, this.service.blockLightAt(middle, 15, 40, 15),
                 "a settled exchange must not drift when it is repeated");
     }
 
@@ -280,6 +280,32 @@ class ChunkLightServiceIntegrationTest {
         this.service.calculateWithNeighbours(instance, 0, 0);
 
         assertEquals(15, this.service.blockLightAt(chunk, 15, 40, 8));
+    }
+
+    @Test
+    void testABorrowedNeighbourKeepsTheLightFromOutsideTheNeighbourhood(Env env) {
+        // The neighbourhood around (0,0) reaches to (1,0) and no further, so the light that (1,0)
+        // legitimately receives from (2,0) is not part of what the exchange computes for it.
+        // Writing that result back would replace correct light with a darker one.
+        Instance instance = env.createEmptyInstance();
+        Chunk middle = instance.loadChunk(0, 0).join();
+        Chunk borrowed = instance.loadChunk(1, 0).join();
+        Chunk outside = instance.loadChunk(2, 0).join();
+        place(middle, 8, 40, 8, Block.GLOWSTONE);
+        // World x 32, one block east of the position the assertions read.
+        place(outside, 0, 40, 8, Block.GLOWSTONE);
+
+        // Light (1,0) from its own neighbourhood first, which is the only one that sees (2,0).
+        this.service.calculateWithNeighbours(instance, 1, 0);
+        assertEquals(14, this.service.blockLightAt(borrowed, 15, 40, 8),
+                "the borrowed chunk starts out with the light of its own neighbourhood");
+
+        this.service.calculateWithNeighbours(instance, 0, 0);
+
+        assertEquals(14, this.service.blockLightAt(borrowed, 15, 40, 8),
+                "a borrowed neighbour must keep the light it receives from outside the neighbourhood");
+        assertEquals(15, this.service.blockLightAt(middle, 8, 40, 8),
+                "the middle chunk is still lit");
     }
 
     @Test
