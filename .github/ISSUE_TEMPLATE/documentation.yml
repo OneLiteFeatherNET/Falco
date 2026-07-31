@@ -1,0 +1,61 @@
+name: "Documentation"
+description: "Something in the documentation or Javadoc is wrong, missing or misleading"
+title: "[Docs] "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The documentation in this repository states measured facts, and a wrong one is treated as a
+        defect rather than a typo — a number that was quoted throughout while nothing in the build
+        checked it is one of the entries under "Defects found and fixed".
+
+        Small fixes are welcome as a pull request without an issue first.
+  - type: dropdown
+    id: document
+    attributes:
+      label: "Which document?"
+      options:
+        - "README.md"
+        - "STATUS.md"
+        - "docs/anvil-chunk-loader.md"
+        - "docs/light-engine.md"
+        - "docs/benchmarks.md"
+        - "Javadoc"
+        - "Something else"
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: "Where exactly?"
+      description: "A heading, a permalink to the line, or the fully qualified name of the type or method."
+      placeholder: "e.g. STATUS.md § Measured → Scaling by world height, or net.onelitefeather.falco.anvil.RegionFile#readRaw"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: "What kind of problem is it?"
+      options:
+        - "A statement that is factually wrong"
+        - "A number that no longer matches the code or a benchmark"
+        - "Something is missing"
+        - "Ambiguous or misleading wording"
+        - "A broken link or reference"
+        - "Javadoc missing, incomplete or wrong"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: "What is wrong?"
+      description: "Quote the passage as it stands today. If you are correcting a measured claim, say how you established the correct value — a benchmark run belongs in the performance report form instead."
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: "Suggested wording"
+      description: "Optional. If you already know what it should say, put it here and it can go in almost verbatim."

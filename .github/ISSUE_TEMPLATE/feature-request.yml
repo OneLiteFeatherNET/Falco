@@ -1,0 +1,82 @@
+name: "Feature request"
+description: "Suggest a new feature or enhancement"
+title: "Feature: "
+labels: [ "enhancement" ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you write this up, two documents will save you time:
+
+        - `STATUS.md`, section **Investigated and deliberately not built** — several obvious-looking
+          ideas were tried and rejected for reasons that are written down there.
+        - `STATUS.md`, section **Open** — what is already known to be missing or wrong.
+
+        Everything here is `@ApiStatus.Experimental`, so an API change is cheap. Adding surface that
+        has to be maintained is not.
+  - type: dropdown
+    id: module
+    attributes:
+      label: "Which part would this affect?"
+      options:
+        - "falco-anvil (chunk loader, region files, NBT codec)"
+        - "falco-light (block light, sky light, propagation)"
+        - "falco-instance (FalcoInstance, FalcoChunk)"
+        - "falco-benchmarks (JMH)"
+        - "Documentation"
+        - "A new module"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: "Describe the feature"
+      description: |
+        A clear and concise description of what the feature is.
+        If you have a screenshot of the feature, please attach it below.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: "Why is this feature important to you?"
+      description: "Tell us why you think this feature is important to you. Describe the problem you hit, not only the solution you have in mind — the problem often has a cheaper answer."
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: "Why does this belong in Falco?"
+      description: |
+        Falco replaces two things Minestom already ships and deliberately stops there. Explain why
+        this cannot live in the calling server, in a `ChunkLoaderFactory` of your own, or upstream in
+        Minestom.
+    validations:
+      required: true
+  - type: dropdown
+    id: compatibility
+    attributes:
+      label: "Would this change existing behaviour?"
+      description: "Existing integrations are opt-in and expect the current defaults to keep working."
+      options:
+        - "No — purely additive"
+        - "Yes — it changes a default"
+        - "Yes — it changes or removes a public signature"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional context"
+      description: "Add any other context or screenshots about the feature request here. If the vanilla format or a Minecraft version defines the expected behaviour, link the reference."
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: "Before submitting"
+      options:
+        - label: "I searched the existing issues and did not find this already requested."
+          required: true
+        - label: "I checked `STATUS.md` under \"Open\" and \"Investigated and deliberately not built\"."
+          required: true

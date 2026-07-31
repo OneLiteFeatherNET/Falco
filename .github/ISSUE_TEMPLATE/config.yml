@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and support
+    url: https://discord.onelitefeather.net
+    about: If you have a question rather than a defect to report, ask on our Discord server.
+  - name: Report a security vulnerability
+    url: https://github.com/OneLiteFeatherNET/Falco/security/policy
+    about: Never report security issues in a public issue. Follow the security policy to report them privately.
+  - name: Contributing guide
+    url: https://github.com/OneLiteFeatherNET/.github/blob/main/CONTRIBUTING.md
+    about: Conventional Commits, branch naming and how a change reaches the default branch.

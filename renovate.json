@@ -1,39 +1,29 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "github>OneLiteFeatherNET/renovate:default(OneLiteFeatherNET/aves-maintainers)",
+    "github>OneLiteFeatherNET/renovate:default(TheMeinerLP)",
     "github>OneLiteFeatherNET/renovate:minestom"
+  ],
+  "description": [
+    "The argument to the :default preset becomes :reviewer(arg0), so it has to name someone GitHub can actually request a review from. Falco has no maintainers team: `falco-maintainers` does not exist and no team at all holds access to this repository, so the reviewers below are the two repository admins, the same handles .github/CODEOWNERS uses. Once a `falco-maintainers` team exists and holds write access, the argument becomes `team:falco-maintainers` and the explicit reviewers list can go.",
+    "The :minestom flavor only fixes version ordering for a pinned `net.minestom:minestom`. Falco resolves Minestom through mycelium-bom and pins no version of its own today, so the flavor is inert here and kept for the moment a version does get pinned."
+  ],
+  "reviewers": [
+    "TheMeinerLP",
+    "theEvilReaper"
   ],
   "customManagers": [
     {
       "customType": "regex",
+      "description": "Keep the coordinates in the README install snippet on the released version. One rule for all three published modules: the module name is captured rather than templated, so `falco-instance` is covered the moment the snippet mentions it. `falco-benchmarks` is deliberately not listed because it is never published.",
       "managerFilePatterns": [
-        "/README.md/"
+        "/^README\\.md$/"
       ],
       "matchStrings": [
-        "implementation\\(\"net\\.onelitefeather:falco-anvil:(?<currentValue>.*?)\""
+        "implementation\\(\"(?<depName>net\\.onelitefeather:falco-(?:anvil|instance|light)):(?<currentValue>[^\"]+)\"\\)"
       ],
       "datasourceTemplate": "maven",
-      "depNameTemplate": "net.onelitefeather:falco-anvil"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/README.md/"
-      ],
-      "matchStrings": [
-        "implementation\\(\"net\\.onelitefeather:falco-light:(?<currentValue>.*?)\""
-      ],
-      "datasourceTemplate": "maven",
-      "depNameTemplate": "net.onelitefeather:falco-light"
-    }
-  ],
-  "packageRules": [
-    {
-      "matchPackageNames": ["net.onelitefeather:falco-anvil", "net.onelitefeather:falco-light"],
-      "registryUrls": [
-        "https://repo.onelitefeather.dev/onelitefeather"
-      ]
+      "registryUrlTemplate": "https://repo.onelitefeather.dev/releases"
     }
   ]
 }

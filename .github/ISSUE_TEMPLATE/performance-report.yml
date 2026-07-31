@@ -1,0 +1,132 @@
+name: "Performance report"
+description: "A measured regression, or a number that does not match the documented ones"
+title: "[Performance] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Read [`docs/benchmarks.md`](https://github.com/OneLiteFeatherNET/Falco/blob/main/docs/benchmarks.md)
+        before filing this.** Every number this project publishes comes from a JMH benchmark in
+        `falco-benchmarks`, and the conditions are published next to it. A number without its
+        methodology cannot be compared with one that has it, so this form asks for the methodology
+        first and the number second.
+
+        Three things that are otherwise reported as regressions and are not:
+
+        - **A `-f 1 -wi 1 -i 1` run proves nothing.** It proves the benchmark executes. Any
+          comparison needs the forks and iterations the annotations ask for.
+        - **Single-threaded, the loader is expected to be slower** than Minestom's. The three-stage
+          pipeline costs something to set up; the gain appears under contention, which is why the
+          JMH thread count (`-t`) is the parameter that matters for `RegionFileComparisonBenchmark`.
+        - **The library benchmarks exclude the registry** and are not comparable with the comparison
+          benchmarks that start a server. Compare a benchmark only against its own counterpart.
+
+        If you are reporting a *hang* or a *deadlock* rather than a slowdown, use the bug report form.
+  - type: dropdown
+    id: area
+    attributes:
+      label: "What did you measure?"
+      options:
+        - "falco-anvil — chunk load"
+        - "falco-anvil — chunk save"
+        - "falco-anvil — region file read/write"
+        - "falco-anvil — palette, packing or compression"
+        - "falco-light — block light"
+        - "falco-light — sky light"
+        - "falco-light — opacity table"
+        - "falco-instance"
+        - "Something else"
+    validations:
+      required: true
+  - type: textarea
+    id: claim
+    attributes:
+      label: "What did you observe, and what did you expect?"
+      description: "State both sides of the comparison: which two things you measured against each other (two Falco versions, Falco against Minestom, Falco against your own implementation) and by how much they differ."
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: "The exact command you ran"
+      description: "The full invocation, including every JMH flag. If you measured outside JMH, describe the harness instead — including warm-up, iteration count and how the JIT was prevented from removing the work."
+      render: shell
+      placeholder: |
+        ./gradlew jmhJar
+        java -jar falco-benchmarks/build/libs/falco-benchmarks-*-jmh.jar \
+            'LightEngineComparisonBenchmark.(falco|minestom)' \
+            -p emissionMix=UNIFORM -f 3 -wi 5 -i 10
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: "Raw output"
+      description: "The JMH result rows for both sides, **including the error margins**. `build/reports/jmh/human.txt` if you used the Gradle task. A mean without its error is not a result."
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: cpu
+    attributes:
+      label: "CPU and core count"
+      description: "Model name and the number of cores JMH could use. Every published figure in this repository was taken on a 16-core machine, and none of it is portable."
+      placeholder: "e.g. AMD Ryzen 9 7950X, 16 cores / 32 threads"
+    validations:
+      required: true
+  - type: input
+    id: threads
+    attributes:
+      label: "JMH thread count (`-t`)"
+      description: "Write `1` if you did not pass `-t`. For anything about lock granularity this is the decisive parameter — at `-t 1` the two loaders are level by design."
+      placeholder: "e.g. 1, 4, 8"
+    validations:
+      required: true
+  - type: dropdown
+    id: idle
+    attributes:
+      label: "Was the machine otherwise idle during the run?"
+      description: "Answer honestly — the figures in `STATUS.md` were taken on a machine that was not, and say so."
+      options:
+        - "Yes, nothing else was running"
+        - "No, other work was running"
+        - "Unsure"
+    validations:
+      required: true
+  - type: input
+    id: jvm
+    attributes:
+      label: "JVM"
+      description: "Vendor and full version, plus any non-default flags (GC, heap size, `-XX:` options)."
+      placeholder: "e.g. Temurin 25.0.1, -Xmx4g, default GC"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: "Operating system"
+      placeholder: "e.g. Ubuntu 24.04, Windows 11 24H2"
+    validations:
+      required: true
+  - type: input
+    id: falco-version
+    attributes:
+      label: "Falco version or commit"
+      description: "A commit hash is more useful than a version if you built from source."
+      placeholder: "e.g. 0.2.1, or 69381af"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional context"
+      description: "`-prof gc` output if the claim is about allocation, a link to a JMH Visualizer view, or the benchmark source if you wrote your own."
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: "Before submitting"
+      options:
+        - label: "I read `docs/benchmarks.md`, in particular \"What the numbers are not\"."
+          required: true
+        - label: "My run used the configured forks and iterations, not a single smoke run."
+          required: true

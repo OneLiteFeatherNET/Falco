@@ -1,0 +1,146 @@
+name: "Bug Report"
+description: "Report a bug"
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report.
+
+        Two things before you start:
+
+        - **Never report a security vulnerability here.** Use the [security policy](https://github.com/OneLiteFeatherNET/Falco/security/policy) instead.
+        - **Lost or corrupted world data belongs in the "Data loss or world corruption" form**, not this one. It asks for the world's provenance, which is what makes such a report actionable.
+
+        Everything Falco exposes carries `@ApiStatus.Experimental`. Signatures may change between
+        releases; a compile error after an upgrade is expected rather than a bug.
+
+        Most defects found in this code so far were races that failed **silently** — wrong light that
+        was never recomputed, a chunk read that was handed recycled sectors. The concurrency fields
+        below are required because a report without them usually cannot be reproduced at all.
+  - type: dropdown
+    id: module
+    attributes:
+      label: "Affected module"
+      description: "Where does the problem show up? Pick the closest match."
+      options:
+        - "falco-anvil (chunk loader, region files, NBT codec)"
+        - "falco-light (block light, sky light, propagation)"
+        - "falco-instance (FalcoInstance, FalcoChunk)"
+        - "falco-benchmarks (JMH)"
+        - "Build, publishing or artefact resolution"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: "Describe the bug"
+      description: |
+        A clear and concise description of what the bug is.
+        If you have a screenshot of the bug, please attach it below.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "What did you expect to happen instead?"
+      description: "If the expectation comes from the vanilla format, from Minestom's behaviour or from a document in this repository, say which."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "Steps to reproduce the bug"
+      description: "Tell us exactly how to reproduce the bug you are experiencing."
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: "How reproducible is it?"
+      description: "Answer honestly. \"Once, and never again\" is a useful answer here and points straight at a race."
+      options:
+        - "Every time"
+        - "Often, but not every time"
+        - "Rarely — seen a handful of times"
+        - "Once, and I have not reproduced it since"
+    validations:
+      required: true
+  - type: input
+    id: threads
+    attributes:
+      label: "How many threads were using Falco at the time?"
+      description: |
+        The number of threads that could touch the same `FalcoAnvilLoader` or `ChunkLightService`
+        concurrently. Write `1` if the code path was single-threaded. If chunk loading was driven by
+        Minestom, it starts one virtual thread per chunk, so the answer is usually "more than one".
+      placeholder: "e.g. 1, 8, or \"unknown — Minestom drove the loads\""
+    validations:
+      required: true
+  - type: input
+    id: cores
+    attributes:
+      label: "Available processors"
+      description: "The output of `Runtime.getRuntime().availableProcessors()` on the affected machine. Some defects here only appeared on low core counts, others only under real parallelism."
+      placeholder: "e.g. 16"
+    validations:
+      required: true
+  - type: input
+    id: falco-version
+    attributes:
+      label: "Falco version"
+      description: "The version of `falco-anvil` / `falco-light` / `falco-instance` you depend on, including `-SNAPSHOT` if applicable."
+      placeholder: "e.g. 0.2.1"
+    validations:
+      required: true
+  - type: input
+    id: minestom-version
+    attributes:
+      label: "Minestom version"
+      description: "Minestom is a `compileOnly` dependency, so you choose the version yourself and it is not implied by the Falco version. Falco is developed against `2026.06.20-26.1.2`."
+      placeholder: "e.g. 2026.06.20-26.1.2"
+    validations:
+      required: true
+  - type: input
+    id: java-version
+    attributes:
+      label: "Java version"
+      description: "The full first line of `java -version` for the JVM that runs the server. Falco requires Java 25."
+      placeholder: "e.g. openjdk version \"25.0.1\" 2025-10-21"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: "Operating system"
+      description: "Include the version. This is not boilerplate: file deletion and renaming behave differently on Windows, and one defect in this loader was reproducible on Windows only."
+      placeholder: "e.g. Windows 11 24H2, Ubuntu 24.04, macOS 15.1"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Stack trace and logs"
+      description: "The full stack trace, not just the exception type. Paste as text rather than as a screenshot so it stays searchable."
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional context"
+      description: "Anything else that might matter — how the loader is constructed, `openRegionLimit`, whether an `AbstractMapProvider` is involved, a minimal reproducer."
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: "Before submitting"
+      options:
+        - label: "I searched the existing issues and did not find this one already reported."
+          required: true
+        - label: "I am not reporting a security vulnerability (those go through the security policy)."
+          required: true
