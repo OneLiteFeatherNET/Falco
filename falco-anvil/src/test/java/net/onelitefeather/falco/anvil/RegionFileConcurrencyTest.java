@@ -476,10 +476,14 @@ class RegionFileConcurrencyTest extends FileTestBase {
                 futures.add(executor.submit(() -> {
                     awaitStart(start);
 
-                    while (written.getCount() > 0) {
+                    // A do-while, because this test asserts that the observed chunk was read at
+                    // least once. A plain while performs zero passes when the writers finish
+                    // before this task is scheduled, which fails the test for a reason unrelated
+                    // to what it verifies.
+                    do {
                         inspectRecycledRead(region, failures);
                         reads.incrementAndGet();
-                    }
+                    } while (written.getCount() > 0);
                     return null;
                 }));
             }

@@ -33,6 +33,13 @@ subprojects {
         options.release.set(25)
     }
 
+    // The conventions of this project ask for javadoc on every type and member, and the point of
+    // that rule is lost if a missing comment only produces a warning nobody reads in a CI log.
+    // -Werror turns doclint findings into a failed build, which is what makes the rule hold.
+    tasks.withType<Javadoc>().configureEach {
+        (options as StandardJavadocDocletOptions).addBooleanOption("Werror", true)
+    }
+
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
         // The chunk loader tests allocate payloads of about one mebibyte to cover the external

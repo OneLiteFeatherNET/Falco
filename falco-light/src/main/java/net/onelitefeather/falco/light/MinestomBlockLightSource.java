@@ -33,6 +33,16 @@ public final class MinestomBlockLightSource implements BlockLightSource {
             net.minestom.server.instance.block.BlockFace.values();
 
     /**
+     * Creates a source which answers from the block registry of the running server.
+     * <p>
+     * The instance holds no state of its own, so one is enough for a whole server and it can be
+     * handed to any number of threads.
+     * </p>
+     */
+    public MinestomBlockLightSource() {
+    }
+
+    /**
      * {@inheritDoc}
      */
     @Override

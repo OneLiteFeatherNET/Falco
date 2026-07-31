@@ -275,7 +275,11 @@ class LightEngineConcurrencyTest {
             futures.add(executor.submit(() -> {
                 awaitStart(start);
 
-                while (readersDone.getCount() > 0) {
+                // A do-while, because the assertion below requires the source to carry the
+                // mutation. A plain while can perform zero passes when the readers finish before
+                // this task is scheduled at all, which makes the test fail for a reason that has
+                // nothing to do with what it verifies.
+                do {
                     for (int y = 0; y < LightNibbles.DIMENSION; y++) {
                         for (int z = 0; z < LightNibbles.DIMENSION; z++) {
                             for (int x = 0; x < LightNibbles.DIMENSION; x++) {
@@ -283,7 +287,7 @@ class LightEngineConcurrencyTest {
                             }
                         }
                     }
-                }
+                } while (readersDone.getCount() > 0);
                 return null;
             }));
             start.countDown();
@@ -328,10 +332,13 @@ class LightEngineConcurrencyTest {
             futures.add(executor.submit(() -> {
                 awaitStart(start);
 
-                while (readersDone.getCount() > 0) {
+                // A do-while for the same reason as above: this test is named for the source
+                // growing an array, so a run in which the writer never got scheduled would pass
+                // without having tested anything.
+                do {
                     source.set(3, 4, 5, 1);
                     source.fill(7);
-                }
+                } while (readersDone.getCount() > 0);
                 return null;
             }));
             start.countDown();
