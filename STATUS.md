@@ -1,7 +1,7 @@
 # Status — Anvil chunk loader and light engine
 
-**392 tests** · `./gradlew build` green. 178 of them in `falco-anvil`, 178 in `falco-light`, 36 in
-`falco-instance`.
+**465 tests** · `./gradlew build` green. 178 of them in `falco-anvil`, 178 in `falco-light`, 36 in
+`falco-instance` and 73 in `falco-demo`.
 
 Everything here is experimental and opt-in. Nothing takes effect in a server that does not construct
 a `FalcoAnvilLoader`, a `FalcoInstance`, or reach the light engine either by calling a
@@ -46,7 +46,7 @@ pipeline below does, and what the measurements confirmed.
 | Annotations | `org.jetbrains:annotations:26.1.0` |
 | Tests | JUnit 6.1.0, Cyano `0.6.2` (`MicrotusExtension`) for anything needing a server |
 | Benchmarks | JMH 1.37 via `me.champeau.jmh` 0.7.3, in the separate `falco-benchmarks` module |
-| Build | Gradle 9.6.1, four modules on one shared version |
+| Build | Gradle 9.6.1, five modules on one shared version |
 
 `adventure-nbt`, `jetbrains-annotations` and `fastutil` are declared explicitly rather than taken
 transitively. The first two only reach the classpath through `compileOnly(minestom)`, so any direct
@@ -60,6 +60,11 @@ needed by the light equivalence test and the comparison benchmarks.
 ./gradlew :falco-anvil:test --tests "*Region*"   # a subset
 ./gradlew :falco-benchmarks:jmhJar               # build the benchmarks (they never run during build)
 java -jar falco-benchmarks/build/libs/falco-benchmarks-*-jmh.jar ScalingBenchmark -f 1 -wi 2 -i 3
+
+# Compare the two loaders on a world of your own: drop it into falco-demo/world first.
+# Run both with the SAME -Pthreads, or the two numbers answer different questions.
+./gradlew :falco-demo:runFalcoLoader    -Pthreads=4 -Pchunks=256
+./gradlew :falco-demo:runMinestomLoader -Pthreads=4 -Pchunks=256
 ```
 
 Two things that will otherwise cost an hour:
@@ -126,6 +131,14 @@ Verified against the sources or by running probe code. Knowing these prevents re
   counting on it unreliable.
 - `setChunkLoader` does **not** call `loadInstance` — only the constructor does. `AbstractMapProvider`
   sets the loader afterwards, so `level.dat` is never read there. Pre-existing, not introduced here.
+
+**A behavioural difference between the two Anvil loaders**
+- `net.minestom.server.instance.anvil.AnvilLoader(Path, Key)` resolves **only**
+  `dimensions/<namespace>/<value>/region`. It has no fallback to `worldRoot/region`, so it reads
+  nothing at all from a world in the pre-26.1 layout. The single-argument `AnvilLoader(Path)` is the
+  only way to reach such a world with it, and it is deprecated for removal.
+  `FalcoAnvilLoader#resolveRegionDirectory` handles both layouts. Found while building falco-demo,
+  where a comparison that missed this would have reported a fictional speedup.
 
 **What can and cannot be replaced**
 - `Palette` is `sealed ... permits PaletteImpl`. A foreign implementation is a hard compiler error,
@@ -264,6 +277,10 @@ falco-benchmarks/     not published. Holds every benchmark, because ScalingBench
                       from both sides. LightEngineComparisonBenchmark and
                       LightEngineStageBenchmark live in net.minestom.server.instance.light
                       because the methods they measure are package-private there
+
+falco-demo/           not published. A runnable comparison of the two loaders on a world the user
+                      supplies. Rough figures from one machine, not an instrument: falco-benchmarks
+                      stays the place where a number becomes evidence.
 ```
 
 Each module's `src/test/java` mirrors its own package; `*ConcurrencyTest` are the stress tests, and
