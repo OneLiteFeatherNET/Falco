@@ -1,16 +1,19 @@
 # Falco
 
 A high-performance Anvil chunk loader and light engine for
-[Minestom](https://github.com/Minestom/Minestom).
+[Minestom](https://github.com/Minestom/Minestom), plus an `Instance` implementation that cleans up
+after itself.
 
-Both replace something the platform already ships, and both exist for the same reason: the versions
-that come with the server serialise work that does not have to be serialised, and lose information
-that should not be lost.
+The first two replace something the platform already ships, and both exist for the same reason: the
+versions that come with the server serialise work that does not have to be serialised, and lose
+information that should not be lost. The third replaces something that works, for a reason that has
+nothing to do with speed — and it claims none.
 
 | Module | What it is |
 | --- | --- |
 | `falco-anvil` | A `ChunkLoader` for the Anvil region format. Genuinely parallel — reading, decompression and NBT parsing do not share one lock. A read failure throws instead of silently reporting the chunk as absent, so the server cannot overwrite real data with a freshly generated chunk. Unknown blocks and biomes survive a load/save round trip. |
 | `falco-light` | A block and sky light engine. Thread-safe per call and not tied to any chunk implementation — results are handed over through `Light#set`, so it works with chunk types Minestom's own engine ignores. |
+| `falco-instance` | An `Instance` and its `Chunk`. **No speed gain is claimed and none is measured**: chunk and entity ticking lives in the global `ThreadDispatcher` of the server process, not in the instance, so replacing the instance cannot make ticking faster. What it buys is an unload path of its own — `InstanceManager.unregisterInstance` skips the cleanup for anything that is not an `InstanceContainer` and leaks every chunk the instance ever loaded — and an implementation small enough to read and test. It cannot back a `SharedInstance`, the block batches do not see it, and it runs no generator. |
 
 ## What "high-performance" means here
 
@@ -147,12 +150,126 @@ looks like that. Detecting the case up front rather than walking 4 096 blocks:
 Where an idea did **not** pay off, that is written down too — see the rejected optimisations in
 `STATUS.md`, including the bucket queue that loses 5–7 % at equal source brightness.
 
-Both modules are **experimental**. Every public type carries `@ApiStatus.Experimental`; signatures
-and behaviour may still change in a minor release.
+All three modules are **experimental**. Every public type carries `@ApiStatus.Experimental`;
+signatures and behaviour may still change in a minor release.
+
+## Quick start
+
+From nothing to a server that serves a stored world, in four steps. The last one needs no client.
+
+### 1. Declare the dependency
+
+Minestom is `compileOnly` in Falco, so it does not arrive with these artefacts — declare the version
+you intend to run yourself.
+
+```kotlin
+repositories {
+    mavenCentral()
+    maven("https://repo.onelitefeather.dev/releases")
+}
+
+dependencies {
+    implementation("net.onelitefeather:falco-anvil:0.2.1")
+    implementation("net.onelitefeather:falco-light:0.2.1")
+
+    // Falco declares no version for this one, on purpose. You pick it.
+    implementation("net.minestom:minestom:<version>")
+}
+```
+
+Maven, snapshots and the third module are in [Using it](#using-it) below.
+
+### 2. Write the server
+
+```java
+import net.minestom.server.MinecraftServer;
+import net.minestom.server.coordinate.Pos;
+import net.minestom.server.event.instance.InstanceChunkLoadEvent;
+import net.minestom.server.event.player.AsyncPlayerConfigurationEvent;
+import net.minestom.server.instance.InstanceContainer;
+import net.minestom.server.world.DimensionType;
+import net.onelitefeather.falco.anvil.FalcoAnvilLoader;
+import net.onelitefeather.falco.light.ChunkLightService;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Path;
+
+public final class Bootstrap {
+
+    public static void main(String[] args) {
+        MinecraftServer server = MinecraftServer.init();
+
+        InstanceContainer instance = MinecraftServer.getInstanceManager()
+                .createInstanceContainer(DimensionType.OVERWORLD);
+
+        // The world root, not worlds/lobby/region. The instance keeps the loader for as long as it
+        // lives, so it is not closed here — that happens on shutdown, at the bottom.
+        FalcoAnvilLoader loader = new FalcoAnvilLoader(Path.of("worlds", "lobby"), DimensionType.OVERWORLD.key());
+        instance.setChunkLoader(loader);
+        instance.enableAutoChunkLoad(true);
+
+        // One service is enough. It keeps nothing between calls and may be used from any number of
+        // threads, which is what lets the chunks around several players be lit at the same time.
+        ChunkLightService lighting = new ChunkLightService();
+        MinecraftServer.getGlobalEventHandler().addListener(InstanceChunkLoadEvent.class, event ->
+                lighting.calculateWithNeighbours(event.getInstance(), event.getChunkX(), event.getChunkZ()));
+
+        MinecraftServer.getGlobalEventHandler().addListener(AsyncPlayerConfigurationEvent.class, event -> {
+            event.setSpawningInstance(instance);
+            event.getPlayer().setRespawnPoint(new Pos(0, 64, 0));
+        });
+
+        MinecraftServer.getSchedulerManager().buildShutdownTask(() -> {
+            instance.saveChunksToStorage().join();
+            try {
+                loader.close();
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+        });
+
+        server.start("0.0.0.0", 25565);
+    }
+}
+```
+
+### 3. Put a world where the loader looks
+
+`worlds/lobby/` is the **world root** — the directory that contains `region/`, or
+`dimensions/<namespace>/<value>/region/` in the 26.1 layout. The loader resolves the dimension
+directory first and falls back to the older one. Point it at `region/` itself and it will find
+nothing. `level.dat` is not read, so a directory holding only region files is enough.
+
+Run the class and connect to `localhost:25565`. Chunks are read as you walk, `close()` on shutdown
+flushes every open region file and writes the summary line.
+
+### 4. Check it without a client
+
+The same two operations without a listener around them, on a chunk of your choosing:
+
+```java
+Chunk chunk = instance.loadChunk(0, 0).join();
+lighting.calculate(chunk);
+
+int level = lighting.blockLightAt(chunk, 8, 40, 8);
+System.out.println("block light at 8/40/8 is " + level);
+```
+
+A non-zero level for a lit position means the loader read the chunk and the engine lit it.
+
+One honest note about the lighting in both steps. If the region files already carry light, it
+recomputes what is already stored, because loading applies the stored arrays and clears the update
+flag — for a pre-lit world the engine is doing work nobody asked for. It earns its keep on worlds
+without stored light and after blocks change at runtime. Which case is which is spelled out in
+[`docs/light-engine.md`](docs/light-engine.md).
 
 ## Using it
 
-Both modules are published to the OneLiteFeather Reposilite, which serves them without
+The quick start above shows the short version. This section has the rest: Maven, snapshots, and the
+module that has no release yet.
+
+Both released modules are published to the OneLiteFeather Reposilite, which serves them without
 authentication:
 
 ```kotlin
@@ -164,6 +281,21 @@ repositories {
 dependencies {
     implementation("net.onelitefeather:falco-anvil:0.2.1")
     implementation("net.onelitefeather:falco-light:0.2.1")
+}
+```
+
+`falco-instance` is **not on the release endpoint** — it has never been released, so there is no
+coordinate there that would resolve. It exists only as a snapshot:
+
+```kotlin
+repositories {
+    maven("https://repo.onelitefeather.dev/snapshots")
+}
+
+dependencies {
+    // Written in the three-argument form on purpose: the README updater in renovate.json rewrites
+    // the "group:name:version" form to the latest release, and this module does not have one.
+    implementation("net.onelitefeather", "falco-instance", "0.2.2-SNAPSHOT")
 }
 ```
 
@@ -220,13 +352,38 @@ instance.enableAutoChunkLoad(true);
 ```
 
 ```java
-ChunkLightService lighting = new ChunkLightService();   // one per worker thread
+ChunkLightService lighting = new ChunkLightService();   // one is enough, it is safe to share
 
 lighting.calculate(chunk);
 int level = lighting.blockLightAt(chunk, 8, 40, 8);
 ```
 
 The light engine works on any chunk, whichever loader produced it.
+
+`falco-instance` replaces the instance rather than something inside it, so it is used at the point
+where the world is created instead of being handed to one. The one call it asks you to remember is
+the last:
+
+```java
+InstanceManager manager = MinecraftServer.getInstanceManager();
+FalcoAnvilLoader loader = new FalcoAnvilLoader(Path.of("worlds", "arena"), DimensionType.OVERWORLD.key());
+
+FalcoInstance instance = new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD, loader);
+manager.registerInstance(instance);
+
+// Not manager.unregisterInstance(instance): for anything that is not an InstanceContainer that one
+// leaves every loaded chunk, its tick partition and its entities behind.
+instance.unregister(manager);
+```
+
+A foreign instance has to be registered by hand, which is what `registerInstance` above does. The
+chunk supplier stays at `FalcoChunk::new` — the lifecycle hooks a chunk needs to be marked unloaded
+are `protected` in Minestom's own package, so any other chunk type is refused rather than accepted
+and then left unloadable. What this instance will not do is generate: `setGenerator` throws instead
+of storing a generator that nothing would call. A generated world stays with `InstanceContainer`,
+and so does anything backing a `SharedInstance` or built through the block batches. The reasoning,
+and the four places where Minestom quietly treats a foreign instance differently, are in
+[`docs/rationale/instances-and-chunks.md`](docs/rationale/instances-and-chunks.md).
 
 ## Documentation
 
@@ -238,6 +395,34 @@ The light engine works on any chunk, whichever loader produced it.
 - [`docs/benchmarks.md`](docs/benchmarks.md) — how it was measured and against what
 - [`STATUS.md`](STATUS.md) — the state of the project and the findings that cost real effort to
   establish
+
+### API documentation
+
+**There is no rendered Javadoc on the web, and no javadoc.io page.** Falco is not published to Maven
+Central, which is the only thing javadoc.io renders from, so there is nothing to link to there. What
+does exist is the `-javadoc.jar` the build attaches to every published module, and a Gradle task
+that produces the same pages locally.
+
+Each published version carries its javadoc jar next to the main jar:
+
+| Module | Javadoc jar |
+| --- | --- |
+| `falco-anvil` | [`falco-anvil-0.2.1-javadoc.jar`](https://repo.onelitefeather.dev/releases/net/onelitefeather/falco-anvil/0.2.1/falco-anvil-0.2.1-javadoc.jar) |
+| `falco-light` | [`falco-light-0.2.1-javadoc.jar`](https://repo.onelitefeather.dev/releases/net/onelitefeather/falco-light/0.2.1/falco-light-0.2.1-javadoc.jar) |
+| `falco-instance` | No release. The [snapshot directory](https://repo.onelitefeather.dev/snapshots/net/onelitefeather/falco-instance/0.2.2-SNAPSHOT/) holds one under a timestamped file name that changes with every push. |
+
+Unzip one and open `index.html`, or leave it to the IDE: with the dependency declared, *Download
+Sources and Documentation* in IntelliJ IDEA — and the equivalent in Eclipse — fetches that same jar
+from the same repository and attaches it to the classes.
+
+To build the pages from source instead:
+
+```bash
+./gradlew javadoc     # falco-<module>/build/docs/javadoc/index.html, one tree per module
+```
+
+That is a build of this project, so it needs the credentials described under
+[Building](#building). Downloading a published javadoc jar needs none.
 
 ### Why it is built this way
 
