@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/OneLiteFeatherNET/Falco/compare/v0.2.0...v0.2.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **test:** stop the concurrency stress tests from hanging the pipeline ([fbb4121](https://github.com/OneLiteFeatherNET/Falco/commit/fbb4121013d384b9c9d47ed68ab7890da2ce0361))
+
 ## [0.2.0](https://github.com/OneLiteFeatherNET/Falco/compare/v0.1.0...v0.2.0) (2026-07-31)
 
 

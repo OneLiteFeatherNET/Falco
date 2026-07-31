@@ -5,7 +5,7 @@
 // The two published modules always release together, so the version is declared once here and
 // inherited by every subproject. Release Please rewrites this single line; nothing else in the
 // build carries a version number.
-version = "0.2.0" // x-release-please-version
+version = "0.2.1" // x-release-please-version
 
 subprojects {
     apply(plugin = "java-library")
