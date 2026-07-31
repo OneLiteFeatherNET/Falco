@@ -159,14 +159,32 @@ authentication:
 repositories {
     mavenCentral()
     maven("https://repo.onelitefeather.dev/releases")
-    // snapshots: https://repo.onelitefeather.dev/snapshots
 }
 
 dependencies {
-    implementation("net.onelitefeather:falco-anvil:0.1.0")
-    implementation("net.onelitefeather:falco-light:0.1.0")
+    implementation("net.onelitefeather:falco-anvil:0.2.1")
+    implementation("net.onelitefeather:falco-light:0.2.1")
 }
 ```
+
+<details>
+<summary>Snapshots</summary>
+
+Every push to `main` that does not cut a release publishes to a second endpoint, public in the same
+way:
+
+```kotlin
+repositories {
+    maven("https://repo.onelitefeather.dev/snapshots")
+}
+```
+
+The coordinates stay the same; only the version changes. It is the released version with its patch
+bumped and `-SNAPSHOT` appended — so while `0.2.1` is the latest release, the snapshot endpoint
+serves `0.2.2-SNAPSHOT`. That version keeps moving as commits land, which is the point of it and
+also the reason not to build a release of your own against it.
+
+</details>
 
 <details>
 <summary>Maven</summary>
@@ -176,6 +194,15 @@ dependencies {
   <id>onelitefeater-repository-releases</id>
   <name>OneLiteFeather Network Reposilite Repository</name>
   <url>https://repo.onelitefeather.dev/releases</url>
+</repository>
+
+<repository>
+  <id>onelitefeater-repository-snapshots</id>
+  <name>OneLiteFeather Network Reposilite Repository</name>
+  <url>https://repo.onelitefeather.dev/snapshots</url>
+  <snapshots>
+    <enabled>true</enabled>
+  </snapshots>
 </repository>
 ```
 

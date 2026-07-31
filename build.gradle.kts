@@ -73,9 +73,9 @@ subprojects {
     }
 }
 
-// Only the two library modules are published. falco-benchmarks deliberately never applies
+// Only the library modules are published. falco-benchmarks deliberately never applies
 // maven-publish, so a `./gradlew publish` at the root passes over it without a task exclusion.
-configure(listOf(project(":falco-anvil"), project(":falco-light"))) {
+configure(listOf(project(":falco-anvil"), project(":falco-light"), project(":falco-instance"))) {
     apply(plugin = "maven-publish")
 
     extensions.configure<JavaPluginExtension> {

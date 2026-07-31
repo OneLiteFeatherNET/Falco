@@ -99,8 +99,9 @@ Gradle through the `build-task` and `publish-task` inputs of the reusable workfl
 to `./gradlew` verbatim — it offers no input for properties or environment. Check the result with
 `./gradlew -Psnapshot properties | grep '^version:'`.
 
-Both endpoints are public, so a consumer of an artefact needs no credentials. Neither of them exists
-on the Reposilite instance yet, and a publish will fail with 404 until they are created.
+Both endpoints are public, so a consumer of an artefact needs no credentials. Both exist on the
+Reposilite instance and both have been written to: `/releases` serves `0.2.1` of either module, and
+`/snapshots` serves `0.2.2-SNAPSHOT`, put there by the first push after that release.
 
 ## Facts that cost real effort to establish
 

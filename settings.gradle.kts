@@ -2,6 +2,7 @@ rootProject.name = "falco"
 
 include("falco-anvil")
 include("falco-light")
+include("falco-instance")
 include("falco-benchmarks")
 
 dependencyResolutionManagement {
