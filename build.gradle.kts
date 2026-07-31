@@ -5,7 +5,7 @@
 // The two published modules always release together, so the version is declared once here and
 // inherited by every subproject. Release Please rewrites this single line; nothing else in the
 // build carries a version number.
-version = "0.2.1" // x-release-please-version
+version = "0.3.0" // x-release-please-version
 
 // Every push to main that does not cut a release publishes the current state as a snapshot, and the
 // derivation happens here rather than on the command line: a `-Pversion=…` would be silently
