@@ -39,6 +39,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.stream.Stream;
 
 /**
  * The {@link FalcoAnvilLoader} class loads and saves chunks in the Anvil format and replaces the
@@ -104,6 +105,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     private final int openRegionLimit;
     private final int compressionLevel;
     private final Path regionDirectory;
+    private final boolean legacyLayout;
     private final String dimensionLabel;
     private final AnvilDiagnostics diagnostics;
     private final PaletteEntryResolver blockResolver;
@@ -143,9 +145,12 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         if (openRegionLimit <= 0) {
             throw new IllegalArgumentException("The amount of open region files must be positive but was " + openRegionLimit);
         }
+        ResolvedRegionDirectory resolved = resolveRegionDirectory(worldRoot, dimension);
+
         this.openRegionLimit = openRegionLimit;
         this.compressionLevel = ChunkCompression.DEFAULT_LEVEL;
-        this.regionDirectory = resolveRegionDirectory(worldRoot, dimension);
+        this.regionDirectory = resolved.directory();
+        this.legacyLayout = resolved.legacyLayout();
         this.dimensionLabel = dimension.asString();
         this.diagnostics = new AnvilDiagnostics();
         this.blockResolver = new BlockPaletteResolver(this.diagnostics);
@@ -155,7 +160,34 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         this.saveLimit = new Semaphore(Math.max(Runtime.getRuntime().availableProcessors(), 2));
         this.dataVersion = MinecraftServer.DATA_VERSION;
 
-        LOGGER.info("Opening the anvil loader for region={} dim={}", this.regionDirectory, this.dimensionLabel);
+        // Which directory was chosen, and how many region files are in it, is the first thing
+        // somebody needs when a loader returns no chunks. Without this line the choice between the
+        // two layouts happens invisibly, and a world whose files sit in the other one looks exactly
+        // like a world which is empty.
+        LOGGER.info(
+                "Opening the anvil loader for region={} layout={} exists={} regionFiles={} dim={}",
+                this.regionDirectory,
+                this.legacyLayout ? "legacy <world>/region" : "dimension <world>/dimensions/<namespace>/<value>/region",
+                Files.isDirectory(this.regionDirectory),
+                describeRegionFileCount(this.regionDirectory),
+                this.dimensionLabel
+        );
+    }
+
+    /**
+     * Counts the region files of a directory for the opening log line.
+     *
+     * @param directory the directory which holds the region files
+     * @return the amount of region files, or a word for a directory which cannot be listed
+     */
+    private static String describeRegionFileCount(Path directory) {
+        try (Stream<Path> entries = Files.list(directory)) {
+            return Long.toString(entries.filter(entry -> entry.getFileName().toString().endsWith(".mca")).count());
+        } catch (IOException exception) {
+            // A directory which is absent is the interesting case here and is already reported by
+            // the exists flag of the same line, so the failure itself needs no stack trace.
+            return "unreadable";
+        }
     }
 
     /**
@@ -165,17 +197,36 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      *
      * @param worldRoot the root directory of the world
      * @param dimension the key of the dimension
-     * @return the directory which holds the region files
+     * @return the directory which holds the region files and the layout it came from
      */
     @Contract(pure = true)
-    private static Path resolveRegionDirectory(Path worldRoot, Key dimension) {
+    private static ResolvedRegionDirectory resolveRegionDirectory(Path worldRoot, Key dimension) {
         Path current = worldRoot.resolve("dimensions").resolve(dimension.namespace()).resolve(dimension.value()).resolve("region");
         Path legacy = worldRoot.resolve("region");
 
         if (!Files.isDirectory(current) && Files.isDirectory(legacy)) {
-            return legacy;
+            return new ResolvedRegionDirectory(legacy, true);
         }
-        return current;
+        return new ResolvedRegionDirectory(current, false);
+    }
+
+    /**
+     * The {@link ResolvedRegionDirectory} record names the directory a loader reads from together
+     * with the layout which produced it.
+     * <p>
+     * The layout travels with the path because the two are only equivalent when the world is
+     * healthy. A directory which came out of the dimension layout and holds nothing is a different
+     * situation from a world which has no region files at all, and the difference is invisible in
+     * the path alone.
+     * </p>
+     *
+     * @param directory    the directory which holds the region files
+     * @param legacyLayout whether the directory came from the layout without a dimension directory
+     * @author TheMeinerLP
+     * @version 1.0.0
+     * @since 0.1.0
+     */
+    private record ResolvedRegionDirectory(Path directory, boolean legacyLayout) {
     }
 
     /**
@@ -203,6 +254,12 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         }
 
         if (handle == null) {
+            if (this.diagnostics.reportMissingRegionFile()) {
+                LOGGER.debug(
+                        "Skipping a chunk whose region file does not exist chunk=[{},{}] region={} dim={}",
+                        chunkX, chunkZ, this.regionDirectory, this.dimensionLabel
+                );
+            }
             return null;
         }
 
@@ -216,16 +273,26 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             }
 
             if (raw == null) {
+                if (this.diagnostics.reportMissingChunkEntry()) {
+                    LOGGER.debug(
+                            "Skipping a chunk which its region file holds no entry for chunk=[{},{}] region={} dim={}",
+                            chunkX, chunkZ, this.regionDirectory, this.dimensionLabel
+                    );
+                }
                 return null;
             }
 
             CompoundBinaryTag data = TAG_READER.read(new ByteArrayInputStream(raw.decompress()), BinaryTagIO.Compression.NONE);
+            String status = chunkStatus(data);
 
-            if (!isFullyGenerated(data)) {
-                if (this.diagnostics.reportPartialChunk()) {
+            if (!isFullyGenerated(status)) {
+                // The status is the whole content of this report. Without it the line says that
+                // something is wrong with the world without saying what, which is what sent the
+                // reader of a run that returned nothing looking through a debugger.
+                if (this.diagnostics.reportPartialChunk(status == null ? AnvilDiagnostics.UNKNOWN_STATUS : status)) {
                     LOGGER.warn(
-                            "Skipping a chunk which is not fully generated chunk=[{},{}] region={} dim={}",
-                            chunkX, chunkZ, this.regionDirectory, this.dimensionLabel
+                            "Skipping a chunk which is not fully generated chunk=[{},{}] status={} region={} dim={}",
+                            chunkX, chunkZ, status, this.regionDirectory, this.dimensionLabel
                     );
                 }
                 return null;
@@ -511,6 +578,31 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     }
 
     /**
+     * Returns the directory this loader reads its region files from.
+     * <p>
+     * Exposed because the directory is resolved from the world root and the dimension rather than
+     * given, so a caller which returned no chunks cannot otherwise tell whether the loader was
+     * looking where the caller expected it to.
+     * </p>
+     *
+     * @return the resolved region directory
+     */
+    @Contract(pure = true)
+    public Path regionDirectory() {
+        return this.regionDirectory;
+    }
+
+    /**
+     * Returns whether the region directory came from the layout without a dimension directory.
+     *
+     * @return true if the region files sit directly under the world root, otherwise false
+     */
+    @Contract(pure = true)
+    public boolean legacyLayout() {
+        return this.legacyLayout;
+    }
+
+    /**
      * Closes every region file the loader opened and reports a summary of its work.
      * <p>
      * A loader is closed while the tasks of the server are still running, because the loader reports
@@ -568,22 +660,75 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      */
     private void logSummary() {
         long errors = this.diagnostics.errors();
-        String message = "Closing the anvil loader after {} loaded and {} saved chunks with {} errors,"
+        String message = "Closing the anvil loader after {} loaded, {} skipped and {} saved chunks with {} errors,"
                 + " {} unknown blocks and {} unknown biomes region={} dim={}";
 
         if (errors > 0) {
             LOGGER.warn(
-                    message, this.diagnostics.chunksLoaded(), this.diagnostics.chunksSaved(), errors,
+                    message, this.diagnostics.chunksLoaded(), this.diagnostics.chunksSkipped(),
+                    this.diagnostics.chunksSaved(), errors,
                     this.diagnostics.unknownBlockCount(), this.diagnostics.unknownBiomeCount(),
                     this.regionDirectory, this.dimensionLabel
             );
+        } else {
+            LOGGER.info(
+                    message, this.diagnostics.chunksLoaded(), this.diagnostics.chunksSkipped(),
+                    this.diagnostics.chunksSaved(), errors,
+                    this.diagnostics.unknownBlockCount(), this.diagnostics.unknownBiomeCount(),
+                    this.regionDirectory, this.dimensionLabel
+            );
+        }
+        logSkipSummary();
+    }
+
+    /**
+     * Writes the breakdown of the skipped chunks, but only for a run which skipped anything.
+     * <p>
+     * A separate line rather than more fields on the one above, because the three reasons only
+     * matter when at least one of them fired and a normal shutdown should not have to be read
+     * around them. On the run this exists for they are the whole message: a loader which returned
+     * nothing has to say which of the three reasons it returned nothing for.
+     * </p>
+     */
+    private void logSkipSummary() {
+        long skipped = this.diagnostics.chunksSkipped();
+
+        if (skipped == 0) {
             return;
         }
-        LOGGER.info(
-                message, this.diagnostics.chunksLoaded(), this.diagnostics.chunksSaved(), errors,
-                this.diagnostics.unknownBlockCount(), this.diagnostics.unknownBiomeCount(),
-                this.regionDirectory, this.dimensionLabel
+        LOGGER.warn(
+                "The anvil loader skipped {} chunks: {} had no region file, {} had no entry in their region file"
+                        + " and {} are not fully generated {} region={} dim={}",
+                skipped,
+                this.diagnostics.chunksSkippedWithoutRegionFile(),
+                this.diagnostics.chunksSkippedWithoutEntry(),
+                this.diagnostics.chunksSkippedAsPartial(),
+                describeStatuses(this.diagnostics.partialChunkStatuses()),
+                this.regionDirectory,
+                this.dimensionLabel
         );
+    }
+
+    /**
+     * Renders the status values of the partially generated chunks with their counts.
+     *
+     * @param statuses the amount of chunks per status value
+     * @return the rendered status values, or a word for a run which saw none
+     */
+    @Contract(pure = true)
+    private static String describeStatuses(Map<String, Long> statuses) {
+        if (statuses.isEmpty()) {
+            return "(no status seen)";
+        }
+        StringBuilder rendered = new StringBuilder("(");
+
+        for (Map.Entry<String, Long> entry : statuses.entrySet()) {
+            if (rendered.length() > 1) {
+                rendered.append(", ");
+            }
+            rendered.append(entry.getKey()).append(" x").append(entry.getValue());
+        }
+        return rendered.append(')').toString();
     }
 
     /**
@@ -793,20 +938,33 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     }
 
     /**
-     * Checks whether the given chunk data describes a fully generated chunk.
+     * Reads the generation status of the given chunk data.
      * The key is read in both spellings because Minestom writes it in lower case while the game
      * itself writes it capitalised.
      *
-     * @param data the chunk data to check
-     * @return true if the chunk is fully generated, otherwise false
+     * @param data the chunk data to read
+     * @return the stored status, or null if the chunk carries none
      */
     @Contract(pure = true)
-    private static boolean isFullyGenerated(CompoundBinaryTag data) {
+    private static @Nullable String chunkStatus(CompoundBinaryTag data) {
         String status = NbtReads.optionalString(data, STATUS_KEY);
 
         if (status == null) {
             status = NbtReads.optionalString(data, LEGACY_STATUS_KEY);
         }
+        return status;
+    }
+
+    /**
+     * Checks whether the given status describes a fully generated chunk.
+     * A chunk without a status counts as generated, because a world written by a tool which does
+     * not store one would otherwise be unreadable in its entirety.
+     *
+     * @param status the stored status, or null if the chunk carries none
+     * @return true if the chunk is fully generated, otherwise false
+     */
+    @Contract(pure = true)
+    private static boolean isFullyGenerated(@Nullable String status) {
         return status == null || FULL_STATUS.equals(status);
     }
 

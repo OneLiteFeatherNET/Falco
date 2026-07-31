@@ -196,6 +196,34 @@ class WorldLocatorTest {
     }
 
     @Test
+    void testAnEmptyDimensionDirectoryNextToAFilledLegacyOneIsCalledOut() throws IOException {
+        // The trap this sentence exists for: the region files are right there in 'region', and an
+        // empty dimension directory hides them from every loader because the dimension layout wins
+        // as long as its directory exists. Without the hint the reader is pointed at a directory
+        // they never created and told there is nothing in it.
+        Path worldRoot = this.worldsDirectory.resolve("survival");
+        Files.createDirectories(worldRoot.resolve("dimensions/minecraft/overworld/region"));
+        withRegionFile(worldRoot.resolve("region"));
+
+        String reason = reasonOf(WorldLocator.locate(this.worldsDirectory, OVERWORLD));
+
+        assertTrue(reason.contains("no .mca file"), reason);
+        assertTrue(reason.contains(worldRoot.resolve("region").toString()), reason);
+        assertTrue(reason.contains("wins over"), reason);
+    }
+
+    @Test
+    void testAnEmptyRegionDirectoryWithoutALegacyOneCarriesNoHint() throws IOException {
+        Path worldRoot = this.worldsDirectory.resolve("survival");
+        Files.createDirectories(worldRoot.resolve("dimensions/minecraft/overworld/region"));
+
+        String reason = reasonOf(WorldLocator.locate(this.worldsDirectory, OVERWORLD));
+
+        assertTrue(reason.contains("no .mca file"), reason);
+        assertFalse(reason.contains("wins over"), reason);
+    }
+
+    @Test
     void testAWorldIsRecognisedByItsLevelDataAlone() throws IOException {
         // A world whose region directory was moved away still has to be recognised, so the reason
         // can name the missing region directory instead of claiming the folder is not a world.

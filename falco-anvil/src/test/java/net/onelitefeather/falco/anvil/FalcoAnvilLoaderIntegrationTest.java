@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -442,6 +443,133 @@ class FalcoAnvilLoaderIntegrationTest {
 
             assertNotNull(reloaded);
             assertEquals(Block.STONE, blockAt(reloaded, 0, 40, 0));
+        }
+    }
+
+    @Test
+    void testAChunkWithoutARegionFileIsCountedAsSkipped(Env env) throws IOException {
+        Instance instance = env.createEmptyInstance(loader());
+
+        try (FalcoAnvilLoader loader = loader()) {
+            assertNull(loader.loadChunk(instance, 0, 0));
+
+            assertEquals(1, loader.diagnostics().chunksSkippedWithoutRegionFile());
+            assertEquals(0, loader.diagnostics().chunksSkippedWithoutEntry());
+            assertEquals(0, loader.diagnostics().chunksSkippedAsPartial());
+        }
+    }
+
+    @Test
+    void testAChunkWithoutAnEntryInItsRegionFileIsCountedAsSkipped(Env env) throws IOException {
+        // The region file exists because a neighbour of the chunk was written into it, so the two
+        // reasons "no file at all" and "no entry in the file" can only be told apart by the counter.
+        Instance instance = env.createEmptyInstance(loader());
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        place(chunk, 0, 40, 0, Block.STONE);
+
+        try (FalcoAnvilLoader writer = loader()) {
+            writer.saveChunk(chunk);
+        }
+
+        try (FalcoAnvilLoader loader = loader()) {
+            assertNull(loader.loadChunk(instance, 1, 1));
+
+            assertEquals(0, loader.diagnostics().chunksSkippedWithoutRegionFile());
+            assertEquals(1, loader.diagnostics().chunksSkippedWithoutEntry());
+            assertEquals(0, loader.diagnostics().chunksSkippedAsPartial());
+        }
+    }
+
+    @Test
+    void testAPartiallyGeneratedChunkIsCountedUnderItsStatus(Env env) throws IOException {
+        // minecraft:features is what a chunk carries which the game generated but never finished,
+        // and it is the value a user has to see instead of a bare "not fully generated".
+        Instance instance = env.createEmptyInstance(loader());
+        writeRawChunk(0, 0, net.kyori.adventure.nbt.CompoundBinaryTag.builder()
+                .putString("Status", "minecraft:features")
+                .build());
+        writeRawChunk(1, 0, net.kyori.adventure.nbt.CompoundBinaryTag.builder()
+                .putString("Status", "minecraft:features")
+                .build());
+        writeRawChunk(2, 0, net.kyori.adventure.nbt.CompoundBinaryTag.builder()
+                .putString("status", "minecraft:noise")
+                .build());
+
+        try (FalcoAnvilLoader loader = loader()) {
+            assertNull(loader.loadChunk(instance, 0, 0));
+            assertNull(loader.loadChunk(instance, 1, 0));
+            assertNull(loader.loadChunk(instance, 2, 0));
+
+            assertEquals(3, loader.diagnostics().chunksSkippedAsPartial());
+            assertEquals(
+                    java.util.Map.of("minecraft:features", 2L, "minecraft:noise", 1L),
+                    loader.diagnostics().partialChunkStatuses()
+            );
+            assertEquals(0, loader.diagnostics().chunksSkippedWithoutRegionFile());
+            assertEquals(0, loader.diagnostics().chunksSkippedWithoutEntry());
+        }
+    }
+
+    @Test
+    void testTheResolvedRegionDirectoryIsTheDimensionOne() throws IOException {
+        Files.createDirectories(this.worldRoot.resolve("dimensions/minecraft/overworld/region"));
+
+        try (FalcoAnvilLoader loader = loader()) {
+            assertEquals(this.worldRoot.resolve("dimensions/minecraft/overworld/region"), loader.regionDirectory());
+            assertFalse(loader.legacyLayout());
+        }
+    }
+
+    @Test
+    void testTheResolvedRegionDirectoryFallsBackToTheOlderLayout() throws IOException {
+        Files.createDirectories(this.worldRoot.resolve("region"));
+
+        try (FalcoAnvilLoader loader = loader()) {
+            assertEquals(this.worldRoot.resolve("region"), loader.regionDirectory());
+            assertTrue(loader.legacyLayout());
+        }
+    }
+
+    @Test
+    void testAnEmptyDimensionDirectoryStillWinsOverAFilledOlderOne(Env env) throws IOException {
+        // This is the trap the diagnostics exist for, not a behaviour anybody decided on: an empty
+        // dimension directory next to a filled 'region' one sends the loader looking into the empty
+        // one while every tool which scans the world finds the chunks in the other. The test pins
+        // the behaviour so a later fix has to change it deliberately, and it checks that the
+        // counters name what happened.
+        Instance instance = env.createEmptyInstance(loader());
+        Files.createDirectories(this.worldRoot.resolve("dimensions/minecraft/overworld/region"));
+        Files.createDirectories(this.worldRoot.resolve("region"));
+
+        try (FalcoAnvilLoader loader = loader()) {
+            assertEquals(this.worldRoot.resolve("dimensions/minecraft/overworld/region"), loader.regionDirectory());
+            assertNull(loader.loadChunk(instance, 0, 0));
+            assertEquals(1, loader.diagnostics().chunksSkippedWithoutRegionFile());
+        }
+    }
+
+    /**
+     * Writes chunk data straight into the region file of the temporary world.
+     * <p>
+     * The loader itself only ever writes a chunk which is fully generated, so a chunk with any
+     * other status has to be placed by hand.
+     * </p>
+     *
+     * @param chunkX the absolute chunk x coordinate
+     * @param chunkZ the absolute chunk z coordinate
+     * @param data   the chunk data to store
+     * @throws IOException if the chunk cannot be written
+     */
+    private void writeRawChunk(int chunkX, int chunkZ, net.kyori.adventure.nbt.CompoundBinaryTag data) throws IOException {
+        Path directory = this.worldRoot.resolve("dimensions/minecraft/overworld/region");
+        Files.createDirectories(directory);
+        java.io.ByteArrayOutputStream target = new java.io.ByteArrayOutputStream();
+        net.kyori.adventure.nbt.BinaryTagIO.writer().writeNamed(
+                java.util.Map.entry("", data), target, net.kyori.adventure.nbt.BinaryTagIO.Compression.NONE
+        );
+
+        try (RegionFile file = RegionFile.open(directory.resolve("r." + (chunkX >> 5) + "." + (chunkZ >> 5) + ".mca"))) {
+            file.writeRaw(chunkX, chunkZ, ChunkCompression.ZLIB, ChunkCompression.ZLIB.compress(target.toByteArray()));
         }
     }
 

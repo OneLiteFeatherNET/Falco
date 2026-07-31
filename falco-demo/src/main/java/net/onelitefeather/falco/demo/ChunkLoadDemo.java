@@ -105,6 +105,14 @@ public final class ChunkLoadDemo {
 
             LoadMeasurement.Result result = LoadMeasurement.run(loader, instance, chunks, options);
             System.out.print(DemoReport.render(options, world, chunks.size(), result, DemoReport.Environment.current()));
+
+            // A run which returned nothing has measured nothing, and the report above says so only
+            // in a single field. The counters are read here rather than inside the report, because
+            // they have to be taken from the loader before the finally block closes it.
+            if (result.mostLoadedChunks() == 0) {
+                System.out.println();
+                System.out.print(DemoReport.emptyResult(options, world, chunks.size(), LoaderDiagnosis.of(loader)));
+            }
         } finally {
             if (loader instanceof AutoCloseable closeable) {
                 closeable.close();

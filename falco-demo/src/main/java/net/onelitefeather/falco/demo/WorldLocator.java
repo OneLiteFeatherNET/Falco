@@ -140,8 +140,19 @@ public final class WorldLocator {
         }
 
         if (!containsRegionFile(regionDirectory)) {
+            // An empty dimension directory next to a filled legacy one is the one case where the
+            // reader is pointed at a path they may never have created while their chunks sit in
+            // plain sight one level up. Naming both paths is the difference between "there is
+            // nothing here" and "your files are here and something else is being read".
+            String hint = !legacyLayout && containsRegionFile(legacy)
+                    ? ". The older layout of the same world does hold region files in " + legacy
+                    + ", and the dimension layout wins over it as long as its directory exists — so an empty "
+                    + "dimension directory hides them from the loaders. Remove " + regionDirectory
+                    + " or move the region files into it"
+                    : "";
+
             return new WorldSearchResult.Missing(
-                    regionDirectory + " holds no " + REGION_SUFFIX + " file, so there is no chunk to load"
+                    regionDirectory + " holds no " + REGION_SUFFIX + " file, so there is no chunk to load" + hint
             );
         }
 

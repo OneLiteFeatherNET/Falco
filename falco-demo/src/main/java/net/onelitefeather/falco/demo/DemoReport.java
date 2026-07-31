@@ -2,12 +2,14 @@ package net.onelitefeather.falco.demo;
 
 import net.minestom.server.MinecraftServer;
 import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.Nullable;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The {@link DemoReport} class turns a finished run into the text the user reads.
@@ -191,6 +193,144 @@ public final class DemoReport {
         report.append('\n');
         rule(report);
         return report.toString();
+    }
+
+    /**
+     * Renders the explanation for a run which got no chunk back at all.
+     * <p>
+     * A run reports zero because the chunk list is built from the location tables of the region
+     * files and never from the loader, so the chunks provably exist while the loader returns none
+     * of them. Printing a bare zero under that heading is the worst possible outcome: it is the one
+     * number which says nothing about its own cause, and every one of the causes is invisible from
+     * the outside. So the counters of the loader are printed instead — how many chunks had no
+     * region file, how many had no entry in one, how many are not fully generated and under which
+     * status — together with the directory the loader really read, which is not necessarily the one
+     * the chunk list came from.
+     * </p>
+     *
+     * @param options         the options the run was started with
+     * @param world           the world the chunk list was built from
+     * @param askedChunkCount the number of chunks a round asked for
+     * @param diagnosis       the counters of the loader, or null if the loader keeps none
+     * @return the explanation, ready to be printed
+     */
+    public static String emptyResult(
+            DemoOptions options,
+            WorldSearchResult.Located world,
+            int askedChunkCount,
+            @Nullable LoaderDiagnosis diagnosis
+    ) {
+        StringBuilder report = new StringBuilder();
+
+        heading(report, "Falco chunk loading demo — the loader returned no chunk");
+        report.append('\n');
+        bullet(report, "Every round asked for " + askedChunkCount + " chunks and got none of them back. Those chunks "
+                + "exist: the list was read from the location tables of the region files themselves, before the "
+                + "loader was built, so this is not a world without chunks.");
+        report.append('\n');
+
+        if (diagnosis == null) {
+            report.append("Why, as far as this run can tell\n");
+            field(report, "Loader", options.loader().implementationName());
+            field(report, "Chunks listed from", world.regionDirectory().toString());
+            report.append('\n');
+            bullet(report, "This loader keeps no counters, so nothing here can name the reason. It skips a chunk "
+                    + "for the same three reasons the Falco loader does — no region file, no entry in the region "
+                    + "file, a chunk which is not fully generated — and reports none of them.");
+            report.append('\n');
+            report.append("What to do next\n");
+            bullet(report, "Run ./gradlew :falco-demo:runFalcoLoader with the same options. Its loader counts every "
+                    + "skipped chunk by reason and prints the breakdown here and in its own log line at the end.");
+            report.append('\n');
+            rule(report);
+            return report.toString();
+        }
+
+        report.append("Where the chunks went, counted by the loader over the whole run\n");
+        field(report, "Loader", options.loader().implementationName());
+        // The counters run across the warm-up as well, so the numbers below are a multiple of the
+        // chunks per round. Saying which multiple keeps a reader from looking for the extra chunks.
+        field(report, "Loads counted", loads(options, askedChunkCount) + "  (" + (options.warmupRounds() + options.measurementRounds())
+                + " rounds of " + askedChunkCount + ", warm-up included)");
+        field(report, "Chunks listed from", world.regionDirectory().toString());
+        field(report, "Loader read from", diagnosis.regionDirectory().toString());
+        field(report, "No region file", Long.toString(diagnosis.chunksSkippedWithoutRegionFile()));
+        field(report, "No entry in the file", Long.toString(diagnosis.chunksSkippedWithoutEntry()));
+        field(report, "Not fully generated", Long.toString(diagnosis.chunksSkippedAsPartial()));
+
+        for (Map.Entry<String, Long> status : diagnosis.partialChunkStatuses().entrySet()) {
+            field(report, "", "of those, " + status.getValue() + " with the status " + status.getKey());
+        }
+
+        field(report, "Failed to read", Long.toString(diagnosis.errors()));
+        report.append('\n');
+
+        report.append("What to do next\n");
+        explain(report, world, diagnosis);
+        report.append('\n');
+        rule(report);
+        return report.toString();
+    }
+
+    /**
+     * Counts the loads a whole run performed, warm-up included.
+     *
+     * @param options         the options the run was started with
+     * @param askedChunkCount the number of chunks a round asked for
+     * @return the number of loads the counters of the loader were fed by
+     */
+    @Contract(pure = true)
+    private static long loads(DemoOptions options, int askedChunkCount) {
+        return (long) askedChunkCount * (options.warmupRounds() + options.measurementRounds());
+    }
+
+    /**
+     * Appends the advice which follows from the counters of a run that returned nothing.
+     * <p>
+     * One bullet per reason which actually fired, rather than a list of everything that could go
+     * wrong. A reader who is already looking at a broken run should not have to work out which
+     * third of the advice applies to them.
+     * </p>
+     *
+     * @param report    the report under construction
+     * @param world     the world the chunk list was built from
+     * @param diagnosis the counters of the loader
+     */
+    private static void explain(StringBuilder report, WorldSearchResult.Located world, LoaderDiagnosis diagnosis) {
+        if (!diagnosis.regionDirectory().equals(world.regionDirectory())) {
+            bullet(report, "The loader read a different directory than the one the chunk list came from, so the two "
+                    + "were never looking at the same files. The loader prefers "
+                    + "<world>/dimensions/<namespace>/<value>/region and falls back to <world>/region only when the "
+                    + "first one does not exist — an empty or half written dimensions directory therefore wins over "
+                    + "a filled region directory. Move the region files into the directory named above, remove the "
+                    + "empty dimensions directory, or run with -Pdimension=<key> for the dimension the files belong to.");
+        }
+        if (diagnosis.chunksSkippedWithoutRegionFile() > 0) {
+            bullet(report, diagnosis.chunksSkippedWithoutRegionFile() + " chunks were skipped because the loader "
+                    + "found no r.<x>.<z>.mca for them in " + diagnosis.regionDirectory() + ". Check that this "
+                    + "directory holds the region files, not an empty shell of the world.");
+        }
+        if (diagnosis.chunksSkippedWithoutEntry() > 0) {
+            bullet(report, diagnosis.chunksSkippedWithoutEntry() + " chunks were skipped because their region file "
+                    + "exists but holds no entry for them. The two directories above point at different copies of "
+                    + "the world, or the file was written by something that did not finish.");
+        }
+        if (diagnosis.chunksSkippedAsPartial() > 0) {
+            bullet(report, diagnosis.chunksSkippedAsPartial() + " chunks were skipped because their status is not "
+                    + "minecraft:full. The statuses are listed above. This loader returns only fully generated "
+                    + "chunks, so a world which was interrupted while it generated will report exactly this. Let "
+                    + "the server finish generating the world, or measure a world which was fully generated.");
+        }
+        if (diagnosis.errors() > 0) {
+            bullet(report, diagnosis.errors() + " chunks failed to read. Those are not skipped chunks — the log "
+                    + "above this report carries one line with a stack trace for each of them.");
+        }
+        if (diagnosis.chunksSkipped() == 0 && diagnosis.errors() == 0) {
+            bullet(report, "The loader skipped nothing and failed at nothing, which means it never saw these chunks "
+                    + "at all. That is a defect rather than a world problem; please report this output.");
+        }
+        bullet(report, "The loader repeats these numbers in its own log line when it closes, which is printed right "
+                + "under this report and includes the region directory it resolved.");
     }
 
     /**

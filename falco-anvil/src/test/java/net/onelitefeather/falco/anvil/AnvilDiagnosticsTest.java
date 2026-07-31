@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -12,6 +13,7 @@ import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -77,12 +79,103 @@ class AnvilDiagnosticsTest {
     }
 
     @Test
+    void testAReportWithoutAStatusIsCountedUnderTheUnknownStatus() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        diagnostics.reportPartialChunk();
+
+        assertEquals(1, diagnostics.chunksSkippedAsPartial());
+        assertEquals(Map.of(AnvilDiagnostics.UNKNOWN_STATUS, 1L), diagnostics.partialChunkStatuses());
+    }
+
+    @Test
+    void testEveryMissingRegionFileIsCountedEvenThoughOnlyOneIsLogged() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+
+        assertTrue(diagnostics.reportMissingRegionFile());
+        assertFalse(diagnostics.reportMissingRegionFile());
+        assertFalse(diagnostics.reportMissingRegionFile());
+        assertEquals(3, diagnostics.chunksSkippedWithoutRegionFile());
+    }
+
+    @Test
+    void testEveryMissingChunkEntryIsCountedEvenThoughOnlyOneIsLogged() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+
+        assertTrue(diagnostics.reportMissingChunkEntry());
+        assertFalse(diagnostics.reportMissingChunkEntry());
+        assertEquals(2, diagnostics.chunksSkippedWithoutEntry());
+    }
+
+    @Test
+    void testEveryPartialChunkIsCountedUnderItsOwnStatus() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        diagnostics.reportPartialChunk("minecraft:features");
+        diagnostics.reportPartialChunk("minecraft:features");
+        diagnostics.reportPartialChunk("minecraft:surface");
+
+        assertEquals(3, diagnostics.chunksSkippedAsPartial());
+        assertEquals(Map.of("minecraft:features", 2L, "minecraft:surface", 1L), diagnostics.partialChunkStatuses());
+    }
+
+    @Test
+    void testEveryStatusValueIsLoggedExactlyOnce() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+
+        assertTrue(diagnostics.reportPartialChunk("minecraft:features"));
+        assertFalse(diagnostics.reportPartialChunk("minecraft:features"));
+        assertTrue(diagnostics.reportPartialChunk("minecraft:surface"));
+    }
+
+    @Test
+    void testTheThreeSkipReasonsAreCountedSeparately() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        diagnostics.reportMissingRegionFile();
+        diagnostics.reportMissingChunkEntry();
+        diagnostics.reportMissingChunkEntry();
+        diagnostics.reportPartialChunk("minecraft:features");
+        diagnostics.reportPartialChunk("minecraft:features");
+        diagnostics.reportPartialChunk("minecraft:features");
+
+        assertEquals(1, diagnostics.chunksSkippedWithoutRegionFile());
+        assertEquals(2, diagnostics.chunksSkippedWithoutEntry());
+        assertEquals(3, diagnostics.chunksSkippedAsPartial());
+        assertEquals(6, diagnostics.chunksSkipped());
+    }
+
+    @Test
+    void testTheTrackedStatusValuesAreCappedWithoutLosingTheTotal() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+
+        for (int i = 0; i < AnvilDiagnostics.MAX_TRACKED_NAMES; i++) {
+            assertTrue(diagnostics.reportPartialChunk("falco:status_" + i));
+        }
+
+        assertFalse(diagnostics.reportPartialChunk("falco:one_too_many"));
+        assertEquals(AnvilDiagnostics.MAX_TRACKED_NAMES, diagnostics.partialChunkStatuses().size());
+        assertEquals(AnvilDiagnostics.MAX_TRACKED_NAMES + 1L, diagnostics.chunksSkippedAsPartial());
+    }
+
+    @Test
+    void testTheReportedStatusValuesCannotBeChangedFromOutside() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        diagnostics.reportPartialChunk("minecraft:features");
+        Map<String, Long> statuses = diagnostics.partialChunkStatuses();
+
+        assertThrows(UnsupportedOperationException.class, () -> statuses.put("falco:injected", 1L));
+    }
+
+    @Test
     void testTheCountersStartAtZero() {
         AnvilDiagnostics diagnostics = new AnvilDiagnostics();
 
         assertEquals(0, diagnostics.chunksLoaded());
         assertEquals(0, diagnostics.chunksSaved());
         assertEquals(0, diagnostics.errors());
+        assertEquals(0, diagnostics.chunksSkippedWithoutRegionFile());
+        assertEquals(0, diagnostics.chunksSkippedWithoutEntry());
+        assertEquals(0, diagnostics.chunksSkippedAsPartial());
+        assertEquals(0, diagnostics.chunksSkipped());
+        assertTrue(diagnostics.partialChunkStatuses().isEmpty());
     }
 
     @Test

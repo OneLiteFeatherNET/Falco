@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -242,6 +243,84 @@ class DemoReportTest {
 
         assertFalse(message.contains("Exception"), message);
         assertFalse(message.contains("\tat "), message);
+    }
+
+    /**
+     * Builds a diagnosis of a loader which read the directory the chunk list came from.
+     *
+     * @param withoutRegionFile the chunks which had no region file
+     * @param withoutEntry      the chunks their region file held no entry for
+     * @param partial           the chunks which are not fully generated
+     * @param statuses          the status values of the partial chunks with their counts
+     * @return the diagnosis of the run
+     */
+    private LoaderDiagnosis diagnosis(long withoutRegionFile, long withoutEntry, long partial, Map<String, Long> statuses) {
+        return new LoaderDiagnosis(world().regionDirectory(), withoutRegionFile, withoutEntry, partial, statuses, 0L);
+    }
+
+    @Test
+    void testAnEmptyResultNamesTheThreeSkipReasonsWithTheirCounts() {
+        String report = flat(DemoReport.emptyResult(options(4), world(), 64, diagnosis(12, 20, 32, Map.of("minecraft:features", 32L))));
+
+        assertTrue(report.contains("No region file 12"), report);
+        assertTrue(report.contains("No entry in the file 20"), report);
+        assertTrue(report.contains("Not fully generated 32"), report);
+    }
+
+    @Test
+    void testAnEmptyResultNamesTheStatusValuesOfThePartialChunks() {
+        String report = flat(DemoReport.emptyResult(options(4), world(), 64, diagnosis(0, 24, 40, Map.of("minecraft:features", 40L))));
+
+        assertTrue(report.contains("minecraft:features"), report);
+        assertTrue(report.contains("40"), report);
+    }
+
+    @Test
+    void testAnEmptyResultNamesTheDirectoryTheLoaderRead() {
+        String report = DemoReport.emptyResult(options(4), world(), 64, diagnosis(64, 0, 0, Map.of()));
+
+        assertTrue(report.contains("/worlds/survival/dimensions/minecraft/overworld/region"), report);
+    }
+
+    @Test
+    void testAnEmptyResultCallsOutADifferentDirectory() {
+        LoaderDiagnosis elsewhere = new LoaderDiagnosis(
+                Path.of("/worlds/survival/dimensions/minecraft/overworld/region"), 64, 0, 0, Map.of(), 0L
+        );
+        WorldSearchResult.Located legacy = new WorldSearchResult.Located(
+                Path.of("/worlds/survival"), Path.of("/worlds/survival/region"), OVERWORLD, true
+        );
+
+        String report = flat(DemoReport.emptyResult(options(4), legacy, 64, elsewhere));
+
+        assertTrue(report.contains("/worlds/survival/region"), report);
+        assertTrue(report.contains("/worlds/survival/dimensions/minecraft/overworld/region"), report);
+        assertTrue(report.contains("different directory"), report);
+    }
+
+    @Test
+    void testAnEmptyResultOfTheSameDirectoryDoesNotCallOutADifference() {
+        String report = flat(DemoReport.emptyResult(options(4), world(), 64, diagnosis(64, 0, 0, Map.of())));
+
+        assertFalse(report.contains("different directory"), report);
+    }
+
+    @Test
+    void testAnEmptyResultWithoutCountersPointsAtTheLoaderWhichHasThem() {
+        DemoOptions minestom = new DemoOptions(LoaderKind.MINESTOM, 4, 64, 2, 4, OVERWORLD);
+
+        String report = flat(DemoReport.emptyResult(minestom, world(), 64, null));
+
+        assertTrue(report.contains("runFalcoLoader"), report);
+        assertTrue(report.contains("keeps no counters"), report);
+    }
+
+    @Test
+    void testAnEmptyResultTellsTheUserWhatToDoNext() {
+        String report = DemoReport.emptyResult(options(4), world(), 64, diagnosis(0, 0, 64, Map.of("minecraft:features", 64L)));
+
+        assertTrue(report.contains("What to do next"), report);
+        assertFalse(report.contains("Exception"), report);
     }
 
     @Test

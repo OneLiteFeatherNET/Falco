@@ -1,6 +1,7 @@
 package net.onelitefeather.falco.anvil;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -9,7 +10,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -239,6 +242,86 @@ class AnvilDiagnosticsConcurrencyTest {
         assertEquals((long) threadCount * perThread, diagnostics.chunksLoaded());
         assertEquals((long) threadCount * perThread / 2, diagnostics.chunksSaved());
         assertEquals((long) threadCount * perThread / 4, diagnostics.errors());
+    }
+
+    @Test
+    @Timeout(value = 1, unit = TimeUnit.MINUTES, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void testConcurrentSkipReportsKeepEverySkipCounterExact() throws InterruptedException, ExecutionException {
+        // The three skip reasons are the only evidence a user has for a loader which returns
+        // nothing, and the loader reports them from every thread which loads a chunk. A lost
+        // increment turns "all sixty-four chunks are not fully generated" into a smaller number
+        // which no longer accounts for the chunks that went missing.
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        int threadCount = 16;
+        int perThread = 2000;
+        int statusCount = 4;
+        AtomicIntegerArray statusWinners = new AtomicIntegerArray(statusCount);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount, platformThreads());
+
+        try {
+            List<Future<?>> futures = new ArrayList<>(threadCount);
+
+            for (int thread = 0; thread < threadCount; thread++) {
+                futures.add(executor.submit(() -> {
+                    awaitStart(start);
+
+                    for (int step = 0; step < perThread; step++) {
+                        diagnostics.reportMissingRegionFile();
+
+                        if (step % 2 == 0) {
+                            diagnostics.reportMissingChunkEntry();
+                        }
+                        int status = step % statusCount;
+
+                        if (diagnostics.reportPartialChunk("falco:status_" + status)) {
+                            statusWinners.incrementAndGet(status);
+                        }
+                    }
+                    return null;
+                }));
+            }
+            start.countDown();
+            awaitAll(futures);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertEquals((long) threadCount * perThread, diagnostics.chunksSkippedWithoutRegionFile());
+        assertEquals((long) threadCount * perThread / 2, diagnostics.chunksSkippedWithoutEntry());
+        assertEquals((long) threadCount * perThread, diagnostics.chunksSkippedAsPartial());
+        assertEquals(
+                (long) threadCount * perThread + (long) threadCount * perThread / 2 + (long) threadCount * perThread,
+                diagnostics.chunksSkipped()
+        );
+
+        for (int status = 0; status < statusCount; status++) {
+            assertEquals(1, statusWinners.get(status), "the status " + status + " was logged by more than one thread");
+            assertEquals(
+                    (long) threadCount * perThread / statusCount,
+                    diagnostics.partialChunkStatuses().get("falco:status_" + status),
+                    "the status " + status + " lost an increment"
+            );
+        }
+    }
+
+    /**
+     * Builds the factory for the platform threads the skip counters are stressed from.
+     * <p>
+     * Platform threads for the reason the class comment of {@code RegionFileConcurrencyTest} gives:
+     * a virtual thread which never blocks never releases its carrier, so a pool of them can starve
+     * the very threads a barrier is waiting for and hang the test JVM instead of failing it.
+     * </p>
+     *
+     * @return the factory of the pool
+     */
+    private static ThreadFactory platformThreads() {
+        AtomicInteger counter = new AtomicInteger();
+        return runnable -> {
+            Thread thread = new Thread(runnable, "falco-diagnostics-" + counter.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 
     /**
