@@ -1,9 +1,11 @@
 # Status — Anvil chunk loader and light engine
 
-**318 tests** · `./gradlew build` green.
+**392 tests** · `./gradlew build` green. 178 of them in `falco-anvil`, 178 in `falco-light`, 36 in
+`falco-instance`.
 
 Everything here is experimental and opt-in. Nothing takes effect in a server that does not construct
-a `FalcoAnvilLoader` or call a `ChunkLightService` itself.
+a `FalcoAnvilLoader`, a `FalcoInstance`, or reach the light engine either by calling a
+`ChunkLightService` itself or by handing an instance the chunk supplier of a `ChunkLightScheduler`.
 
 Both parts were developed inside [Aves](https://github.com/OneLiteFeatherNET/Aves), OneLiteFeather's
 utility library, and moved here once it was clear they are server infrastructure rather than
@@ -14,12 +16,19 @@ down in this document and in `docs/research/`.
 
 ## What this is and why
 
-Falco holds two things a Minestom server needs and does not get in this shape from the platform:
+Falco holds three things a Minestom server needs and does not get in this shape from the platform:
 
 1. **An Anvil chunk loader** that replaces `net.minestom.server.instance.anvil.AnvilLoader`. The
    goal was a loader that is genuinely parallel, that does not silently lose data, and that stays
    maintainable — developed test-first, on Java 25, using Adventure NBT and JetBrains annotations.
 2. **A light engine**, because once chunks are loaded, lighting is the next thing a server pays for.
+   Since `FalcoLightingChunk` it also maintains itself: one call to `setChunkSupplier` and the light
+   of a world stays current without a caller deciding when to recompute it.
+3. **An instance and its chunk**, because the one thing `InstanceContainer` cannot be talked out of
+   is its own lifecycle. **No speed gain is claimed and none is measured** — chunk and entity ticking
+   lives in the global `ThreadDispatcher` of the server process, not in the instance. What it buys is
+   an unload path that actually runs for a foreign instance, a generator whose failure cannot publish
+   a half-built chunk, and a load which cannot race an unload into a chunk nothing can reach.
 
 The motivating observation for the loader: Minestom's `AnvilLoader` reports
 `supportsParallelLoading() == true`, but its `RegionFile` serialises reading, decompression **and**
@@ -37,7 +46,7 @@ pipeline below does, and what the measurements confirmed.
 | Annotations | `org.jetbrains:annotations:26.1.0` |
 | Tests | JUnit 6.1.0, Cyano `0.6.2` (`MicrotusExtension`) for anything needing a server |
 | Benchmarks | JMH 1.37 via `me.champeau.jmh` 0.7.3, in the separate `falco-benchmarks` module |
-| Build | Gradle 9.6.1, three modules on one shared version |
+| Build | Gradle 9.6.1, four modules on one shared version |
 
 `adventure-nbt`, `jetbrains-annotations` and `fastutil` are declared explicitly rather than taken
 transitively. The first two only reach the classpath through `compileOnly(minestom)`, so any direct
@@ -126,6 +135,12 @@ Verified against the sources or by running probe code. Knowing these prevents re
   outright, so a custom implementation is silently replaced on copy.
 - `Instance` and `InstanceContainer` are not sealed either, but four `instanceof InstanceContainer`
   sites in Minestom make a foreign instance silently take a different path.
+- **A fresh `LightingChunk` reports itself unloaded.** It answers `super.isLoaded() && doneInit` and
+  sets `doneInit` only in its `protected onLoad()`. Both `ChunkBatch` and `AbsoluteBlockBatch` begin
+  with a check on exactly that and return with a warning about an unloaded chunk, so a batch against
+  such a chunk silently does nothing. This is why `FalcoLightingChunk` extends `DynamicChunk` rather
+  than `LightingChunk`: rebuilding that behaviour would be a defect, not a feature. Measured with a
+  probe in [`docs/research/shared-instances-and-batches.md`](docs/research/shared-instances-and-batches.md).
 
 **Claims about other light engines**
 
@@ -149,6 +164,34 @@ first and only stopped being one after it was checked.
 - **There is no scientific literature on this problem.** No peer-reviewed work on discrete
   Minecraft-style flood-fill light propagation exists; the reference text is a blog post (Ben Arnold,
   Seed of Andromeda). Voxel cone tracing and VXGI solve continuous radiance and do not transfer.
+
+**Three assumptions of the approved lighting-chunk design that did not hold**
+
+The design in [`docs/superpowers/specs/2026-07-31-falco-lighting-chunk-design.md`](docs/superpowers/specs/2026-07-31-falco-lighting-chunk-design.md)
+was signed off before it was built, and three of its statements turned out to be wrong. The document
+is left as it was; what replaced it is here.
+
+- **`invalidate()` does not deliver the light.** The spec said the scheduler calls `invalidate()` on
+  the finished chunks and "Minestom sends an `UpdateLightPacket` on its own", attaching to the
+  mechanism `LightingChunk` supposedly already uses. `DynamicChunk#invalidate` only discards the
+  cached full chunk packet, which reaches whoever *receives* the chunk next; `LightingChunk` sends
+  its light explicitly from its own `tick`. Without a send of our own, a player already standing in
+  the chunk would never see a torch they just placed light up. `LightUpdateAware#onLightUpdated` and
+  the `CachedPacket` of `UpdateLightPacket` in `FalcoLightingChunk` are what closes that.
+- **One block change makes the 3×3 dirty, not the chunk it happened in.** The spec had `setBlock`
+  report only its own chunk while promising seamless chunk borders in the same document; the two
+  contradict each other. A lamp at the eastern edge belongs in the light of the chunk east of it,
+  and that chunk would never be told. A batch test surfaced it. `FalcoLightingChunk#reportChanged`
+  therefore marks the chunk and its eight neighbours, which is also why the ring of an area is read
+  but never written — a chunk that has to *change* has to be in the area, not in the ring.
+- **The revision counter belongs to the scheduler, not to the chunk.** The spec put a counter on each
+  chunk, raised by its own `setBlock`. With neighbours being marked as well, a counter per chunk has
+  cases in which the recorded value does not move although the chunk was marked again — two counters
+  raised by two different chunks cannot be merged into one number without one. A value that does not
+  move reads as "nothing changed", so a stale result would be accepted and the chunk cleared from the
+  dirty set. `ChunkLightScheduler` counts *marks* in its own dirty map instead. This matters more here
+  than almost anywhere else, because writing light also clears the update flag of the section, so a
+  wrong result is never recomputed on its own.
 
 **Library traps**
 - `adventure-nbt` 5.1.1: the iterators of `LongArrayBinaryTag`, `IntArrayBinaryTag` and
@@ -189,7 +232,7 @@ These were explicit calls, not defaults. Changing one means revisiting the work 
 | Format coverage | Core compression plus external `.mcc`, **no** LZ4, no corruption recovery | Covers real worlds without an extra dependency; Minestom fails hard on oversized chunks, which this does not |
 | Integration | Opt-in via `ChunkLoaderFactory` | No breaking change; existing providers behave exactly as before |
 | Own palette | **Not built** — codec-internal representation only | `Palette` is sealed, and it is 4.5 % of the load path anyway |
-| Own `InstanceContainer` | **Not built** | Compiles, but four `instanceof` sites break silently and the tick parallelism lives elsewhere |
+| Own `InstanceContainer` | **Not built.** An own `Instance` was, in `falco-instance` | Subclassing the container is closed — its lifecycle hooks are `protected` members of Minestom's package. Extending `Instance` makes the barrier visible once, at the chunk. No speed is claimed either way: the tick parallelism lives in the global `ThreadDispatcher` |
 | Light `Light` implementation | **Not built** — results handed over via `Light#set` | Avoids the `@ApiStatus.Internal` calculation methods and the `Section.clone()` trap |
 | Read failure | Throws, never returns `null` | `null` means "absent", so the server regenerates and overwrites real data on the next save |
 | Compression level | 2, not the platform default 6 | 1.83× faster for ~3 % more bytes; compression is 63 % of a save |
@@ -209,7 +252,12 @@ falco-anvil/          net.onelitefeather.falco.anvil
 falco-light/          net.onelitefeather.falco.light
                       LightNibbles, BlockFace, BlockLightSource, SectionOpacity,
                       LightPropagator, ChunkLightPropagator, ChunkLightState,
-                      ChunkLightService, MinestomBlockLightSource
+                      ChunkLightService, MinestomBlockLightSource,
+                      ChunkArea, ChunkLightArea, ChunkLightScheduler,
+                      FalcoLightingChunk, LightUpdateAware
+
+falco-instance/       net.onelitefeather.falco.instance
+                      FalcoInstance, FalcoChunk, FalcoInstanceException
 
 falco-benchmarks/     not published. Holds every benchmark, because ScalingBenchmark measures
                       both modules in one run and BenchmarkConstants / SectionStates are used
@@ -221,14 +269,23 @@ falco-benchmarks/     not published. Holds every benchmark, because ScalingBench
 Each module's `src/test/java` mirrors its own package; `*ConcurrencyTest` are the stress tests, and
 `LightEngineEquivalenceTest` pins the byte identity with Minestom. `falco-light` depends on
 `falco-anvil` in test scope only, for the one case that runs the engine on a chunk that went through
-the loader.
+the loader. `falco-instance` depends on neither of the other two.
+
+**`FalcoLightingChunk` sits in `falco-light`, not in `falco-instance`**, which is worth stating
+because the opposite looks natural. It needs the light engine and nothing else — it holds no
+computation of its own, it only reports what changed and when a tick happened. Putting it next to
+`FalcoInstance` would make one published module depend on another for a type that has no relationship
+to an instance implementation. A `FalcoInstance` does not need a lighting chunk, and the lighting
+chunk works on any `Instance`, including the `InstanceContainer` the server ships with.
 
 Integration with the map provider of [Aves](https://github.com/OneLiteFeatherNET/Aves) happens
 through its `ChunkLoaderFactory`, which is a functional interface — neither library depends on the
 other. See `docs/anvil-chunk-loader.md`.
 
 Reading order for someone new: `RegionFile` (the byte container), then `FalcoAnvilLoader`
-(the three stages), then `SectionOpacity` and `ChunkLightPropagator` for the light side.
+(the three stages), then `SectionOpacity` and `ChunkLightPropagator` for the light side, and
+`ChunkLightScheduler` for how that light keeps itself current. `FalcoInstance` is independent of all
+of them and can be read on its own.
 
 ## Charts
 
@@ -248,12 +305,15 @@ and in `docs/benchmarks.md`, and `build/reports/jmh/results.json` feeds
 
 ## What is in the branch
 
-| Package | Types | Tests | What it does |
+| Module | Types | Tests | What it does |
 | --- | ---: | ---: | --- |
-| `instance.anvil` | 14 | 13 classes | Reads and writes Anvil region files, replacing `AnvilLoader` |
-| `instance.light` | 9 | 13 classes | Computes block light and sky light for a chunk |
-| `map.provider` | +1 | 1 class | `ChunkLoaderFactory`, the opt-in seam |
-| `src/jmh` | 23 files | — | Benchmarks, in their own source set |
+| `falco-anvil` | 14 | 13 classes, 178 tests | Reads and writes Anvil region files, replacing `AnvilLoader` |
+| `falco-light` | 14 | 18 classes, 178 tests | Computes block light and sky light for a chunk, and keeps it current on its own |
+| `falco-instance` | 3 | 5 classes, 36 tests | An `Instance` and its `Chunk`, with a lifecycle that runs for a foreign instance |
+| `falco-benchmarks` | 24 files | — | Benchmarks, in their own source set, never run during a build |
+
+`ChunkLoaderFactory`, the opt-in seam, is not counted here: it lives in
+[Aves](https://github.com/OneLiteFeatherNET/Aves) rather than in this repository.
 
 ### Anvil loader
 
@@ -280,6 +340,90 @@ One `ChunkLightService` serves any number of threads, because it keeps no state 
 is a property worth stating rather than assuming: the working buffers live in a propagator built per
 call, and handing several threads one propagator is what made the engine produce silently wrong
 light before.
+
+### A chunk that keeps its own light up to date
+
+Using the engine was manual until now: a caller had to notice that a chunk changed, decide when to
+recompute and call the service. `FalcoLightingChunk` gives Falco the entry point Minestom sets with
+`setChunkSupplier(LightingChunk::new)`, without giving up what the engine gained — the computation
+still runs in a service that is thread-safe per call and still hands its result over through
+`Light#set`, so it is not welded to one chunk implementation. Minestom's own engine is the more
+restricted of the two: it computes light for `LightingChunk` and for nothing else.
+
+```java
+ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService());
+instance.setChunkSupplier(scheduler.supplier());
+```
+
+Five types, and only one of them holds behaviour:
+
+| Type | Responsibility |
+| --- | --- |
+| `FalcoLightingChunk` | Three overrides, each of which only reports something. `setBlock` and `onLoad` mark, `tick` triggers the pass, `onLightUpdated` sends. |
+| `ChunkLightScheduler` | The dirty set, the once-per-tick trigger, area forming, the executor, back pressure and the staleness rule. All the complexity, at one address. |
+| `ChunkArea` | A chunk coordinate pair, and the flood fill that cuts a dirty set into capped connected groups. Pure arithmetic, no Minestom, so both its rules are testable without a server. |
+| `ChunkLightArea` | Computes one group in a single pass: reads its chunks plus one ring, exchanges borders until settled, writes back the group and never the ring. |
+| `LightUpdateAware` | The hook Minestom does not have, so the scheduler can deliver a result without knowing which chunk type it is talking to. |
+
+Five properties of the cycle that are decisions rather than details:
+
+- **Once per tick, not once per chunk.** `Chunk#tick(long)` runs per chunk, but a pass has to see
+  every change of the tick before it forms its areas. The tick timestamp is the same value for every
+  chunk of one tick, so the scheduler runs its pass for the first chunk reporting a new one. If no
+  chunk ticks, nothing happens — which is correct, because then nobody is looking.
+- **A change marks the 3×3, and the ring of an area is read but never written.** Those two are the
+  same rule seen from both ends: a chunk whose light has to change must be *in* an area, because a
+  ring chunk has only seen the light of the area and never what lies on its own far side, so writing
+  it back would darken it. This is exactly the defect open item 3 describes for
+  `calculateWithNeighbours`, designed out here from the start.
+- **An area has an upper bound, and the bound is not optional.** One `ChunkLightState` is roughly
+  980 KB, so a build spread across a hundred connected chunks would form one area of about a hundred
+  megabytes plus its ring. The flood fill stops at `maxAreaSize` (16 by default) and the remainder
+  starts the next area; the seam between two parts settles on the following tick, because each part
+  reads the other as its ring.
+- **Nothing ever blocks on a computation.** A chunk hands out whatever its sections hold right now,
+  which is the previous result while a new one is in flight.
+- **One scheduler serves exactly one instance.** The dirty set is keyed by chunk coordinates alone
+  and every instance ticks with the same timestamp, so a shared scheduler would light the wrong
+  chunks and run its pass for only one instance per tick. A second instance is refused with an
+  `IllegalStateException` rather than left to fail as a dark world.
+
+The executor is a constructor argument. The default gives every area its own virtual thread and
+bounds them with a semaphore at the processor count — the same shape `FalcoAnvilLoader` uses for its
+saves, with the bound taken inside the task rather than around the submission so the chunk that
+happened to trigger the pass is not the one that waits. Handing in `Runnable::run` instead makes the
+whole cycle synchronous, which is what lets the tests of this path assert on a result after calling
+`tick` rather than waiting for one. A server that already runs a pool can hand that over.
+
+How the finished light reaches a client is where this deviates from the design it was built to; see
+*Three assumptions of the approved lighting-chunk design that did not hold* above.
+
+### Instance
+
+`FalcoInstance extends Instance` directly rather than `InstanceContainer`: the chunk lifecycle hooks a
+subclass would have to override are `protected` members of `net.minestom.server.instance`, so a
+subclass outside that package cannot reach them. Starting from `Instance` makes the barrier visible
+once, at the chunk, where `FalcoChunk` answers it. The reason the module exists is
+`InstanceManager#unregisterInstance`, which unloads chunks only for an `InstanceContainer` and leaves
+every chunk, tick partition and entity of any other instance behind.
+
+**The generator writes into clones.** `applyGenerator` hands the generator copies of the palettes of
+every section and moves them over only after it returns; `InstanceContainer#generateChunk` hands over
+the live ones and catches whatever the generator throws into the exception manager. A generator that
+fails halfway there leaves a chunk that is half built, published and reported as loaded, while the
+caller who asked for the chunk is told nothing. Here the failure travels to that caller and the chunk
+is exactly as it was. The cost is one palette clone per section, and on the case that matters — a
+chunk that is still empty, which is where a generator normally runs — a palette is in single-value
+mode and holds no array at all, so the clone is a few bytes. Holding the write lock for the commit
+only, rather than across the whole generator, is a side benefit and not the reason.
+
+**`loadingChunks` is also the lock of a chunk position.** Starting a load, publishing its result and
+unloading the chunk all happen inside a `ConcurrentHashMap#compute` on the index of that position, so
+the three serialise without a monitor over the whole instance. The unload wins and the load throws its
+own result away: waiting would block an unload on a disk read for a chunk nobody wants, and aborting
+is impossible because the loading thread is already inside foreign code. Minestom lets the two
+overlap, and the chunk that loses that race stays in the world with its loaded flag already cleared
+and nothing left that could ever unload it.
 
 ---
 
@@ -400,6 +544,31 @@ under *Investigated and deliberately not built* was waiting for.
 Measuring the exotic sizes rather than extrapolating from common ones is the only reason this is
 known. The cause of the sky-light curve is named below: seeding queues every open cell.
 
+### Lighting an area against one neighbourhood per chunk
+
+The design of the self-maintaining light made area forming conditional on a single number, and this is
+that number. `AreaVsPerChunkBenchmark`, `-f 1 -wi 3 -i 5`, a connected square of chunks with 30 %
+solid blocks and four sources each, µs/op:
+
+| Chunks | `area` | `perChunk` | Area is |
+| ---: | ---: | ---: | --- |
+| 1 | 542.4 ± 15.6 | 546.6 ± 27.4 | level |
+| 4 | 2 678.4 ± 45.5 | 10 533.1 ± 162.6 | 3.93× cheaper |
+| 9 | 6 408.2 ± 468.2 | 34 390.8 ± 1 738.9 | 5.37× cheaper |
+| 16 | 11 607.5 ± 975.2 | 70 639.0 ± 1 195.9 | 6.09× cheaper |
+
+The criterion was that an area of *n* chunks has to be measurably cheaper than *n* separate
+`calculateWithNeighbours` calls, and that if it were not, the simpler per-chunk design would be the
+better one and area forming should have been dropped rather than tuned until the benchmark agreed. It
+holds from four chunks on and the margin grows with the area, which is the shape the argument
+predicted: reading the block states of a chunk and building its opacity tables is the expensive part,
+and a per-chunk neighbourhood reads every chunk up to nine times while an area reads each of its
+chunks and each of its ring chunks exactly once, no matter how large it is.
+
+**The tie at one chunk is the expected result, not a weak one.** A lone chunk has no loaded
+neighbours, so neither side has a ring to read and there is nothing for either to save. The row is
+worth keeping precisely because it shows the difference is the repeated reading and nothing else.
+
 ### Where the time goes in the light path
 
 This section began as a standalone rebuild of the same call structure, run outside the project — not
@@ -458,7 +627,9 @@ section. Ordered by the size of the effect, with what has since been built marke
   above, where mixed sources cost about 33 %.
 - **`ChunkLightState` allocates about 980 KB of buffers per instance**, and `calculateWithNeighbours`
   builds nine of them — roughly 28 MB of garbage per call. Derived from the buffer sizes, not
-  measured with an allocation profiler.
+  measured with an allocation profiler. This is also the figure the cap on an area size is set from:
+  `ChunkLightArea` builds one state per chunk of the area *and* of its ring, so an unbounded area
+  over a large build would allocate hundreds of megabytes inside a tick.
 
 ### Optimisations these numbers produced
 
@@ -469,6 +640,7 @@ section. Ordered by the size of the effect, with what has since been built marke
 | Fast path for uniform sections, opacity table | 40.8 µs → 0.54 µs (**76×**), and no arrays allocated |
 | Linear-probing opacity table over the raw state id, no boxing | 31.33 µs → 8.07 µs, 74 040 → 8 664 bytes per call |
 | `LightNibbles.ofLevels` instead of 4096 calls to `set` | `collect` 0.24 µs → 0.23 µs in the stage benchmark; the rebuild had it at 9.6 → 1.2 µs for the non-uniform case |
+| One area instead of one 3×3 neighbourhood per chunk | 3.93× at 4 chunks, 6.09× at 16, level at 1 |
 
 ---
 
@@ -510,6 +682,33 @@ Vanilla defines the Anvil format, so these are gaps in this implementation, not 
   code. `LightEngineEquivalenceTest` now runs the 54 scenarios on every build, and the benchmark
   checks the 2048 bytes of both engines before each trial. A number cited throughout was hanging on
   nothing, which is the part worth remembering — not that it turned out to hold.
+
+### Three in `FalcoInstance`, all found while closing the load race
+
+Making `loadingChunks` the lock of a chunk position was one change; these three came out of it, each
+with its own test. All three are the shape `InstanceContainer` has, reproduced here before it was
+noticed that they had been.
+
+- **`unregister` left a zombie chunk behind.** It walked the chunk map only, and a chunk that is
+  still being loaded is not in that map yet. The load finished afterwards and published its chunk
+  into an instance nothing reaches any more — the permanent zombie
+  [`docs/research/instance-container.md`](docs/research/instance-container.md) describes. Every
+  running load is now claimed first, which makes it discard its result, and only then are the chunks
+  that are already there unloaded. `FalcoInstanceLoadRaceTest` forces the interleaving instead of
+  hoping for it and checks the state of the instance afterwards; a test that only checked no
+  exception escaped would have passed on the broken implementation too.
+- **`retrieveChunk` read the chunk map outside any guard**, so two loads could start for one
+  position. The second chunk then replaced the first one in the map and the first was orphaned:
+  still marked as loaded, still holding its tick partition and its viewers, and no longer reachable.
+  The chunk map is now read a second time *inside* the `compute` on the position. The work itself
+  still starts after that decision and never inside it, because a loader without parallel support
+  runs on the calling thread and a nested `compute` on the same map would deadlock.
+- **The map write and the tick partition could interleave**, which leaves a partition ticking a chunk
+  that was already unloaded, for the rest of the life of the server. Publishing a chunk and creating
+  its partition are now one step taken while the position is held, and so are removing it and
+  deleting the partition, so an unload of the same position runs entirely before or entirely after.
+  The loaded flag is set outside that step on purpose: it calls a hook a subclass may override, and
+  foreign code has no business running while a position is held.
 
 ### Five races, all of which would have failed silently
 
@@ -601,6 +800,13 @@ memory — every write holds the chunk's write lock — but the later writer win
 that may already be stale, which shows up as a seam rather than as an error. Whether that happens is
 up to the caller; nothing in the API says so yet.
 
+**Narrowed, not closed.** A caller going through `ChunkLightScheduler` is no longer exposed to this:
+a chunk under computation stays marked but is not submitted a second time, and a chunk whose mark
+count moved while its area ran has its result discarded rather than written. `ChunkLightArea` says
+the same thing at its own level — it is safe to share between threads, but two threads computing
+*overlapping* areas is not made safe there either, and the scheduler is what keeps that from
+happening. The item stands for everyone who calls the service directly.
+
 ### 3. `calculateWithNeighbours` darkens the eight chunks it borrows
 
 It writes **all nine** chunks back at the end. The eight ring chunks only exchanged light inside the
@@ -616,7 +822,27 @@ measurement — the byte-identity tests cover a single chunk, not the ring aroun
 This is the concrete form of what was filed under smaller items as "border exchange settles one ring
 deep": not an imprecision, a defect with a known fix.
 
-### 4. Two things that are argued rather than tested
+**Still open, and the fix now exists next to it.** `ChunkLightArea` reads its ring and writes only
+its area, which is exactly the correction this item asks for, and
+`ChunkLightAreaTest#testChunksOutsideTheAreaKeepTheirLight` pins it down. That does not fix
+`calculateWithNeighbours`, which is unchanged and is still what a direct caller of the service gets —
+including `AreaVsPerChunkBenchmark`, whose `perChunk` side is the darkening path and is measured as
+such. The method is now the older of two ways to do the same thing, and the newer one is right.
+
+### 4. The scheduler recomputes whole chunks for a single block change
+
+`ChunkLightState#update` exists, is tested against a full recalculation block for block, and handles
+the hard direction — retracting the glow of a source that disappeared and letting the legitimate
+light of everything else back in. The scheduler does not use it. A block change marks its chunk and
+the eight around it, and the next pass recomputes those chunks from their block states.
+
+This was a declared non-goal of the design rather than an oversight: the entry point had to exist
+before the granularity behind it was worth tuning. It is recorded here because the engine already
+carries the cheaper path, so the gap is a wiring job and not a piece of missing work. What makes it
+more than a micro-optimisation is the area cap — every chunk of an area holds a `ChunkLightState` of
+roughly 980 KB, and a placed torch currently pays for nine of them.
+
+### 5. Two things that are argued rather than tested
 
 - **Stale header entries.** `locations` and `timestamps` are `AtomicIntegerArray` now, so a reader
   cannot see a stale `0` and turn a present chunk into a regenerated one. That is ruled out by
@@ -626,10 +852,21 @@ deep": not an imprecision, a defect with a known fix.
   a handle in use by a thread stays open beyond it for the duration of that access. Deliberate, and
   documented at the field, but it means the limit is a cache size and not a resource guarantee.
 
-### 5. Smaller items
+### 6. Smaller items
 
 - Border exchange between chunks settles one ring deep; a fully converged result over a large area
   needs the exchange repeated. Item 3 is the part of this that is outright wrong today.
+- An area split at `maxAreaSize` leaves a seam between its two parts for one tick, because each part
+  reads the other as its ring and only the next pass settles it. Deliberate — the alternative is an
+  unbounded area — and it is the reason the cap is a constructor argument rather than a constant.
+- `ChunkLightScheduler` serves exactly one instance and refuses a second with an
+  `IllegalStateException`. That is the honest behaviour given a dirty set keyed by chunk coordinates
+  alone, but it means a server with several worlds builds one scheduler per world and nothing in the
+  type system says so.
+- `FalcoInstance#unregister` gives up after four sweeps and logs what it left behind rather than
+  looping until the world stops changing. A caller that keeps requesting chunks during a shutdown is
+  a caller error and is not covered; a shutdown that never returns would be worse than one that
+  reports a leak.
 - Sky light updates re-seed open columns rather than tracking a heightmap incrementally. Measured at
   79.3 → 55.1 µs in the rebuild, with byte identity verified over 240 worlds.
 - `SectionOpacity` still builds its table unconditionally for non-uniform sections. Since `69381af`
@@ -654,7 +891,7 @@ answers differed sharply and none was obvious in advance — see [`docs/research
 | Subject | Verdict |
 | --- | --- |
 | **Palette** | Impossible. `sealed interface Palette permits PaletteImpl` is a hard compiler error, and `Section` is a record holding that exact type. |
-| **`InstanceContainer`** | Possible but pointless as asked. It compiles and runs, but four `instanceof InstanceContainer` sites silently take another path for a foreign type, and the tick parallelism the request targeted lives in the global `ThreadDispatcher`, not in the container. |
+| **`InstanceContainer`** | Possible but pointless **as asked**. It compiles and runs, but four `instanceof InstanceContainer` sites silently take another path for a foreign type, and the tick parallelism the request targeted lives in the global `ThreadDispatcher`, not in the container. `falco-instance` was built later for a different reason and still claims none of the speed the original question was about — see *Instance* above. |
 | **Light engine** | Possible and worth it — this is what was built. |
 
 The recurring lesson: **sealed-ness decides whether it is possible, and the profile decides whether

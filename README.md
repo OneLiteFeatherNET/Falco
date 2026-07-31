@@ -12,7 +12,7 @@ nothing to do with speed — and it claims none.
 | Module | What it is |
 | --- | --- |
 | `falco-anvil` | A `ChunkLoader` for the Anvil region format. Genuinely parallel — reading, decompression and NBT parsing do not share one lock. A read failure throws instead of silently reporting the chunk as absent, so the server cannot overwrite real data with a freshly generated chunk. Unknown blocks and biomes survive a load/save round trip. |
-| `falco-light` | A block and sky light engine. Thread-safe per call and not tied to any chunk implementation — results are handed over through `Light#set`, so it works with chunk types Minestom's own engine ignores. |
+| `falco-light` | A block and sky light engine. Thread-safe per call and not tied to any chunk implementation — results are handed over through `Light#set`, so it works with chunk types Minestom's own engine ignores. Call it yourself, or hand the instance `setChunkSupplier(scheduler.supplier())` and `FalcoLightingChunk` keeps its own light up to date — the entry point Minestom's `LightingChunk` offers, on any `Instance`. |
 | `falco-instance` | An `Instance` and its `Chunk`. **No speed gain is claimed and none is measured**: chunk and entity ticking lives in the global `ThreadDispatcher` of the server process, not in the instance, so replacing the instance cannot make ticking faster. What it buys is an unload path of its own — `InstanceManager.unregisterInstance` skips the cleanup for anything that is not an `InstanceContainer` and leaks every chunk the instance ever loaded — and an implementation small enough to read and test. It cannot back a `SharedInstance`, the block batches do not see it, and it runs no generator. |
 
 ## What "high-performance" means here
@@ -234,6 +234,10 @@ public final class Bootstrap {
 }
 ```
 
+The listener is the explicit route: you decide which chunks are lit and when. There is a shorter one
+that needs no listener at all — `instance.setChunkSupplier(scheduler.supplier())`, in
+[Using it](#using-it) below.
+
 ### 3. Put a world where the loader looks
 
 `worlds/lobby/` is the **world root** — the directory that contains `region/`, or
@@ -360,6 +364,21 @@ int level = lighting.blockLightAt(chunk, 8, 40, 8);
 
 The light engine works on any chunk, whichever loader produced it.
 
+To let the light maintain itself instead, give the instance a chunk that reports its own changes.
+One scheduler per instance, and there is nothing else to call:
+
+```java
+ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService());
+instance.setChunkSupplier(scheduler.supplier());
+```
+
+`FalcoLightingChunk` marks itself and its eight neighbours when it is loaded and on every
+`setBlock`; the scheduler collects the marked chunks once per tick, groups them into connected
+areas, computes each area off the tick thread and sends the result to the players who are already
+looking. It works with any instance that lets you set a chunk supplier, `InstanceContainer`
+included. The rules it follows — area size, back pressure, the staleness check — are in the class
+documentation of `ChunkLightScheduler`.
+
 `falco-instance` replaces the instance rather than something inside it, so it is used at the point
 where the world is created instead of being handed to one. The one call it asks you to remember is
 the last:
@@ -398,22 +417,30 @@ and the four places where Minestom quietly treats a foreign instance differently
 
 ### API documentation
 
-**There is no rendered Javadoc on the web, and no javadoc.io page.** Falco is not published to Maven
-Central, which is the only thing javadoc.io renders from, so there is nothing to link to there. What
-does exist is the `-javadoc.jar` the build attaches to every published module, and a Gradle task
-that produces the same pages locally.
+The Reposilite that serves the artefacts renders their Javadoc as well, so every published version
+has a page to read in the browser:
 
-Each published version carries its javadoc jar next to the main jar:
-
-| Module | Javadoc jar |
+| Module | Rendered Javadoc |
 | --- | --- |
-| `falco-anvil` | [`falco-anvil-0.2.1-javadoc.jar`](https://repo.onelitefeather.dev/releases/net/onelitefeather/falco-anvil/0.2.1/falco-anvil-0.2.1-javadoc.jar) |
-| `falco-light` | [`falco-light-0.2.1-javadoc.jar`](https://repo.onelitefeather.dev/releases/net/onelitefeather/falco-light/0.2.1/falco-light-0.2.1-javadoc.jar) |
-| `falco-instance` | No release. The [snapshot directory](https://repo.onelitefeather.dev/snapshots/net/onelitefeather/falco-instance/0.2.2-SNAPSHOT/) holds one under a timestamped file name that changes with every push. |
+| `falco-anvil` | [`falco-anvil` 0.2.1](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-anvil/0.2.1) |
+| `falco-light` | [`falco-light` 0.2.1](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-light/0.2.1) |
+| `falco-instance` | No release yet, so only the snapshot: [`falco-instance` 0.2.2-SNAPSHOT](https://repo.onelitefeather.dev/javadoc/snapshots/net/onelitefeather/falco-instance/0.2.2-SNAPSHOT) |
 
-Unzip one and open `index.html`, or leave it to the IDE: with the dependency declared, *Download
-Sources and Documentation* in IntelliJ IDEA — and the equivalent in Eclipse — fetches that same jar
-from the same repository and attaches it to the classes.
+The address is built the same way for every module and every version:
+
+```
+https://repo.onelitefeather.dev/javadoc/<releases|snapshots>/net/onelitefeather/<module>/<version>
+```
+
+`latest` works in place of a version and follows the newest one on that endpoint. A version that was
+never published to it answers 404 rather than showing something stale — `falco-instance` on
+`releases` is exactly that case.
+
+The same pages also travel with the artefacts, as the `-javadoc.jar` every published module carries
+next to its main jar. That is the copy the IDE wants: with the dependency declared, *Download
+Sources and Documentation* in IntelliJ IDEA — and the equivalent in Eclipse — fetches it from the
+same repository and attaches it to the classes, which makes the documentation available offline and
+inside the editor.
 
 To build the pages from source instead:
 
@@ -422,29 +449,12 @@ To build the pages from source instead:
 ```
 
 That is a build of this project, so it needs the credentials described under
-[Building](#building). Downloading a published javadoc jar needs none.
+[Building](#building). Reading the rendered pages or downloading a javadoc jar needs none.
 
 ### Why it is built this way
 
 - [`docs/rationale/`](docs/rationale/README.md) — the reasoning and the evidence behind the design:
   what each decision was weighed against, and where the argument is weaker than the numbers suggest
-
-### What is designed but not written yet
-
-`FalcoLightingChunk` would make light maintain itself, so that
-`instance.setChunkSupplier(FalcoLightingChunk::new)` is all a consumer needs — the entry point
-Minestom's own `LightingChunk` offers, but for any chunk implementation. **None of it exists in the
-code.** Both documents describe an intention, not behaviour you can call today.
-
-- [`docs/superpowers/specs/2026-07-31-falco-lighting-chunk-design.md`](docs/superpowers/specs/2026-07-31-falco-lighting-chunk-design.md)
-  — the design: a scheduler per instance collects dirty chunks, groups them once per tick into
-  connected areas of a capped size, and computes each area with a ring of neighbours that is read but
-  never written. It also names what it refuses to do, and the one measurement that has to hold for
-  area forming to keep its complexity.
-- [`docs/superpowers/plans/2026-07-31-falco-lighting-chunk.md`](docs/superpowers/plans/2026-07-31-falco-lighting-chunk.md)
-  — the implementation plan for that design: six test-first tasks with the failing test spelled out
-  for each, from opening two methods of `ChunkLightService` up to the JMH benchmark that decides
-  whether area forming survives.
 
 ## Building
 

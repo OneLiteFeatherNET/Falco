@@ -220,6 +220,35 @@ out, both inside Falco: make `FalcoChunk` extend `LightingChunk`, or have a Falc
 light itself. This is an assessment from reading the source — it was not measured, because the branch
 only runs after a tick and the probe does not tick the instance.
 
+#### How it was actually closed: neither of the two ways above
+
+Both options this section named assume the batch has to be the one that resends. It does not, and the
+gap was closed from the chunk instead, by `FalcoLightingChunk` and `LightUpdateAware` in
+`falco-light`.
+
+A batch writes its blocks through `Chunk#setBlock`. A `FalcoLightingChunk` marks itself and its eight
+neighbours on every such write, so the light pass of the following tick covers the whole touched
+region and delivers it through `onLightUpdated()`, which sends an `UpdateLightPacket` to the viewers
+of the chunk. The `instanceof LightingChunk` branch at the end of `apply` is simply never needed:
+what it would have triggered happens one tick later on a path that does not ask what type the chunk
+is.
+
+Two differences from what Minestom's branch would have done, one in each direction:
+
+- **The light arrives one tick later.** `sendLighting()` inside `apply` is immediate; a scheduled
+  pass is not. For a batch that is what a batch is for, this is the correct trade — the alternative
+  is computing light on the thread that applied the blocks.
+- **It arrives for the ring around the batch as well.** Minestom's loop walks the chunks the batch
+  touched and no others, so a lamp placed at the edge of the outermost touched chunk does not reach
+  the chunk beyond it. Marking the 3×3 per changed chunk covers that.
+
+This does not change the analysis above. `AbsoluteBlockBatch.apply` still tests for `LightingChunk`
+and still skips every other type, so the row in the table stays true and a `FalcoChunk` — which is a
+plain `DynamicChunk` and knows nothing about light — is still not resent by a batch. What changed is
+that Falco no longer needs that branch to work. Point 7 of *What Minestom would have to change* asked
+for exactly this hook upstream, `protected void onLightingChanged()` on `Chunk`; `LightUpdateAware` is
+the same idea built where it could be built, outside the server.
+
 ### An incidental finding, worth keeping
 
 While the batch probe was failing, the cause turned out to be `LightingChunk`, not the batch:

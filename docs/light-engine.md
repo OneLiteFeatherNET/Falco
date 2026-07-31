@@ -8,7 +8,9 @@ Minestom, which is what makes it testable without a running server.
 > `@ApiStatus.Experimental`. The API may still change.
 
 > **Scope.** Block light and sky light for a chunk, across section borders, across chunk borders,
-> and incrementally after a single block changed. Works with any chunk of any loader.
+> and incrementally after a single block changed. Works with any chunk of any loader. Either call it
+> yourself, or hand the instance a chunk supplier and let the light
+> [keep itself up to date](#letting-the-chunk-keep-its-own-light).
 > See [Limits](#limits) for what is still missing.
 
 ## When this is worth using
@@ -27,7 +29,9 @@ chunk is dominated by NBT parsing and zlib inflation instead.
 
 ## Design
 
-Seven types, each with one responsibility. Only the two on the right know Minestom exists.
+Eight types compute the light, each with one responsibility. Only the two on the right know Minestom
+exists. A further five, listed [further down](#letting-the-chunk-keep-its-own-light), decide *when* it
+is computed and never how.
 
 ```
                       ┌─ engine, no Minestom ─────────────┐   ┌─ adapter ──────────────┐
@@ -342,6 +346,12 @@ The same property has a second consequence: because the propagation references n
 all, it can be tested against a handful of fake blocks without a running server. Only the adapter
 that answers from the real registry needs one.
 
+**Being outside the chunk does not mean giving up the convenience of being inside it.**
+`FalcoLightingChunk` offers the same one-line setup as `LightingChunk` while the computation stays in
+a service that any chunk type can be handed to — see
+[Letting the chunk keep its own light](#letting-the-chunk-keep-its-own-light). The two are not
+alternatives: the chunk is a caller of the service like any other.
+
 ### When to use Minestom's engine instead
 
 The reason this section used to give — the built-in engine is faster on sparsely occupied sections —
@@ -357,6 +367,10 @@ not a `LightingChunk`, which includes the chunk type an `InstanceContainer` uses
 otherwise. After that come the workloads where the margin is actually large — sections carrying a
 real share of solid blocks, where the measurements above put it between 1.58× and 1.73× — and the
 control over *when* light is computed that comes from computing it outside the chunk.
+
+The convenience argument has stopped being one either way. `setChunkSupplier(scheduler.supplier())`
+is the same amount of setup as `setChunkSupplier(LightingChunk::new)`, so choosing between the two is
+now a question about the engine rather than about how much wiring it takes.
 
 ## Usage
 
@@ -396,7 +410,8 @@ the result to the sections through `Light#set(byte[])`:
 ```java
 import net.onelitefeather.falco.light.ChunkLightService;
 
-ChunkLightService lighting = new ChunkLightService();   // one per worker thread
+// Keeps no state between calls, so a single instance serves as many threads as you like.
+ChunkLightService lighting = new ChunkLightService();
 
 Chunk chunk = instance.loadChunk(0, 0).join();
 lighting.calculate(chunk);
@@ -414,7 +429,14 @@ Two properties make this the stable way in:
   service therefore does not implement the `Light` interface and cannot break when the signatures of
   those internal methods change.
 - `set` clears the update flag of the section, so the server does not recompute what was just
-  written.
+  written. A wrong result is therefore never corrected on its own, which is why every write path is
+  covered by a test.
+
+**One service is enough for a whole server.** Unlike `LightPropagator` above, `ChunkLightService`
+keeps no state between calls — the working buffers live in a propagator built per call — so a single
+instance may be used by as many threads as one likes. That is not a coincidence but the fix to a
+defect: it once kept a propagator in a field, and two threads sharing one service then shared its
+scratch buffers, which produced wrong light in about 99 % of concurrent calls.
 
 Locking follows the same three-stage split the Anvil loader uses: block states are read under the
 read lock, the propagation runs with **no** lock held, and only the transfer of the result takes the
@@ -455,10 +477,86 @@ the eight positions around it — until no chunk of it raises a level any more:
 A radius of one chunk is enough because a level of fifteen cannot survive sixteen blocks of travel,
 so nothing the middle chunk emits can reach a second ring.
 
+**One caveat, and it is a defect rather than an imprecision.** `calculateWithNeighbours` writes all
+nine chunks back. The eight around the middle only exchanged light inside the 3×3, so whatever they
+legitimately receive from outside it is missing from their result and their previously correct light
+is overwritten with a darker one. The middle chunk is unaffected. The area path below does not have
+this problem — it reads a ring it never writes — so prefer it when the choice exists.
+
+### Letting the chunk keep its own light
+
+Everything above is a call you make yourself: you have to notice that a chunk changed and decide when
+to recompute it. `FalcoLightingChunk` removes that step, and it is the same entry point Minestom sets
+with `setChunkSupplier(LightingChunk::new)`:
+
+```java
+import net.onelitefeather.falco.light.ChunkLightScheduler;
+import net.onelitefeather.falco.light.ChunkLightService;
+
+ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService());
+instance.setChunkSupplier(scheduler.supplier());
+```
+
+That is the whole setup. Keep one scheduler per instance — a second instance handed to the same one
+is refused with an `IllegalStateException`, because the dirty set is keyed by chunk coordinates alone
+and every instance of a server ticks with the same timestamp.
+
+Five types, and only one of them holds any behaviour:
+
+| Type | Responsibility |
+| --- | --- |
+| `FalcoLightingChunk` | The drop-in, a `DynamicChunk` subclass. Three overrides, each of which only reports something: `setBlock` and `onLoad` mark, `tick` triggers the pass, `onLightUpdated` sends. |
+| `ChunkLightScheduler` | Everything else — the dirty set, the once-per-tick trigger, area forming, the executor, back pressure and the staleness rule — so a reader looking for the behaviour finds it in one place. |
+| `ChunkArea` | A chunk coordinate pair, and the flood fill that cuts a dirty set into capped connected groups. Pure arithmetic, no Minestom. |
+| `ChunkLightArea` | Computes one group in a single pass: reads its chunks plus one ring, exchanges borders until settled, writes back the group and never the ring. |
+| `LightUpdateAware` | The hook Minestom does not have, so a computed result can be delivered without knowing which chunk type it belongs to. |
+
+**A change marks the 3×3, not just the chunk it happened in.** A lamp on the eastern edge of a chunk
+belongs in the light of the chunk east of it, and that chunk would otherwise never be told. The ring
+around an area is the mirror image of the same rule: it is read so the edge of the area is right, and
+never written, because a ring chunk has not seen what lies on its own far side.
+
+**Areas are formed once per tick and capped.** `Chunk#tick(long)` runs per chunk, but a pass has to
+see every change of the tick before it groups anything, so the scheduler runs its pass for the first
+chunk reporting a timestamp it has not seen. Connected dirty chunks are lit together — one
+`ChunkLightState` is roughly 980 KB, so the group is closed at `maxAreaSize` chunks, 16 by default,
+and the remainder starts the next area. The seam between two parts settles on the following tick,
+because each part reads the other as its ring.
+
+**Nothing ever blocks on a computation.** A chunk hands out whatever its sections hold right now,
+which is the previous result while a new one is in flight. A chunk whose area is still running stays
+marked but is not submitted again, and a chunk that changed while its area ran has its result
+discarded and stays dirty rather than being written from block states that are already gone.
+
+#### The executor is injectable, and a test should inject one
+
+```java
+// Deterministic: the task runs on the calling thread, so a tick is finished when onTick returns.
+ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService(), Runnable::run, 16);
+```
+
+The default gives every area its own virtual thread and bounds them with a semaphore at the processor
+count, the same shape `FalcoAnvilLoader` uses for its saves. The bound sits inside the task rather
+than around the submission on purpose: acquiring it before starting the thread would block whichever
+chunk happened to trigger the pass, and that chunk is being ticked by the server.
+
+A direct executor turns the whole cycle synchronous, which is what makes the tests of this path
+deterministic rather than timing-dependent — place a block, call `tick`, assert the light. A server
+that already has a pool can hand that one over instead.
+
+**A batch is covered by this too.** `AbsoluteBlockBatch#apply` ends by calling `sendLighting()` on
+every touched chunk that is a `LightingChunk` and skips every other type, so a `FalcoLightingChunk`
+would never be resent by it. It does not have to be: a batch writes through `setBlock`, which marks
+the chunk here, so the next tick lights the whole touched region and sends it. The result arrives one
+tick later than Minestom's would, and it arrives for the ring around the batch as well, which
+Minestom's path does not manage.
+
 ### Incremental updates
 
 `ChunkLightService#calculate` always recomputes the whole chunk. For a single block change that is
-wasteful, and `ChunkLightState` exists for that case:
+wasteful, and `ChunkLightState` exists for that case. Note that `ChunkLightScheduler` does **not**
+use it yet: a change there marks whole chunks and the next pass recomputes them from their block
+states. Wiring the two together is open work, not a design decision.
 
 ```java
 ChunkLightState state = ChunkLightState.blockLight(opacityTables);
@@ -522,8 +620,10 @@ random changes that verifies the equality after every single one of them.
 
 | Situation | Method |
 | --- | --- |
+| A live world where light should simply be right | `setChunkSupplier(scheduler.supplier())`, then nothing |
 | Chunk loaded without stored light, or generated | `calculate` / `calculateSky` |
-| Chunk loaded and neighbours matter | `calculateWithNeighbours` |
+| Chunk loaded and neighbours matter | `ChunkLightArea#compute`, or `calculateWithNeighbours` if you accept that it darkens the ring |
+| Several connected chunks at once | `ChunkLightArea#compute` — measurably cheaper than one neighbourhood per chunk from four chunks on |
 | A single block changed | `ChunkLightState#update` |
 
 ## Limits
@@ -532,15 +632,23 @@ random changes that verifies the equality after every single one of them.
   `net.minestom.server.instance.light.Light`. It writes its result through `set` instead, which
   avoids depending on the internal calculation methods of that interface.
 - **The exchange covers one ring of chunks.** `calculateWithNeighbours` settles the chunk and the
-  eight positions around it. That is enough for the light of the middle chunk, but the outer chunks
-  of the area are not settled against their own neighbours outside of it.
+  eight positions around it, and an area settles its own chunks against a ring. That is enough for
+  the chunks being written, but the ring itself is not settled against its own neighbours further
+  out.
+- **`calculateWithNeighbours` darkens the eight chunks it borrows.** It writes all nine back, and the
+  outer eight never saw the light coming from outside the 3×3. `ChunkLightArea` does not do this;
+  the older method is unchanged.
+- **The scheduler recomputes chunks, not blocks.** `ChunkLightState#update` exists and is not wired
+  into it, so a single placed torch currently costs the recomputation of a 3×3.
+- **An area split at the cap leaves a seam for one tick.** Each part reads the other as its ring, so
+  the following pass settles it.
 - **`Section.clone()` discards foreign light.** Should an adapter be built later, note that
   `Section.clone()` calls `Light.sky()` / `Light.block()` outright, so any custom implementation is
   silently replaced on copy. `LightingChunk.copy()` would have to be overridden.
 
 ## Tests
 
-Everything that tests the algorithm itself runs without a Minestom server. Four classes need one and
+Everything that tests the algorithm itself runs without a Minestom server. Eight classes need one and
 use Cyano's `MicrotusExtension` for it, each because a server is what the test is about:
 
 | Class | Why it needs a server |
@@ -549,6 +657,14 @@ use Cyano's `MicrotusExtension` for it, each because a server is what the test i
 | `LightEngineEquivalenceTest` | Compares the two engines byte for byte over 54 scenarios; an equivalence claim is only worth something if both sides see the same registry. |
 | `ChunkLightServiceIntegrationTest` | The service reads real chunks and writes through `Light#set`. |
 | `ChunkLightServiceConcurrencyTest` | The same, from several threads at once. |
+| `ChunkLightAreaTest` | Light crossing a real chunk border, and the ring keeping its own light. |
+| `ChunkLightSchedulerTest` | The tick cycle against a real instance, made deterministic with a direct executor. |
+| `ChunkLightSchedulerConcurrencyTest` | The same cycle under threads, where back pressure and the staleness rule are what is being tested. |
+| `FalcoLightingChunkTest` | The chunk only means anything inside an instance that supplies and ticks it. |
+
+`ChunkArea` is the deliberate exception on the other side: area forming is coordinate arithmetic with
+no Minestom type in it, so `ChunkAreaTest` runs without a server even though the rule it checks is
+about chunks.
 
 `LightEngineEquivalenceTest` reaches `BlockLight.buildInternalQueue` and `LightCompute.compute`
 through reflection rather than by placing a test inside a Minestom package, so no package of the
