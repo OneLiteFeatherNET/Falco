@@ -1,0 +1,9 @@
+# Put your Minecraft world folder in this directory — the world ROOT, the one that contains
+# `level.dat` and either `region/` or `dimensions/`, not the `region/` directory itself.
+#
+# Nothing in here is ever committed. A world is large, often private, and never belongs in a git
+# repository, so everything is ignored and only this file and .gitkeep are kept so the directory
+# itself survives a clone.
+*
+!.gitignore
+!.gitkeep

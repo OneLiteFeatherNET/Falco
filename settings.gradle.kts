@@ -4,6 +4,7 @@ include("falco-anvil")
 include("falco-light")
 include("falco-instance")
 include("falco-benchmarks")
+include("falco-demo")
 
 dependencyResolutionManagement {
     repositories {
@@ -44,6 +45,10 @@ dependencyResolutionManagement {
             library("mycelium.bom", "net.onelitefeather", "mycelium-bom").versionRef("bom")
 
             library("slf4j.api", "org.slf4j", "slf4j-api").versionRef("slf4j")
+            // Only falco-demo needs a binding. The libraries log through the api and leave the
+            // choice to the consumer, but a demo that actually runs would otherwise greet the user
+            // with "No SLF4J providers were found" before printing anything of its own.
+            library("slf4j.simple", "org.slf4j", "slf4j-simple").versionRef("slf4j")
             library("annotations", "org.jetbrains", "annotations").versionRef("annotations")
             // Minestom declares fastutil at runtime scope, so it never reaches a compile classpath.
             // The light equivalence test and the comparison benchmarks call Minestom methods that
