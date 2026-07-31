@@ -1,6 +1,6 @@
 # Status — Anvil chunk loader and light engine
 
-**465 tests** · `./gradlew build` green. 178 of them in `falco-anvil`, 178 in `falco-light`, 36 in
+**476 tests** · `./gradlew build` green. 178 of them in `falco-anvil`, 189 in `falco-light`, 36 in
 `falco-instance` and 73 in `falco-demo`.
 
 Everything here is experimental and opt-in. Nothing takes effect in a server that does not construct
@@ -325,9 +325,9 @@ and in `docs/benchmarks.md`, and `build/reports/jmh/results.json` feeds
 | Module | Types | Tests | What it does |
 | --- | ---: | ---: | --- |
 | `falco-anvil` | 14 | 13 classes, 178 tests | Reads and writes Anvil region files, replacing `AnvilLoader` |
-| `falco-light` | 14 | 18 classes, 178 tests | Computes block light and sky light for a chunk, and keeps it current on its own |
+| `falco-light` | 14 | 19 classes, 189 tests | Computes block light and sky light for a chunk, and keeps it current on its own |
 | `falco-instance` | 3 | 5 classes, 36 tests | An `Instance` and its `Chunk`, with a lifecycle that runs for a foreign instance |
-| `falco-benchmarks` | 24 files | — | Benchmarks, in their own source set, never run during a build |
+| `falco-benchmarks` | 25 files | — | Benchmarks, in their own source set, never run during a build |
 
 `ChunkLoaderFactory`, the opt-in seam, is not counted here: it lives in
 [Aves](https://github.com/OneLiteFeatherNET/Aves) rather than in this repository.
@@ -376,10 +376,10 @@ Five types, and only one of them holds behaviour:
 
 | Type | Responsibility |
 | --- | --- |
-| `FalcoLightingChunk` | Three overrides, each of which only reports something. `setBlock` and `onLoad` mark, `tick` triggers the pass, `onLightUpdated` sends. |
+| `FalcoLightingChunk` | Three overrides, each of which only reports something. `setBlock` reports the changed *position*, `onLoad` reports a change of unknown extent, `tick` triggers the pass, `onLightUpdated` sends. |
 | `ChunkLightScheduler` | The dirty set, the once-per-tick trigger, area forming, the executor, back pressure and the staleness rule. All the complexity, at one address. |
 | `ChunkArea` | A chunk coordinate pair, and the flood fill that cuts a dirty set into capped connected groups. Pure arithmetic, no Minestom, so both its rules are testable without a server. |
-| `ChunkLightArea` | Computes one group in a single pass: reads its chunks plus one ring, exchanges borders until settled, writes back the group and never the ring. |
+| `ChunkLightArea` | Computes one group in a single pass: reads its chunks plus one ring, exchanges borders until settled, writes back the group and never the ring. Keeps the light of a chunk *on its own*, bounded and least-recently-used, so the next pass replays the reported positions on it instead of searching the chunk again. |
 | `LightUpdateAware` | The hook Minestom does not have, so the scheduler can deliver a result without knowing which chunk type it is talking to. |
 
 Five properties of the cycle that are decisions rather than details:
@@ -391,13 +391,22 @@ Five properties of the cycle that are decisions rather than details:
 - **A change marks the 3×3, and the ring of an area is read but never written.** Those two are the
   same rule seen from both ends: a chunk whose light has to change must be *in* an area, because a
   ring chunk has only seen the light of the area and never what lies on its own far side, so writing
-  it back would darken it. This is exactly the defect open item 3 describes for
-  `calculateWithNeighbours`, designed out here from the start.
+  it back would darken it. This was designed out here from the start and has since been carried back
+  into `calculateWithNeighbours`, which now writes only the chunk in the middle of its 3×3 — see
+  *Defects found and fixed*.
+- **A changed block costs a changed block.** The position of every change is handed to the area
+  together with the mark, and the area replays it on the light it already holds for that chunk rather
+  than searching the chunk again. The eight neighbours are marked as well, because light crosses
+  borders, but nothing of theirs is thrown away: their own blocks did not move, and what reaches them
+  across the border is derived again by every pass anyway. A change that cannot be placed — a chunk
+  generated, loaded, or written past `setBlock` — is reported as unknown and lit from the block
+  states, which is what every change did before. The measured effect is under *Measured*.
 - **An area has an upper bound, and the bound is not optional.** One `ChunkLightState` is roughly
-  980 KB, so a build spread across a hundred connected chunks would form one area of about a hundred
-  megabytes plus its ring. The flood fill stops at `maxAreaSize` (16 by default) and the remainder
-  starts the next area; the seam between two parts settles on the following tick, because each part
-  reads the other as its ring.
+  100 KB at the height of an overworld chunk, so sixteen chunks plus their ring is a few megabytes of
+  working memory per pass — and every chunk of an area is also read and turned into opacity tables
+  inside one tick, which is the cost that actually grows with the area. The flood fill stops at
+  `maxAreaSize` (16 by default) and the remainder starts the next area; the seam between two parts
+  settles on the following tick, because each part reads the other as its ring.
 - **Nothing ever blocks on a computation.** A chunk hands out whatever its sections hold right now,
   which is the previous result while a new one is in flight.
 - **One scheduler serves exactly one instance.** The dirty set is keyed by chunk coordinates alone
@@ -586,6 +595,42 @@ chunks and each of its ring chunks exactly once, no matter how large it is.
 neighbours, so neither side has a ring to read and there is nothing for either to save. The row is
 worth keeping precisely because it shows the difference is the repeated reading and nothing else.
 
+**The `perChunk` side used to write nine chunks and now writes one**, since
+`calculateWithNeighbours` stopped darkening its ring. That removes eight `toSections` conversions and
+eight guarded writes per call, so the comparison had to be re-run rather than assumed to carry. It
+does: at nine chunks the re-run gives `area` 6 456.7 ± 842.4 against `perChunk` 35 342.0 ± 4 934.9 —
+5.47× against the 5.37× of the row above, with both spreads overlapping. The reason the fix barely shows is the
+reason area forming wins in the first place — what dominates both sides is reading the block states
+and building the opacity tables, not writing the result. The table is therefore left as measured, and
+the comparison is now between two paths that both write only what they computed correctly.
+
+### A replayed block change against lighting the chunks again
+
+`IncrementalVsFullBenchmark`, `-f 1 -wi 5 -i 10`, µs/op. One block is toggled between glowstone and
+air in the middle of a 5×5 world; both sides then compute the nine chunks the change marks plus the
+ring around them, and write the result into the same sections. The only difference is where the light
+of a chunk comes from: replayed onto the light the area already holds, or searched again from the
+block states, which is what every pass did before.
+
+| | full | incremental | Incremental is |
+| --- | ---: | ---: | --- |
+| Block light | 16 028 ± 778 | 7 747 ± 402 | 2.07× cheaper |
+| Sky light | 39 585 ± 1 512 | 7 065 ± 438 | 5.60× cheaper |
+| One tick pays for both | ≈ 55 613 | ≈ 14 812 | 3.75× cheaper |
+
+An independent earlier run gave 1.96× / 6.40× / 3.95×; direction and order of magnitude reproduce,
+the third digit does not. The tick row is the sum of the two above it, not a measurement of its own —
+a dimension with skylight pays both in the same pass.
+
+**Sky light gains far more than block light, and that is the shape the design predicts.** A full sky
+propagation seeds every open cell of a column, which is what makes it the expensive half and what
+makes its scaling non-linear (see *Scaling by world height*). Replaying a position walks one column of
+the heightmap instead. Block light was never seeded that widely, so there is less to avoid.
+
+**The block toggles rather than being placed**, so the world alternates between two states instead of
+drifting, and both directions of an incremental update are measured — adding brightness and taking it
+back. Measuring only the easy direction would have reported a larger number for less work.
+
 ### Where the time goes in the light path
 
 This section began as a standalone rebuild of the same call structure, run outside the project — not
@@ -642,11 +687,18 @@ section. Ordered by the size of the effect, with what has since been built marke
 - **A bucket queue (Dial)** is 5–7 % *slower* at equal source brightness and 32–36 % faster at mixed
   brightness. The benchmark now produces the mixed case — see *With sources of mixed brightness*
   above, where mixed sources cost about 33 %.
-- **`ChunkLightState` allocates about 980 KB of buffers per instance**, and `calculateWithNeighbours`
-  builds nine of them — roughly 28 MB of garbage per call. Derived from the buffer sizes, not
-  measured with an allocation profiler. This is also the figure the cap on an area size is set from:
-  `ChunkLightArea` builds one state per chunk of the area *and* of its ring, so an unbounded area
-  over a large build would allocate hundreds of megabytes inside a tick.
+- **Done: `ChunkLightState` is about 100 KB per instance instead of about 980 KB.** Its three working
+  queues were sized for one entry per position of the chunk — 393 KB, 393 KB and 98 KB against the
+  98 KB the levels themselves take, so nine tenths of a state was scratch space for buffers that a
+  single-block update fills a few dozen entries of. They now start at 1024 entries and grow, which is
+  what makes a state cheap enough to be *kept* between two passes rather than thrown away after each,
+  and that is what the incremental path is built on. Nine of them, which is what
+  `calculateWithNeighbours` builds, come to roughly 900 KB per call instead of roughly 8.8 MB.
+  **Derived from the declared buffer sizes, not measured with an allocation profiler** — as the
+  earlier version of this bullet was, whose "roughly 28 MB" did not follow from 9 × 980 KB either.
+  The cap on an area size is still set from this figure, because `ChunkLightArea` builds one state
+  per chunk of the area *and* of its ring; what now dominates an area is the opacity tables, not the
+  states — see open item 4.
 
 ### Optimisations these numbers produced
 
@@ -658,6 +710,8 @@ section. Ordered by the size of the effect, with what has since been built marke
 | Linear-probing opacity table over the raw state id, no boxing | 31.33 µs → 8.07 µs, 74 040 → 8 664 bytes per call |
 | `LightNibbles.ofLevels` instead of 4096 calls to `set` | `collect` 0.24 µs → 0.23 µs in the stage benchmark; the rebuild had it at 9.6 → 1.2 µs for the non-uniform case |
 | One area instead of one 3×3 neighbourhood per chunk | 3.93× at 4 chunks, 6.09× at 16, level at 1 |
+| Replaying a changed position instead of lighting the chunks again | 2.07× on block light, 5.60× on sky light, 3.75× on a tick that pays for both |
+| Working queues that start at 1024 entries instead of one per position | `ChunkLightState` from roughly 980 KB to roughly 100 KB, which is what makes it keepable |
 
 ---
 
@@ -692,6 +746,24 @@ Vanilla defines the Anvil format, so these are gaps in this implementation, not 
 - **The name cap in `AnvilDiagnostics` was a check-then-act**, so racing threads could exceed it.
 - **The biome registry was resolved eagerly**, which made a loader impossible to construct before
   `MinecraftServer.init`.
+- **`calculateWithNeighbours` darkened the eight chunks it borrowed.** It wrote all nine chunks of
+  its 3×3 back, although only the middle one is correct: a ring chunk exchanged light inside the 3×3
+  and nowhere else, so whatever it legitimately receives from further out was missing from its result
+  and its previously correct light was replaced with a darker one. It now writes only the middle
+  chunk and reads the other eight. The middle chunk is provably unaffected by the same reasoning that
+  makes the ring wrong — a source outside the 3×3 is at least seventeen blocks from it and no path is
+  shorter than the direct distance, so not even level fifteen survives the trip. The fix is therefore
+  cheaper than the defect as well as correct, which is rare enough to note. It had been an open item
+  for a while, and what closed it was `ChunkLightArea` arriving at the same rule from the other side.
+- **`ChunkLightState#update` never refilled a hole that opened six blocks from any light.** When a
+  block that had been blocking light was removed, the position carried no light of its own, so the
+  retraction found nothing to follow; offering the sources of the chunk again reached nothing either,
+  because their neighbours already carry exactly the level they belong at and the search stops at the
+  first of them. Light standing six blocks away therefore never travelled into the hole. The sky path
+  had it right — `updateSky` seeded the neighbours of the changed position — and `update` did not.
+  Both now do. Surfaced by wiring the incremental path into the scheduler, which is what first ran
+  `update` over the removal of an ordinary solid block rather than of a source;
+  `ChunkLightStateTest#testRemovingABlockingBlockLetsTheLightThrough` pins it down.
 - **The byte identity against Minestom was never checked by anything.** This file and the documents
   stated "54 scenarios, byte-identical, zero differing cells" as an established fact. It rested on an
   ad-hoc comparison run once by hand: there was no test, and the benchmark did not verify it either,
@@ -808,56 +880,63 @@ Extending it keeps roughly 40 signatures and 14 test assertions untouched; not e
 every existing `catch (IOException)` from silently swallowing the new types. Both arguments hold —
 this needs a call, not more analysis.
 
-### 2. `calculateWithNeighbours` is last-writer-wins across chunks
+### 2. `calculateWithNeighbours` can commit a stale read of its neighbours
 
 One service may now serve any number of threads, which is what the light fix established. What it
 does **not** establish is two threads lighting *overlapping neighbourhoods*: each reads the block
-states of all nine chunks separately, then both write into the same sections. Neither corrupts
-memory — every write holds the chunk's write lock — but the later writer wins on the basis of a read
-that may already be stale, which shows up as a seam rather than as an error. Whether that happens is
-up to the caller; nothing in the API says so yet.
+states of all nine chunks separately, and a chunk one thread reads as a neighbour is a chunk the
+other may be writing. Neither corrupts memory — every write holds the chunk's write lock — but a
+result can be committed from a read that was already stale, which shows up as a seam rather than as
+an error. Whether that happens is up to the caller; nothing in the API says so yet.
 
-**Narrowed, not closed.** A caller going through `ChunkLightScheduler` is no longer exposed to this:
-a chunk under computation stays marked but is not submitted a second time, and a chunk whose mark
-count moved while its area ran has its result discarded rather than written. `ChunkLightArea` says
-the same thing at its own level — it is safe to share between threads, but two threads computing
-*overlapping* areas is not made safe there either, and the scheduler is what keeps that from
-happening. The item stands for everyone who calls the service directly.
+**Narrowed twice, still not closed.** Since the method writes only the chunk in the middle of its
+3×3, two threads on *different* coordinates no longer write the same sections at all, so the plain
+last-writer-wins case is gone; what remains is the stale read. And a caller going through
+`ChunkLightScheduler` is not exposed to either: a chunk under computation stays marked but is not
+submitted a second time, and a chunk whose mark count moved while its area ran has its result
+discarded rather than written. `ChunkLightArea` says the same thing at its own level — it is safe to
+share between threads, but two threads computing *overlapping* areas is not made safe there either,
+and the scheduler is what keeps that from happening. The item stands for everyone who calls the
+service directly.
 
-### 3. `calculateWithNeighbours` darkens the eight chunks it borrows
+### 3. `ChunkLightArea` does not read the diagonal chunks of its ring
 
-It writes **all nine** chunks back at the end. The eight ring chunks only exchanged light inside the
-3×3, so the light they legitimately receive from chunks outside the 3×3 is missing from their result.
-Their previously correct light is overwritten with a darker one.
+The ring of an area is built from the face neighbours of every chunk in it, so a chunk that touches
+the area only at a corner is never read. A light source in such a chunk reaches the area through the
+chunk between the two, and that chunk *is* in the ring — but only its own light is exchanged, and its
+own light does not contain what it received from its diagonal neighbour, because a ring chunk's state
+is computed from its block states alone. The source is therefore missing from the result.
 
-The middle chunk is not affected, and provably so: a source in chunk (2,0) is at least 17 blocks from
-the middle chunk, and no path can be shorter than the direct distance, so level 15 does not survive
-the trip. Writing back only the middle chunk would therefore be **cheaper than the current behaviour
-and correct at the same time**. The argument is a derivation from the per-block decay, not a
-measurement — the byte-identity tests cover a single chunk, not the ring around it.
+This is the same family as the ring darkening just fixed in `calculateWithNeighbours` — a chunk whose
+light matters is not being read — but smaller, and in the newer type. Smaller because it costs a
+level: a source in a diagonal chunk has travelled at least one chunk before it arrives, so what it
+can still contribute at the edge of the area is bounded, and it is invisible in every test that
+places its sources inside the area or on a face.
 
-This is the concrete form of what was filed under smaller items as "border exchange settles one ring
-deep": not an imprecision, a defect with a known fix.
+The obvious fix is to add the four diagonals of every area chunk to the ring, which for a one-chunk
+area is exactly the 3×3 `calculateWithNeighbours` reads. That is also the trade: the ring grows, and
+the ring is what every pass pays for. It is the reason `calculateWithNeighbours` was not deprecated
+in favour of `ChunkLightArea` — for a single chunk the older method is still the more accurate of the
+two, and the area is the cheaper one for several.
 
-**Still open, and the fix now exists next to it.** `ChunkLightArea` reads its ring and writes only
-its area, which is exactly the correction this item asks for, and
-`ChunkLightAreaTest#testChunksOutsideTheAreaKeepTheirLight` pins it down. That does not fix
-`calculateWithNeighbours`, which is unchanged and is still what a direct caller of the service gets —
-including `AreaVsPerChunkBenchmark`, whose `perChunk` side is the darkening path and is measured as
-such. The method is now the older of two ways to do the same thing, and the newer one is right.
+### 4. The opacity tables are rebuilt on every pass
 
-### 4. The scheduler recomputes whole chunks for a single block change
+`ChunkLightArea#read` calls `ChunkLightService#opacityOf` for every chunk of the area *and* of its
+ring, on every pass, whether or not anything in that chunk moved. Building those tables is the
+expensive part of lighting — that is the whole argument area forming rests on — so now that the light
+itself is kept between passes and a changed position is replayed onto it, this is the largest
+remaining cost block by a wide margin.
 
-`ChunkLightState#update` exists, is tested against a full recalculation block for block, and handles
-the hard direction — retracting the glow of a source that disappeared and letting the legitimate
-light of everything else back in. The scheduler does not use it. A block change marks its chunk and
-the eight around it, and the next pass recomputes those chunks from their block states.
+Only the sections a change touched need a new table. The rest is being rebuilt from block states that
+are identical to the ones the previous pass read, which is work whose result is known in advance. A
+ring chunk that nothing marked is the clearest case: it is read once per pass, per kind of light,
+purely to be handed to a border exchange that will produce the same border it produced last time.
 
-This was a declared non-goal of the design rather than an oversight: the entry point had to exist
-before the granularity behind it was worth tuning. It is recorded here because the engine already
-carries the cheaper path, so the gap is a wiring job and not a piece of missing work. What makes it
-more than a micro-optimisation is the area cap — every chunk of an area holds a `ChunkLightState` of
-roughly 980 KB, and a placed torch currently pays for nine of them.
+Keeping the tables has the shape the kept light already has — a bound, a least-recently-used eviction,
+and an invalidation driven by the same reported positions — so the mechanism exists and would be
+reused rather than invented. What it has to answer that the kept light does not is that a table is
+per section rather than per chunk, so the bound is in sections and the invalidation has to map a
+position to one.
 
 ### 5. Two things that are argued rather than tested
 
@@ -872,7 +951,8 @@ roughly 980 KB, and a placed torch currently pays for nine of them.
 ### 6. Smaller items
 
 - Border exchange between chunks settles one ring deep; a fully converged result over a large area
-  needs the exchange repeated. Item 3 is the part of this that is outright wrong today.
+  needs the exchange repeated. The part of this that was outright wrong — writing the ring back — is
+  fixed; item 3 is the part that is still a gap in what gets *read*.
 - An area split at `maxAreaSize` leaves a seam between its two parts for one tick, because each part
   reads the other as its ring and only the next pass settles it. Deliberate — the alternative is an
   unbounded area — and it is the reason the cap is a constructor argument rather than a constant.
@@ -884,11 +964,17 @@ roughly 980 KB, and a placed torch currently pays for nine of them.
   looping until the world stops changing. A caller that keeps requesting chunks during a shutdown is
   a caller error and is not covered; a shutdown that never returns would be worse than one that
   reports a leak.
-- Sky light updates re-seed open columns rather than tracking a heightmap incrementally. Measured at
-  79.3 → 55.1 µs in the rebuild, with byte identity verified over 240 worlds.
+- A **full** sky propagation still queues every open cell of a column rather than seeding from a
+  heightmap. Measured at 79.3 → 55.1 µs in the rebuild, with byte identity verified over 240 worlds.
+  An *update* no longer does this — `ChunkLightState` keeps the height at which each column stops the
+  sky and walks only the column that moved, which is most of why the incremental sky figure under
+  *Measured* is the larger of the two gains — but every propagation that starts from block states
+  still pays it.
 - `SectionOpacity` still builds its table unconditionally for non-uniform sections. Since `69381af`
   that costs 8.07 µs instead of 31.33, and the empty section with one source is no longer the row
-  that loses — but the table is still built whether or not it is read more than once.
+  that loses — but the table is still built whether or not it is read more than once. Item 4 is the
+  same waste one level up: not "is this table read twice" but "was this table already built last
+  tick".
 - `seed` walks all 4096 positions a second time only to find the emitters. Writing them during the
   table build saves about 3.6 µs and one `byte[4096]`, at the price of changing the API of
   `SectionOpacity` and both propagators. Left open on purpose for that reason.

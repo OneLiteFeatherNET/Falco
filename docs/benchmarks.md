@@ -90,6 +90,12 @@ Two kinds of benchmark live here, and the distinction matters when reading a num
 The **library benchmarks** — the large majority — start no server at all. They measure what this
 code contributes, with the registry replaced by a fake.
 
+Two of them are exceptions and start one anyway: `AreaVsPerChunkBenchmark` and
+`IncrementalVsFullBenchmark` compare two Falco paths against each other, so no foreign implementation
+is involved, but what they measure is defined over chunks of a real instance and there is no fake to
+put in its place. Both sides of each pay the same registry, so the comparison is unaffected; the
+absolute microseconds are not comparable with the rest of the library benchmarks.
+
 The **comparison benchmarks** measure this implementation against the one Minestom ships with, and
 there the point *is* to run the original rather than a stand-in. Three of them need a server for it:
 
@@ -159,14 +165,16 @@ would land inside the `codec` stage and hide the very thing the benchmark isolat
 | [`SectionOpacityBenchmark`](../falco-benchmarks/src/jmh/java/net/onelitefeather/falco/benchmark/light/SectionOpacityBenchmark.java) `.of` | `distinctStates` 1, 8, 64, 200 × `resolveCost` 0, 50 | What "resolve each distinct state once" is worth. `distinctStates` sets how often the cache misses; `resolveCost` sets what a miss costs. At `resolveCost = 0` you are measuring the hash map and the two array writes per block, so the table looks like pure overhead. At `resolveCost = 50` you are measuring what it saves: seven resolutions per distinct state instead of seven per block. |
 | [`LightPropagatorBenchmark`](../falco-benchmarks/src/jmh/java/net/onelitefeather/falco/benchmark/light/LightPropagatorBenchmark.java) `.propagate` | `lightSources` 0, 1, 8, 64 × `occlusionPercent` 0, 25 | How the single-section search scales with the amount of queued positions. `lightSources = 0` is answered without a search at all, which is the case for the overwhelming majority of the sections of a world. `occlusionPercent = 25` is there because solid blocks stop the search early — measuring only an open section reports the worst case and calls it normal. |
 | [`ChunkLightPropagatorBenchmark`](../falco-benchmarks/src/jmh/java/net/onelitefeather/falco/benchmark/light/ChunkLightPropagatorBenchmark.java) `.propagate` `.propagateSky` | `sectionCount` 4, 16, 24 × `lightSourcesPerSection` 1, 8 | The same search across section borders, over a flat map (4), a shallow world (16) and a full-height overworld (24). Both searches are measured because the engine runs both per chunk and they behave very differently: block light is bounded by the amount of emitting blocks, sky light seeds nearly every block of an open column. |
+| [`AreaVsPerChunkBenchmark`](../falco-benchmarks/src/jmh/java/net/onelitefeather/falco/benchmark/light/AreaVsPerChunkBenchmark.java) `.area` `.perChunk` | `chunkCount` 1, 4, 9, 16 | Whether area forming earns its complexity: an area of *n* chunks against *n* separate `calculateWithNeighbours` calls. Written as a decision rather than a report — had it not held, the simpler per-chunk design was the better one and area forming was to be dropped rather than tuned. The `chunkCount = 1` row is the control: a lone chunk has no loaded neighbours, so neither side has a ring to read and the two must come out level. |
+| [`IncrementalVsFullBenchmark`](../falco-benchmarks/src/jmh/java/net/onelitefeather/falco/benchmark/light/IncrementalVsFullBenchmark.java) `.incremental` `.full` | `sky` false, true | Whether replaying a changed position earns the memory the kept light costs. Both sides toggle the same block, compute the same nine chunks plus the same ring and write into the same sections; only the origin of a chunk's light differs. The block is *toggled* rather than placed, so both directions of an incremental update are measured — adding brightness and taking it back — and the world alternates between two states instead of drifting. `sky` is a parameter because a tick pays for both kinds and they gain very differently. |
 
 Both propagators keep their working buffers between runs, so the benchmarks reuse one instance for
 the whole trial and warm the buffers in `@Setup`. A fresh instance per invocation would measure two
 array allocations instead of the search.
 
-`ChunkLightState` and `ChunkLightService` have no benchmarks of their own. They are the
-Minestom-facing half of the engine; what they cost is covered by the comparison benchmarks below,
-which do start a server.
+The last two start a server, unlike everything else in this table, because an area and a scheduler
+pass are defined over real chunks of a real instance. `ChunkLightService` has no benchmark of its own;
+what it costs is covered by those two and by the comparison benchmarks below.
 
 ### Against the implementations Minestom ships with
 

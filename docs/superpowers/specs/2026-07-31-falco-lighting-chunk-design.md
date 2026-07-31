@@ -2,6 +2,34 @@
 
 Status: approved, not implemented · 2026-07-31
 
+> **Addendum, added after implementation.** This document is left as it was approved; the notes below
+> record where the built result departed from it, so that reading it does not mislead. They are the
+> only text in this file that was not part of the sign-off.
+>
+> - **The non-goal "No incremental single-block update" has been implemented.** It was a scoping
+>   decision — the entry point had to exist before the granularity behind it was worth tuning — and
+>   the entry point exists, so the step it deferred was taken. `FalcoLightingChunk#setBlock` reports
+>   the changed *position*, `ChunkLightArea` keeps the light of each chunk it has computed, and a pass
+>   replays the reported positions on that light instead of searching the chunk again. Measured at
+>   2.07× on block light and 5.60× on sky light; see *Measured* in `STATUS.md`. The sentence "A
+>   changed block dirties its whole chunk" under *Non-goals* now describes only the fallback, for a
+>   chunk that was generated, loaded, or written past `setBlock`.
+> - **The 980 KB figure under *Area size is capped* is out of date, and the cap survives it.** A
+>   `ChunkLightState` is now roughly 100 KB: its working queues used to be sized for one entry per
+>   position of the chunk, which was nine tenths of the state, and they now start small and grow —
+>   which is what made a state cheap enough to keep between two passes and therefore what the point
+>   above is built on. The cap is still not optional, but the reason has moved: what grows with the
+>   area is the opacity tables built for every chunk of it and of its ring inside one tick, not the
+>   states.
+> - **The ring rule was carried back into `calculateWithNeighbours`.** *The ring is read but never
+>   written* calls the opposite behaviour "the same mistake `calculateWithNeighbours` makes today".
+>   It no longer makes it: it reads its 3×3 and writes only the chunk in the middle. What remains is
+>   the reverse gap, in the newer type — an area's ring holds no diagonal chunks, which the 3×3 does.
+>   Both are in the open items of `STATUS.md`.
+> - Three further assumptions of this design did not survive contact with the implementation, and
+>   they are recorded in `STATUS.md` under *Three assumptions of the approved lighting-chunk design
+>   that did not hold*.
+
 ## The problem
 
 The light engine works today, but using it is manual. A caller has to notice that a chunk changed,
@@ -32,7 +60,7 @@ at all. Falco hands its result over through `Light#set`, so the same scheduler w
   foreign implementation would be silently replaced on copy.
 - **No incremental single-block update.** A changed block dirties its whole chunk. The engine has
   `ChunkLightState#update` for finer work; wiring it in is a later step and does not change this
-  design.
+  design. *(Implemented after this document was signed off — see the addendum at the top.)*
 - **No replacement for `ChunkLightService`.** The scheduler drives that service, it does not
   duplicate it.
 

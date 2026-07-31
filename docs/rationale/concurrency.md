@@ -324,14 +324,16 @@ What they do not establish is stated in the same spirit [1]:
 
 - **Stale header entries** are ruled out by construction, not by a test, as described above.
 - **The open-handle limit** bounds the cache, not the descriptors.
-- **`calculateWithNeighbours` is last-writer-wins across chunks.** One `ChunkLightService` may serve
-  any number of threads — that is what the light fix established and what
-  `ChunkLightServiceConcurrencyTest` holds it to. What it does *not* establish is two threads lighting
-  overlapping neighbourhoods: each reads the block states of all nine chunks separately and both
-  write into the same sections. No memory is corrupted, since every write holds the chunk's write
-  lock, but the later writer wins on the basis of a possibly stale read, which shows up as a seam
-  rather than as an error. Whether that happens is up to the caller, and nothing in the API says so
-  yet [1].
+- **`calculateWithNeighbours` can commit a stale read.** One `ChunkLightService` may serve any number
+  of threads — that is what the light fix established and what `ChunkLightServiceConcurrencyTest`
+  holds it to. What it does *not* establish is two threads lighting overlapping neighbourhoods: each
+  reads the block states of all nine chunks separately, and a chunk one thread reads as a neighbour
+  is a chunk the other may be writing. No memory is corrupted, since every write holds the chunk's
+  write lock, but a result can be committed from a read that was already stale, which shows up as a
+  seam rather than as an error. Since the method writes only the chunk in the middle of its 3×3, two
+  threads on different coordinates no longer write the same sections at all, so the plain
+  last-writer-wins case is gone and the stale read is what is left. Whether it happens is up to the
+  caller, and nothing in the API says so yet [1].
 
 ## Sources
 

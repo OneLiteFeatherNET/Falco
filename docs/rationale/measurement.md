@@ -392,12 +392,17 @@ everything else in the repository. The estimates of the open optimisations — h
 79.3 → 55.1 µs, flat column opacity at −26 %, direction skipping at −7 to −16 % — are all of this
 kind. Treat them as the reason to build a benchmark, not as a benchmark result.
 
-**One allocation figure is arithmetic, not measurement.** "`ChunkLightState` allocates about 980 KB
-of buffers per instance, and `calculateWithNeighbours` builds nine of them — roughly 28 MB of garbage
-per call" is derived from the declared buffer sizes. It has not been checked with an allocation
-profiler. `-prof gc` and its `gc.alloc.rate.norm` counter would settle it in a single run [15]; that
-run has not been made. Where allocation *was* measured that way — the opacity table going from 74 040
-to 8 664 bytes per call — the figure is a real one.
+**One allocation figure is arithmetic, not measurement, and it has now been quoted wrongly twice.**
+"`ChunkLightState` allocates about 980 KB of buffers per instance" was derived from the declared
+buffer sizes, and the sentence that followed it — "`calculateWithNeighbours` builds nine of them,
+roughly 28 MB of garbage per call" — did not even follow from that: nine times 980 KB is 8.8 MB. The
+figure has since moved, because the working queues stopped being sized for one entry per position of
+the chunk; a state is now about 100 KB. That number is arithmetic in exactly the same way, and
+`STATUS.md` marks it as such. It has still not been checked with an allocation profiler. `-prof gc`
+and its `gc.alloc.rate.norm` counter would settle it in a single run [15]; that run has not been made.
+Where allocation *was* measured that way — the opacity table going from 74 040 to 8 664 bytes per
+call — the figure is a real one. The lesson is not that the estimate was off but that a derived
+number was carried forward through three documents without anyone re-doing the multiplication.
 
 **`RegionFileBenchmark` is not a storage benchmark.** It runs on a warm page cache and measures
 almost no device time. That is realistic for a server saving the same chunks repeatedly and useless

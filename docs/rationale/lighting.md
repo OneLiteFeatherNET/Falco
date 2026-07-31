@@ -363,17 +363,29 @@ nothing", not as proof that nothing exists.
 
 ## What this engine costs, stated plainly
 
-Three limits, so that the trade is visible:
+Four limits, so that the trade is visible:
 
 - **Single-section, sparse, uniformly bright sections are close to a tie**, and with mixed source
   brightness in an open section the two engines are effectively level (1.06× and 1.08×, with the 64
   source figure carrying a ±32.73 error on a 150.42 mean).
-- **`calculateWithNeighbours` writes back all nine chunks it touched**, and the eight ring chunks only
-  exchanged light within the 3×3, so their result is darker than it should be. The middle chunk is
-  provably unaffected — a source in chunk (2,0) is at least 17 blocks away and level 15 cannot survive
-  the trip — which means writing back only the middle chunk would be both cheaper and correct. This
-  is a known defect with a known fix, argued from the per-block decay rather than measured; the
-  byte-identity tests cover a single section, not a ring [10].
+- **An area does not read the diagonal chunks of its ring.** `ChunkLightArea` builds its ring from
+  the face neighbours of every chunk it holds, so a light source in a chunk that touches the area only
+  at a corner is missing from the result. It reaches the area through the chunk between the two, and
+  that chunk is in the ring — but a ring chunk's state is computed from its own block states alone, so
+  it does not carry what its diagonal neighbour sent it. This is the residue of a larger defect that
+  is now fixed: `calculateWithNeighbours` used to write back all nine chunks of its 3×3, although only
+  the middle one had seen everything that reaches it, so the eight it borrowed had their correct light
+  replaced with a darker one. It now writes only the middle chunk. The argument that the middle chunk
+  is safe is a derivation from the per-block decay rather than a measurement — a source outside the
+  3×3 is at least 17 blocks away and level 15 cannot survive the trip — and the byte-identity tests
+  cover a single section, not a ring [10]. The same derivation is what says the diagonals matter for
+  an area: they are one chunk away, not two.
+- **The 3×3 neighbourhood therefore survives the area.** `calculateWithNeighbours` was not deprecated
+  in favour of `ChunkLightArea`, and the reason is exactly the point above: for a *single* chunk the
+  neighbourhood is the more accurate of the two, because it reads the four diagonals an area of one
+  chunk never sees. For several connected chunks the area is the cheaper one — measurably, from four
+  chunks on [10] — because it reads each chunk once instead of once per neighbourhood. Two calls with
+  different trade-offs, not an old one and its replacement.
 - **Sky light does not scale linearly.** Cost per section rises from 84 µs to 104 µs past roughly 64
   sections in `ScalingBenchmark`, and a least-squares fit over the vanilla range understates the cost
   at 256 sections by 19.5 %, where the same method lands within 1.8 % for block light [10]. The cause

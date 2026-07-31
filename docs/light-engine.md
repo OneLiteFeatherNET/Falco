@@ -460,7 +460,8 @@ lighting.calculateWithNeighbours(instance, chunkX, chunkZ);
 
 Lighting a chunk on its own ends its light at the border, which shows up as a straight dark line
 every sixteen blocks. This method exchanges the border levels with every already loaded neighbour in
-both directions. Neighbours that are not loaded are skipped rather than forced to load.
+both directions, and **writes only the chunk in the middle**. Neighbours that are not loaded are
+skipped rather than forced to load.
 
 One round of that exchange is not enough. A source in the corner of a chunk sends light through two
 borders, and the light that entered a neighbour has to leave it again on another side to arrive in
@@ -477,11 +478,22 @@ the eight positions around it — until no chunk of it raises a level any more:
 A radius of one chunk is enough because a level of fifteen cannot survive sixteen blocks of travel,
 so nothing the middle chunk emits can reach a second ring.
 
-**One caveat, and it is a defect rather than an imprecision.** `calculateWithNeighbours` writes all
-nine chunks back. The eight around the middle only exchanged light inside the 3×3, so whatever they
-legitimately receive from outside it is missing from their result and their previously correct light
-is overwritten with a darker one. The middle chunk is unaffected. The area path below does not have
-this problem — it reads a ring it never writes — so prefer it when the choice exists.
+**The eight chunks around the middle are read and never written, and that is not a shortcut.** They
+only exchanged light inside the 3×3, so whatever they legitimately receive from outside it is missing
+from their result; writing that back would replace their correct light with a darker one. The middle
+chunk does not have the problem, and provably so: a source outside the 3×3 is at least seventeen
+blocks away from it and no path can be shorter than the direct distance, so not even a level of
+fifteen survives the trip. Writing one chunk instead of nine is therefore cheaper *and* correct. The
+method used to write all nine, which is the defect this replaces.
+
+**What this method still has over a one-chunk area.** The 3×3 includes the four **diagonal** chunks;
+the ring of a [`ChunkLightArea`](#letting-the-chunk-keep-its-own-light) is built from face neighbours
+only. A source in a diagonal chunk reaches the middle chunk through the chunk between them, and the
+neighbourhood carries that — an area of a single chunk never reads it. For one chunk this is
+therefore the more accurate of the two calls; for several connected chunks the area is the cheaper
+one, because it reads every chunk once instead of once per neighbourhood. That an area misses its own
+diagonals is a gap of its own, and it is recorded in [`STATUS.md`](../STATUS.md) rather than glossed
+over here.
 
 ### Letting the chunk keep its own light
 
@@ -508,7 +520,7 @@ Five types, and only one of them holds any behaviour:
 | `FalcoLightingChunk` | The drop-in, a `DynamicChunk` subclass. Three overrides, each of which only reports something: `setBlock` and `onLoad` mark, `tick` triggers the pass, `onLightUpdated` sends. |
 | `ChunkLightScheduler` | Everything else — the dirty set, the once-per-tick trigger, area forming, the executor, back pressure and the staleness rule — so a reader looking for the behaviour finds it in one place. |
 | `ChunkArea` | A chunk coordinate pair, and the flood fill that cuts a dirty set into capped connected groups. Pure arithmetic, no Minestom. |
-| `ChunkLightArea` | Computes one group in a single pass: reads its chunks plus one ring, exchanges borders until settled, writes back the group and never the ring. |
+| `ChunkLightArea` | Computes one group in a single pass: reads its chunks plus one ring, exchanges borders until settled, writes back the group and never the ring. Keeps the light of each chunk it has computed, so the next pass replays the reported changes on it. |
 | `LightUpdateAware` | The hook Minestom does not have, so a computed result can be delivered without knowing which chunk type it belongs to. |
 
 **A change marks the 3×3, not just the chunk it happened in.** A lamp on the eastern edge of a chunk
@@ -516,12 +528,37 @@ belongs in the light of the chunk east of it, and that chunk would otherwise nev
 around an area is the mirror image of the same rule: it is read so the edge of the area is right, and
 never written, because a ring chunk has not seen what lies on its own far side.
 
+**A changed block costs a changed block, not nine chunks.** `setBlock` reports the *position* that
+changed, not merely that its chunk is dirty. The area keeps the light of every chunk it has computed
+and replays the reported positions on it, so a placed torch costs one incremental update rather than
+nine full chunk searches. The eight neighbours are still marked, because light crosses borders, but
+nothing of theirs is discarded: their own blocks did not move, and what arrives across the border is
+derived again by every pass anyway. A change that cannot be placed — a chunk that was generated,
+loaded, or written past `setBlock` — is reported as being of unknown extent, and that chunk is
+searched again. What this is worth is measured in [`STATUS.md`](../STATUS.md): 2.07× on block light,
+5.60× on sky light, 3.75× on a tick that pays for both.
+
+**What is kept is the light of a chunk *alone*, before any border exchange**, and that is what makes
+the hard direction tractable. Taking light back is the case an incremental engine gets wrong, because
+a retraction has to run until light from somewhere else legitimately takes over — and a retraction
+that had to leave the chunk to find that point would need the neighbours retracted with it. It never
+has to here: the kept light contains nothing from any neighbour, so every level in it originates
+inside the chunk and the retraction is complete at the border by construction. The light that crosses
+borders is not stored at all; it is derived again on every pass, from a *copy* of the kept light, and
+an exchange only ever raises levels and so cannot carry a stale glow forward.
+
+The kept light is bounded — roughly 100 KB per chunk and kind of light, for at most 128 chunks by
+default, least recently used first — and dropping an entry costs a full propagation and nothing else.
+The result is the same bytes a full recalculation produces, and a chunk that cannot be followed
+incrementally is simply propagated again.
+
 **Areas are formed once per tick and capped.** `Chunk#tick(long)` runs per chunk, but a pass has to
 see every change of the tick before it groups anything, so the scheduler runs its pass for the first
-chunk reporting a timestamp it has not seen. Connected dirty chunks are lit together — one
-`ChunkLightState` is roughly 980 KB, so the group is closed at `maxAreaSize` chunks, 16 by default,
-and the remainder starts the next area. The seam between two parts settles on the following tick,
-because each part reads the other as its ring.
+chunk reporting a timestamp it has not seen. Connected dirty chunks are lit together, and the group
+is closed at `maxAreaSize` chunks, 16 by default, with the remainder starting the next area. The cap
+is there because every chunk of an area and of its ring is read and turned into opacity tables inside
+one tick; a `ChunkLightState` of roughly 100 KB per chunk is the smaller half of that bill. The seam
+between two parts settles on the following tick, because each part reads the other as its ring.
 
 **Nothing ever blocks on a computation.** A chunk hands out whatever its sections hold right now,
 which is the previous result while a new one is in flight. A chunk whose area is still running stays
@@ -554,9 +591,9 @@ Minestom's path does not manage.
 ### Incremental updates
 
 `ChunkLightService#calculate` always recomputes the whole chunk. For a single block change that is
-wasteful, and `ChunkLightState` exists for that case. Note that `ChunkLightScheduler` does **not**
-use it yet: a change there marks whole chunks and the next pass recomputes them from their block
-states. Wiring the two together is open work, not a design decision.
+wasteful, and `ChunkLightState` exists for that case. It is what `ChunkLightScheduler` runs on:
+`FalcoLightingChunk#setBlock` reports the position, `ChunkLightArea` keeps the light of the chunk and
+replays the position on it. Use the type directly only if you drive the engine yourself.
 
 ```java
 ChunkLightState state = ChunkLightState.blockLight(opacityTables);
@@ -622,9 +659,9 @@ random changes that verifies the equality after every single one of them.
 | --- | --- |
 | A live world where light should simply be right | `setChunkSupplier(scheduler.supplier())`, then nothing |
 | Chunk loaded without stored light, or generated | `calculate` / `calculateSky` |
-| Chunk loaded and neighbours matter | `ChunkLightArea#compute`, or `calculateWithNeighbours` if you accept that it darkens the ring |
+| One chunk loaded and its neighbours matter | `calculateWithNeighbours` — its 3×3 includes the four diagonal chunks, which a one-chunk area never reads |
 | Several connected chunks at once | `ChunkLightArea#compute` — measurably cheaper than one neighbourhood per chunk from four chunks on |
-| A single block changed | `ChunkLightState#update` |
+| A single block changed | `ChunkLightState#update`, or nothing at all if the scheduler is driving |
 
 ## Limits
 
@@ -635,11 +672,13 @@ random changes that verifies the equality after every single one of them.
   eight positions around it, and an area settles its own chunks against a ring. That is enough for
   the chunks being written, but the ring itself is not settled against its own neighbours further
   out.
-- **`calculateWithNeighbours` darkens the eight chunks it borrows.** It writes all nine back, and the
-  outer eight never saw the light coming from outside the 3×3. `ChunkLightArea` does not do this;
-  the older method is unchanged.
-- **The scheduler recomputes chunks, not blocks.** `ChunkLightState#update` exists and is not wired
-  into it, so a single placed torch currently costs the recomputation of a 3×3.
+- **The ring of an area holds no diagonals.** It is built from the face neighbours of every chunk of
+  the area, so a source in a chunk that touches the area only at a corner is missing from the result.
+  `calculateWithNeighbours` reads its diagonals and does not have this gap, which is why it was not
+  deprecated in favour of the area.
+- **An area rebuilds every opacity table on every pass**, for each of its chunks and each of its ring
+  chunks, whether or not anything in them moved. Now that the light itself is kept between passes,
+  this is the largest remaining cost of a pass.
 - **An area split at the cap leaves a seam for one tick.** Each part reads the other as its ring, so
   the following pass settles it.
 - **`Section.clone()` discards foreign light.** Should an adapter be built later, note that
@@ -648,7 +687,7 @@ random changes that verifies the equality after every single one of them.
 
 ## Tests
 
-Everything that tests the algorithm itself runs without a Minestom server. Eight classes need one and
+Everything that tests the algorithm itself runs without a Minestom server. Nine classes need one and
 use Cyano's `MicrotusExtension` for it, each because a server is what the test is about:
 
 | Class | Why it needs a server |
@@ -660,6 +699,7 @@ use Cyano's `MicrotusExtension` for it, each because a server is what the test i
 | `ChunkLightAreaTest` | Light crossing a real chunk border, and the ring keeping its own light. |
 | `ChunkLightSchedulerTest` | The tick cycle against a real instance, made deterministic with a direct executor. |
 | `ChunkLightSchedulerConcurrencyTest` | The same cycle under threads, where back pressure and the staleness rule are what is being tested. |
+| `IncrementalLightUpdateTest` | The incremental path has to agree with a full pass over real chunks, not over fake blocks, or the claim it rests on is worth nothing. |
 | `FalcoLightingChunkTest` | The chunk only means anything inside an instance that supplies and ticks it. |
 
 `ChunkArea` is the deliberate exception on the other side: area forming is coordinate arithmetic with

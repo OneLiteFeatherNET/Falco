@@ -379,6 +379,13 @@ looking. It works with any instance that lets you set a chunk supplier, `Instanc
 included. The rules it follows — area size, back pressure, the staleness check — are in the class
 documentation of `ChunkLightScheduler`.
 
+**A changed block costs a changed block.** `setBlock` reports the position that changed, not just
+that the chunk is dirty, and a pass replays it on the light it already holds for that chunk instead
+of searching the chunk again — 2.07× cheaper on block light, 5.60× on sky light, 3.75× on a tick
+that pays for both. A chunk that was generated, loaded, or written past `setBlock` reports a change
+it cannot place and is lit from its block states. The details are in
+[`docs/light-engine.md`](docs/light-engine.md).
+
 `falco-instance` replaces the instance rather than something inside it, so it is used at the point
 where the world is created instead of being handed to one. The one call it asks you to remember is
 the last:
