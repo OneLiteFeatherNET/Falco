@@ -239,19 +239,10 @@ The light engine works on any chunk, whichever loader produced it.
 - [`STATUS.md`](STATUS.md) — the state of the project and the findings that cost real effort to
   establish
 
-### What was investigated
+### Why it is built this way
 
-[`docs/research/`](docs/research/README.md) holds three investigations into replacing a part of
-Minestom. None of them was implemented in the form it describes, and two end in "do not build this".
-Every claim in them was checked against the sources of Minestom `2026.06.20-26.1.2` or by running
-probe code against that jar. Read them if you want to know why Falco stops where it does; skip them
-if you only want to use the library.
-
-| Document | Question | What came out |
-| --- | --- | --- |
-| [`research/light-engine.md`](docs/research/light-engine.md) | Compute light ourselves, faster and with less memory? | Feasible — a prototype ran 3.1× to 5.8× faster with bit-identical output, the lever being a precomputed occlusion bitset rather than a live shape lookup. The finding that decides where it pays: a **pre-lit Anvil world never runs the light engine at all**, so the gain lives in generated worlds and block placement, not in load throughput. |
-| [`research/instance-container.md`](docs/research/instance-container.md) | A multithreaded, "1:1 compatible" `InstanceContainer`? | **Do not build it as asked.** A foreign `Instance` compiles and runs, but four `instanceof InstanceContainer` sites in Minestom silently take another path for it, one of them leaking chunks — and the tick parallelism sits in the global `ThreadDispatcher`, not in the container, so the performance premise was wrong. What the investigation did turn up is a set of real locking defects in the original. |
-| [`research/exception-hierarchy.md`](docs/research/exception-hierarchy.md) | A dedicated checked/unchecked exception hierarchy for `falco-anvil`? | Design complete, not implemented: six types, the rules a migration has to follow, and what Java does *not* allow here (no common root over both families, no exhaustiveness in `catch`). One decision is left open — whether the checked root extends `IOException`, which trades migration cost against enforcement. |
+- [`docs/rationale/`](docs/rationale/README.md) — the reasoning and the evidence behind the design:
+  what each decision was weighed against, and where the argument is weaker than the numbers suggest
 
 ### What is designed but not written yet
 
