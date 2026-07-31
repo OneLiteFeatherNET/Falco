@@ -2,10 +2,17 @@ name: Build PR
 
 on: [pull_request]
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 jobs:
   build:
+    # Reuse the OneLiteFeather org build workflow (Java 25, OS matrix, tests, coverage).
     uses: OneLiteFeatherNET/workflows/.github/workflows/gradle-build-pr.yml@v2.4.0
     with:
       java-version: "25"
       java-distribution: "temurin"
+      run-tests: true
     secrets: inherit
