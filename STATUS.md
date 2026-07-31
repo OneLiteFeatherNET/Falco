@@ -77,6 +77,31 @@ Match these; the build enforces some of them.
   `@Nested`. Anything needing a server uses `@ExtendWith(MicrotusExtension.class)`.
 - Commits follow conventional commits, scoped `(anvil)`, `(light)`, `(map)`.
 
+## Releasing and snapshots
+
+Both modules share one version. It lives on a single line of the root `build.gradle.kts`, Release
+Please rewrites that line from the conventional commits above, and everything else follows from it.
+
+| Push to `main` | Version | Endpoint |
+| --- | --- | --- |
+| Merges the Release Please PR | the released one, `0.2.1` | `https://repo.onelitefeather.dev/releases` |
+| Anything else | the next patch with a suffix, `0.2.2-SNAPSHOT` | `https://repo.onelitefeather.dev/snapshots` |
+
+`.github/workflows/release-please.yml` holds both publish jobs. They hang off the same
+`release_created` output with opposite conditions, so a push publishes a release or a snapshot and
+never both. A second workflow on `push` cannot see whether a release was cut and would double-publish.
+
+The snapshot version is derived inside the build rather than passed in, because a `-Pversion=…`
+would be overwritten by the `version = …` assignment that runs after the property is read.
+`-Psnapshot` instead makes the root build bump the patch of the released version and append
+`-SNAPSHOT`; the publishing block already picks its endpoint from that string. The flag reaches
+Gradle through the `build-task` and `publish-task` inputs of the reusable workflow, which are handed
+to `./gradlew` verbatim — it offers no input for properties or environment. Check the result with
+`./gradlew -Psnapshot properties | grep '^version:'`.
+
+Both endpoints are public, so a consumer of an artefact needs no credentials. Neither of them exists
+on the Reposilite instance yet, and a publish will fail with 404 until they are created.
+
 ## Facts that cost real effort to establish
 
 Verified against the sources or by running probe code. Knowing these prevents repeating the work.

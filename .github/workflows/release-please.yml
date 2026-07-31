@@ -36,3 +36,24 @@ jobs:
       java-version: "25"
       publish-task: "publish"
     secrets: inherit
+
+  # Every other push to main — a merged feature, a docs fix, release-please opening or updating its
+  # release PR — goes out as a snapshot instead. The two jobs hang off the same release-please
+  # output and their conditions are exact opposites, so a push publishes either a release or a
+  # snapshot and never both; that is also why this is not a second workflow on `push`, which could
+  # not see whether a release was cut.
+  #
+  # `-Psnapshot` reaches Gradle through the task strings because the reusable workflow passes them
+  # to `./gradlew` verbatim and offers no input for properties or environment. The root build turns
+  # the flag into the next patch version with a -SNAPSHOT suffix, which routes the publication to
+  # the /snapshots endpoint.
+  publish-snapshot:
+    name: Publish snapshot to OneLiteFeatherRepo
+    needs: release-please
+    if: needs.release-please.outputs.release_created != 'true'
+    uses: OneLiteFeatherNET/workflows/.github/workflows/gradle-publish.yml@v2.4.0
+    with:
+      java-version: "25"
+      build-task: "-Psnapshot build"
+      publish-task: "-Psnapshot publish"
+    secrets: inherit

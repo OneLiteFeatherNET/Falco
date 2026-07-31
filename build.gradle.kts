@@ -7,6 +7,17 @@
 // build carries a version number.
 version = "0.2.1" // x-release-please-version
 
+// Every push to main that does not cut a release publishes the current state as a snapshot, and the
+// derivation happens here rather than on the command line: a `-Pversion=…` would be silently
+// overwritten by the assignment above, which runs later than the property. Reading the released
+// version and bumping its patch keeps Release Please's single line the only place a number is
+// written, so the marker above stays exactly as the updater expects it.
+if (providers.gradleProperty("snapshot").isPresent) {
+    val parts = version.toString().substringBefore('-').split('.')
+    require(parts.size == 3) { "cannot derive a snapshot from version '$version'" }
+    version = "${parts[0]}.${parts[1]}.${parts[2].toInt() + 1}-SNAPSHOT"
+}
+
 subprojects {
     apply(plugin = "java-library")
     apply(plugin = "jacoco")
