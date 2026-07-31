@@ -36,3 +36,8 @@ Thumbs.db
 
 # Serena (MCP code navigation)
 .serena/
+
+# Agent worktrees are created inside the repository and must never be committed.
+# git add -A picks an existing one up as an embedded repository, which leaves a
+# gitlink to a directory nobody else has.
+.claude/
