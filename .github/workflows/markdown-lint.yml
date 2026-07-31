@@ -1,0 +1,12 @@
+name: Markdown Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    uses: OneLiteFeatherNET/workflows/.github/workflows/markdown-lint.yml@v2.4.0
+    with:
+      config-file: ".markdownlint.json"
