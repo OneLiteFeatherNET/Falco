@@ -206,15 +206,17 @@ Reading order for someone new: `RegionFile` (the byte container), then `FalcoAnv
 
 ## Charts
 
-Published from the measurements in this branch. They are snapshots, not live views — re-run the
-benchmarks before trusting them after a change.
+Four charts were produced from these measurements. They live outside this repository and are not
+linked here, because they are not publicly readable. Every number behind them is in this document
+and in `docs/benchmarks.md`, and `build/reports/jmh/results.json` feeds
+[JMH Visualizer](https://jmh.morethan.io/) directly if you want the same views from your own run.
 
 | Chart | Shows |
 | --- | --- |
-| [Scaling and comparison](https://claude.ai/code/artifact/38131b5a-42f8-43c6-a843-f845802d78ae) | 1 to 256 sections, and the head-to-head against Minestom. **The head-to-head half predates `69381af`** and shows the factors from before the opacity table was rewritten |
-| [Optimisation](https://claude.ai/code/artifact/a11c1e46-7310-40ed-84e5-0c4d650cbcc1) | Where save time goes, the compression trade-off, the uniform-section fast paths |
-| [Vanilla · Minestom · Falco](https://claude.ai/code/artifact/9d3b6d0d-ced3-4f0b-b675-6fb1640f262f) | 22 behaviours scored against the format reference |
-| [Concurrency defects](https://claude.ai/code/artifact/9b11a843-8db5-4495-8a95-b0423df28304) | The five races, their failure rates before the fix, and what the fix costs |
+| Scaling and comparison | 1 to 256 sections, and the head-to-head against Minestom. **The head-to-head half predates `69381af`** and shows the factors from before the opacity table was rewritten |
+| Optimisation | Where save time goes, the compression trade-off, the uniform-section fast paths |
+| Vanilla · Minestom · Falco | 22 behaviours scored against the format reference |
+| Concurrency defects | The five races, their failure rates before the fix, and what the fix costs |
 
 ---
 

@@ -79,10 +79,12 @@ configure(listOf(project(":falco-anvil"), project(":falco-light"))) {
                     }
                 }
                 name = "OneLiteFeatherRepository"
+                // The public Reposilite endpoints, so a consumer of a published artefact needs no
+                // credentials. They are separate from the internal ones the build resolves against.
                 url = if (project.version.toString().contains("SNAPSHOT")) {
-                    uri("https://repo.onelitefeather.dev/onelitefeather-snapshots")
+                    uri("https://repo.onelitefeather.dev/snapshots")
                 } else {
-                    uri("https://repo.onelitefeather.dev/onelitefeather-releases")
+                    uri("https://repo.onelitefeather.dev/releases")
                 }
             }
         }
