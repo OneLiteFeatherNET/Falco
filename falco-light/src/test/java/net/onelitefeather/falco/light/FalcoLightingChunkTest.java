@@ -64,6 +64,34 @@ class FalcoLightingChunkTest {
     }
 
     /**
+     * The lifecycle hooks of the chunk are reachable from outside.
+     * <p>
+     * {@code Chunk#onLoad()} and {@code Chunk#unload()} are {@code protected}, so an instance
+     * implementation in another module cannot drive them — which is what keeps a lighting chunk out
+     * of {@code FalcoInstance} today. These two methods are the reachable form, word for word what
+     * {@code FalcoChunk} already offers.
+     * </p>
+     */
+    @Test
+    void testTheLifecycleHooksAreReachableFromOutside(Env env) {
+        Instance instance = env.createEmptyInstance();
+        ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService(), Runnable::run, 16);
+        FalcoLightingChunk chunk = new FalcoLightingChunk(scheduler, instance, 0, 0);
+
+        assertFalse(scheduler.isDirty(0, 0), "nothing has reported this chunk yet");
+
+        chunk.markLoaded();
+
+        assertTrue(scheduler.isDirty(0, 0),
+                "markLoaded drives the protected onLoad hook, which reports the chunk to the scheduler");
+
+        chunk.markUnloaded();
+
+        assertFalse(chunk.isLoaded(),
+                "markUnloaded clears the flag every isLoaded check in Minestom reads");
+    }
+
+    /**
      * A copy carries the light it had, and does not carry the scheduler it came from.
      * <p>
      * Minestom calls {@code Chunk#copy} when a chunk is copied into another instance. A copy that

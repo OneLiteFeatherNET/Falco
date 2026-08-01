@@ -116,6 +116,37 @@ public class FalcoLightingChunk extends DynamicChunk implements LightUpdateAware
     }
 
     /**
+     * Tells the chunk that it has finished loading.
+     * <p>
+     * This is the reachable form of the {@code protected} {@code Chunk#onLoad()} hook, word for word
+     * what {@code FalcoChunk} offers in {@code falco-instance}. An instance implementation lives in
+     * another module and another package, so without this it cannot drive the lifecycle of a chunk
+     * it did not define — which is what kept a lighting chunk and {@code FalcoInstance} from being
+     * used together.
+     * </p>
+     * <p>
+     * Call it once, after the chunk is part of the instance and its tick partition exists. The
+     * light of the chunk is reported dirty from here, so calling it earlier would mark a chunk the
+     * instance cannot yet hand out.
+     * </p>
+     */
+    public void markLoaded() {
+        onLoad();
+    }
+
+    /**
+     * Tells the chunk that it is no longer part of its instance.
+     * <p>
+     * This is the reachable form of the {@code protected} {@code Chunk#unload()} hook. It clears the
+     * loaded flag that every {@code ChunkUtils#isLoaded} check in Minestom reads; a chunk that is
+     * never marked here stays alive for anyone holding a reference to it.
+     * </p>
+     */
+    public void markUnloaded() {
+        unload();
+    }
+
+    /**
      * Reports the changed position, which is what lets the light be updated rather than searched.
      * <p>
      * The block is written first and reported afterwards, so a pass which reads the block states of
