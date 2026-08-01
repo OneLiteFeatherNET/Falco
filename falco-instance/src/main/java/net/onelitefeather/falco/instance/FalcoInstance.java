@@ -413,7 +413,7 @@ public class FalcoInstance extends Instance {
      * monitor around the whole method, which turns every block write in the world into a queue
      * behind every other one; two writes to two chunks have no reason to wait for each other.
      * </p>
-     *
+     * <p>
      * The chunk is taken as a {@link FalcoChunk} rather than a {@link Chunk} because the block
      * setter carrying a placement and a destruction is {@code protected} on {@code Chunk} and only
      * widened to public by {@code DynamicChunk}. That is a third lifecycle barrier next to the two
