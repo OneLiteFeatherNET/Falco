@@ -6,11 +6,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before you write this up, two documents will save you time:
+        Before you write this up, two sections of the wiki's Project Status page will save you time:
 
-        - `STATUS.md`, section **Investigated and deliberately not built** — several obvious-looking
+        - **Investigated and deliberately not built** — several obvious-looking
           ideas were tried and rejected for reasons that are written down there.
-        - `STATUS.md`, section **Open** — what is already known to be missing or wrong.
+        - **Open** — what is already known to be missing or wrong.
 
         Everything here is `@ApiStatus.Experimental`, so an API change is cheap. Adding surface that
         has to be maintained is not.
@@ -78,5 +78,5 @@ body:
       options:
         - label: "I searched the existing issues and did not find this already requested."
           required: true
-        - label: "I checked `STATUS.md` under \"Open\" and \"Investigated and deliberately not built\"."
+        - label: "I checked the wiki's Project Status page under \"Open\" and \"Investigated and deliberately not built\"."
           required: true
