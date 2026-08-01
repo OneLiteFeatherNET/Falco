@@ -253,11 +253,12 @@ class SectionOpacityTest {
     private static com.sun.management.ThreadMXBean allocationCounter() {
         java.lang.management.ThreadMXBean bean = java.lang.management.ManagementFactory.getThreadMXBean();
 
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                bean instanceof com.sun.management.ThreadMXBean,
+        if (bean instanceof com.sun.management.ThreadMXBean counter) {
+            return counter;
+        }
+        return org.junit.jupiter.api.Assumptions.abort(
                 "the running virtual machine does not report the allocation of a thread"
         );
-        return (com.sun.management.ThreadMXBean) bean;
     }
 
     /**

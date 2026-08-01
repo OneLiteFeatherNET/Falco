@@ -55,7 +55,23 @@ public final class NbtReads {
         if (!(compound.get(key) instanceof LongArrayBinaryTag tag)) {
             throw missing(compound, key, "a long array");
         }
+        return longArray(tag);
+    }
 
+    /**
+     * Reads a long array and copies every entry of it.
+     * <p>
+     * This overload takes an array a caller has already resolved. A caller which tested the type
+     * itself, because it wants to describe the failure in its own words, would otherwise have to
+     * ask the compound for the key a second time, and nothing would tie that second answer to the
+     * tag the caller checked.
+     * </p>
+     *
+     * @param tag the array to read
+     * @return the entries of the array
+     */
+    @Contract(pure = true, value = "_ -> new")
+    static long[] longArray(LongArrayBinaryTag tag) {
         long[] values = new long[tag.size()];
 
         for (int index = 0; index < values.length; index++) {

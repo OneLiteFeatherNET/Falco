@@ -75,10 +75,10 @@ public final class SectionCodec {
         if (data == null) {
             return PaletteData.read(palette, null, entryCount, minBitsPerEntry);
         }
-        if (!(data instanceof LongArrayBinaryTag)) {
+        if (!(data instanceof LongArrayBinaryTag packed)) {
             throw new IOException("The palette container holds a data entry which is not a long array");
         }
-        return PaletteData.read(palette, NbtReads.longArray(container, DATA_KEY), entryCount, minBitsPerEntry);
+        return PaletteData.read(palette, NbtReads.longArray(packed), entryCount, minBitsPerEntry);
     }
 
     /**
@@ -113,10 +113,10 @@ public final class SectionCodec {
         if (data == null) {
             return PaletteData.read(palette, null, entryCount, minBitsPerEntry);
         }
-        if (!(data instanceof LongArrayBinaryTag)) {
+        if (!(data instanceof LongArrayBinaryTag packed)) {
             throw new IOException("The biome palette container holds a data entry which is not a long array");
         }
-        return PaletteData.read(palette, NbtReads.longArray(container, DATA_KEY), entryCount, minBitsPerEntry);
+        return PaletteData.read(palette, NbtReads.longArray(packed), entryCount, minBitsPerEntry);
     }
 
     /**
