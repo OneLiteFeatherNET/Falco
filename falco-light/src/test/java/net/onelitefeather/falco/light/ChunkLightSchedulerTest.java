@@ -11,8 +11,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -293,6 +295,47 @@ class ChunkLightSchedulerTest {
         scheduler.onTick(instance, 1L);
 
         assertEquals(2, runs.get(), "four connected chunks capped at two form two areas");
+    }
+
+    /**
+     * The default executor is reachable by name, so a caller can pass it back in.
+     * <p>
+     * Without it the three and four parameter constructors cannot be used without replacing the
+     * threading policy: a caller who only wants a different area size has to invent an executor.
+     * </p>
+     */
+    @Test
+    void testTheDefaultExecutorCanBeNamedByACaller(Env env) {
+        Instance instance = env.createEmptyInstance();
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        place(chunk, 8, 40, 8, Block.GLOWSTONE);
+
+        ChunkLightService service = new ChunkLightService();
+        ChunkLightScheduler scheduler =
+                new ChunkLightScheduler(service, ChunkLightScheduler.defaultExecutor(), 16);
+        scheduler.markDirty(instance, 0, 0);
+        scheduler.onTick(instance, 1L);
+
+        assertTrue(await(() -> service.blockLightAt(chunk, 8, 40, 8) == 15),
+                "the default executor runs the pass on a virtual thread");
+    }
+
+    /**
+     * Waits for a condition the default executor fulfils on another thread.
+     *
+     * @param condition the condition to wait for
+     * @return true if the condition held within the timeout, false if it timed out
+     */
+    private static boolean await(BooleanSupplier condition) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+
+        while (System.nanoTime() < deadline) {
+            if (condition.getAsBoolean()) {
+                return true;
+            }
+            Thread.onSpinWait();
+        }
+        return false;
     }
 
     /**

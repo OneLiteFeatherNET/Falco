@@ -163,9 +163,23 @@ public final class ChunkLightScheduler {
      * that chunk is being ticked by the server.
      * </p>
      *
+     * <p>
+     * This is public so the threading policy and the area size stay independent of one another. The
+     * three and four parameter constructors take both, so a caller who only wants a different area
+     * size would otherwise have to invent an executor and would silently replace this policy:
+     * </p>
+     * <pre>{@code
+     * new ChunkLightScheduler(service, ChunkLightScheduler.defaultExecutor(), 8);
+     * }</pre>
+     * <p>
+     * Every call builds a new executor with its own bound. Two schedulers built from two calls do
+     * not share a limit; pass one instance to both if that is what you want.
+     * </p>
+     *
      * @return an executor which runs areas on virtual threads, bounded by the processor count
      */
-    private static Executor defaultExecutor() {
+    @Contract(pure = true)
+    public static Executor defaultExecutor() {
         Semaphore limit = new Semaphore(Math.max(Runtime.getRuntime().availableProcessors(), 2));
 
         return task -> Thread.startVirtualThread(() -> {
