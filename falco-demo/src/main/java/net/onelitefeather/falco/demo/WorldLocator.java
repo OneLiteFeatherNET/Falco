@@ -6,9 +6,9 @@ import org.jetbrains.annotations.Contract;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -183,11 +183,10 @@ public final class WorldLocator {
      */
     private static List<Path> listEntries(Path directory) throws IOException {
         try (Stream<Path> stream = Files.list(directory)) {
-            List<Path> entries = new ArrayList<>(stream
+            return stream
                     .filter(entry -> !PLACEHOLDERS.contains(entry.getFileName().toString()))
-                    .toList());
-            entries.sort(Comparator.comparing(entry -> entry.getFileName().toString()));
-            return entries;
+                    .sorted(Comparator.comparing(entry -> entry.getFileName().toString()))
+                    .toList();
         }
     }
 
@@ -225,6 +224,6 @@ public final class WorldLocator {
      * @return the comma separated file names
      */
     private static String names(List<Path> paths) {
-        return paths.stream().map(path -> path.getFileName().toString()).reduce((left, right) -> left + ", " + right).orElse("");
+        return paths.stream().map(path -> path.getFileName().toString()).collect(Collectors.joining(", "));
     }
 }

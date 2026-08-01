@@ -35,7 +35,7 @@ class SectionCodecTest {
      */
     private static final class FakeResolver implements PaletteEntryResolver {
 
-        private final List<String> known = new ArrayList<>(List.of("minecraft:air", "minecraft:stone", "minecraft:dirt"));
+        private final List<String> known = List.of("minecraft:air", "minecraft:stone", "minecraft:dirt");
         private final List<String> unresolved = new ArrayList<>();
 
         @Override
