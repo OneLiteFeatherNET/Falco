@@ -160,14 +160,15 @@ public final class DemoServer {
 
         registerEvents(instance, spawn, options, metrics);
         AtomicReference<LiveMetrics.Snapshot> latest = scheduleReporting(instance, options, metrics);
-        registerCommand(instance, options, latest);
+        registerCommands(instance, options, latest);
 
         describe(options, world, spawn);
         server.start(BIND_ADDRESS, options.port());
 
         LOGGER.info("listening on {}:{} — connect with a Minecraft {} client (protocol {}) to localhost:{}",
                 BIND_ADDRESS, options.port(), MinecraftServer.VERSION_NAME, MinecraftServer.PROTOCOL_VERSION, options.port());
-        LOGGER.info("the figures appear in your action bar once a second; /falco prints them in full");
+        LOGGER.info("the figures appear in your action bar once a second; /falco prints them in full, "
+                + "and /{} <{}> puts the sun where you want to judge the light from", TimeCommand.NAME, DayTime.names());
     }
 
     /**
@@ -272,6 +273,11 @@ public final class DemoServer {
                 "The three numbers above your hotbar are p50/p95/max in milliseconds. Fly in a "
                         + "straight line for a while and watch the maximum; that is the stutter. "
                         + "/falco prints everything in full.", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text(
+                "/" + TimeCommand.NAME + " <" + DayTime.names() + "> moves the sun, and /"
+                        + TimeCommand.NAME + " " + TimeCommand.HOLD + " holds it there — the light "
+                        + "is what you came to look at, and it should be the same light on both "
+                        + "servers.", NamedTextColor.YELLOW));
     }
 
     /**
@@ -320,13 +326,14 @@ public final class DemoServer {
     }
 
     /**
-     * Registers the command which prints the figures in full.
+     * Registers the commands a session offers: the figures in full, and the sky they were taken
+     * under.
      *
-     * @param instance the instance whose chunks are counted
+     * @param instance the instance whose chunks are counted and whose clock is set
      * @param options  the options of the run
      * @param latest   the most recent snapshot the reporting task took
      */
-    private static void registerCommand(
+    private static void registerCommands(
             InstanceContainer instance,
             ServerOptions options,
             AtomicReference<LiveMetrics.Snapshot> latest
@@ -348,6 +355,11 @@ public final class DemoServer {
         });
 
         MinecraftServer.getCommandManager().register(command);
+
+        // The light of a world is a different thing at noon than at midnight, and the light is the
+        // first thing anybody looks at here. Without this the sky is whatever the clock happens to
+        // show, and two stacks looked at a few minutes apart are compared under two of them.
+        MinecraftServer.getCommandManager().register(new TimeCommand(instance));
     }
 
     /**
