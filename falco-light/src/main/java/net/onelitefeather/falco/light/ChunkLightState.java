@@ -632,7 +632,7 @@ public final class ChunkLightState {
             case EAST -> index(LightNibbles.DIMENSION - 1, y, offset);
             case NORTH -> index(offset, y, 0);
             case SOUTH -> index(offset, y, LightNibbles.DIMENSION - 1);
-            default -> throw new IllegalArgumentException("The face " + face + " is not horizontal");
+            case TOP, BOTTOM -> throw new IllegalArgumentException("The face " + face + " is not horizontal");
         };
     }
 
