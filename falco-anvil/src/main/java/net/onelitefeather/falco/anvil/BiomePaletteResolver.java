@@ -85,11 +85,14 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
         }
 
         synchronized (this) {
-            if (this.resolved == null) {
+            Registries created = this.resolved;
+
+            if (created == null) {
                 DynamicRegistry<Biome> registry = this.registrySupplier.get();
-                this.resolved = new Registries(registry, registry.getId(Biome.PLAINS));
+                created = new Registries(registry, registry.getId(Biome.PLAINS));
+                this.resolved = created;
             }
-            return this.resolved;
+            return created;
         }
     }
 
