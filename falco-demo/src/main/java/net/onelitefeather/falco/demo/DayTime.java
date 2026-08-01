@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
  *
  * @author TheMeinerLP
  * @version 1.0.0
- * @since 0.3.0
+ * @since 0.4.0
  */
 enum DayTime {
 
@@ -109,6 +109,17 @@ enum DayTime {
     }
 
     /**
+     * Every name this type accepts, separated by a comma.
+     * <p>
+     * Held rather than rebuilt because it is joined into a message on every player who arrives and
+     * on every word the command turns down, and the names do not change while the server runs.
+     * </p>
+     */
+    static final String NAMES = Arrays.stream(values())
+            .map(time -> time.name().toLowerCase(Locale.ROOT))
+            .collect(Collectors.joining(", "));
+
+    /**
      * Lists every name this type accepts, so a rejected input can be answered with the alternatives
      * instead of with a bare refusal.
      *
@@ -116,9 +127,7 @@ enum DayTime {
      */
     @Contract(pure = true)
     static String names() {
-        return Arrays.stream(values())
-                .map(time -> time.name().toLowerCase(Locale.ROOT))
-                .collect(Collectors.joining(", "));
+        return NAMES;
     }
 
     /**

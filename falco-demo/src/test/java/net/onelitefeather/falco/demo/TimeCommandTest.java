@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * @author TheMeinerLP
  * @version 1.0.0
- * @since 0.3.0
+ * @since 0.4.0
  */
 class TimeCommandTest {
 
@@ -71,6 +71,18 @@ class TimeCommandTest {
     }
 
     @Test
+    void testASetWithoutATickIsToldWhatIsMissingRatherThanThatTheWordIsUnknown() {
+        // `set` reaches the same argument the names do when its tick is missing, so without its own
+        // branch it would be answered with "there is no time of day called 'set'" — which is false,
+        // and sends the reader looking for a name instead of for the number.
+        assertTrue(TimeCommand.sets("set"));
+        assertTrue(TimeCommand.sets("SET"));
+
+        assertTrue(TimeCommand.MISSING_TICKS.contains(TimeCommand.SET), TimeCommand.MISSING_TICKS);
+        assertFalse(TimeCommand.MISSING_TICKS.contains("no time of day"), TimeCommand.MISSING_TICKS);
+    }
+
+    @Test
     void testTheClockWordsAreAcceptedRegardlessOfCase() {
         assertTrue(TimeCommand.holds("pause"));
         assertTrue(TimeCommand.holds("PAUSE"));
@@ -81,14 +93,18 @@ class TimeCommandTest {
 
     @Test
     void testTheClockWordsDoNotSwallowATimeOfDay() {
-        // Both branches run before the name lookup does, so a word which means a time of day must
-        // not answer to either of them.
+        // All three branches run before the name lookup does, so a word which means a time of day
+        // must not answer to any of them.
         for (DayTime time : DayTime.values()) {
             String name = time.name().toLowerCase(Locale.ROOT);
 
             assertFalse(TimeCommand.holds(name), name + " is a time of day, not the hold word");
             assertFalse(TimeCommand.releases(name), name + " is a time of day, not the release word");
+            assertFalse(TimeCommand.sets(name), name + " is a time of day, not the set word");
         }
+
+        assertFalse(TimeCommand.sets("pause"));
+        assertFalse(TimeCommand.holds("set"));
 
         assertFalse(TimeCommand.holds("resume"));
         assertFalse(TimeCommand.releases("pause"));

@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * @author TheMeinerLP
  * @version 1.0.0
- * @since 0.3.0
+ * @since 0.4.0
  */
 class DayTimeTest {
 
@@ -91,7 +91,13 @@ class DayTimeTest {
         // must not produce a negative hour, which is what a plain modulo would do.
         String described = DayTime.describe(-1000L, false);
 
-        assertTrue(described.contains(":"), described);
-        assertTrue(described.indexOf('-') < 0 || described.contains("tick -1000"), described);
+        // An hour before tick zero, and tick zero is six in the morning.
+        assertTrue(described.startsWith("05:00"), described);
+        assertTrue(described.contains("tick -1000"), described);
+
+        // Naming the tick is the only thing here allowed to print a minus. Asserting on its
+        // absence alone would pass for a negative hour or a negative day as long as the tick was
+        // quoted somewhere, which is what this test exists to rule out.
+        assertEquals(1L, described.chars().filter(character -> character == '-').count(), described);
     }
 }

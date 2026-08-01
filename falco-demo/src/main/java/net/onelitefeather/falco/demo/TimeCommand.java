@@ -44,7 +44,7 @@ import java.util.Locale;
  *
  * @author TheMeinerLP
  * @version 1.0.0
- * @since 0.3.0
+ * @since 0.4.0
  */
 final class TimeCommand extends Command {
 
@@ -77,6 +77,26 @@ final class TimeCommand extends Command {
      * </p>
      */
     static final String NO_CLOCK = "this dimension runs no clock, so there is no time of day to read or to set";
+
+    /**
+     * The answer for a {@code set} which arrives without the tick it needs.
+     * <p>
+     * The word is accepted through the free argument alongside the names, so a {@code set} with no
+     * number reaches the same place an unknown word does. Answering it with "there is no time of
+     * day called 'set'" would be false — the word is right, only its argument is missing.
+     * </p>
+     */
+    static final String MISSING_TICKS = "'" + SET + "' needs the tick to put the clock at, as in '/"
+            + NAME + " " + SET + " 6000'. The names " + DayTime.NAMES + " need no number";
+
+    /**
+     * Every word the command accepts after its name.
+     * <p>
+     * Held rather than rebuilt because the suggestion callback asks for it on every keystroke a
+     * client sends while the command is being typed, and the answer is the same every time.
+     * </p>
+     */
+    private static final List<String> WORDS = buildWords();
 
     /**
      * Builds the command for the instance the demo server runs.
@@ -112,14 +132,35 @@ final class TimeCommand extends Command {
      * @param instance the instance whose clock is read
      */
     private static void read(CommandSender sender, Instance instance) {
-        @Nullable Clock clock = instance.defaultClock();
+        @Nullable Clock clock = clockOf(sender, instance);
 
         if (clock == null) {
-            sender.sendMessage(Component.text(NO_CLOCK, NamedTextColor.RED));
             return;
         }
 
         sender.sendMessage(Component.text(reading(clock.time(), clock.paused()), NamedTextColor.GRAY));
+    }
+
+    /**
+     * Returns the clock of the instance, and tells the sender if there is none.
+     * <p>
+     * A dimension names the clock it runs on and nothing guarantees the server knows it, so every
+     * one of the three entry points has to answer the same absence the same way. Doing it here
+     * keeps that answer in one place rather than in three.
+     * </p>
+     *
+     * @param sender   the sender to tell if the dimension runs no clock
+     * @param instance the instance whose clock is wanted
+     * @return the clock, or null if the dimension runs none
+     */
+    private static @Nullable Clock clockOf(CommandSender sender, Instance instance) {
+        @Nullable Clock clock = instance.defaultClock();
+
+        if (clock == null) {
+            sender.sendMessage(Component.text(NO_CLOCK, NamedTextColor.RED));
+        }
+
+        return clock;
     }
 
     /**
@@ -130,10 +171,17 @@ final class TimeCommand extends Command {
      * @param word     the word, which may be a time of day or one of the two clock words
      */
     private static void apply(CommandSender sender, Instance instance, String word) {
-        @Nullable Clock clock = instance.defaultClock();
+        @Nullable Clock clock = clockOf(sender, instance);
 
         if (clock == null) {
-            sender.sendMessage(Component.text(NO_CLOCK, NamedTextColor.RED));
+            return;
+        }
+
+        // Before the name lookup, because `set` is a word this command knows and the lookup would
+        // report it as one it does not. It arrives here only when its tick is missing; with the
+        // tick, the syntax below takes it and this branch is never reached.
+        if (sets(word)) {
+            sender.sendMessage(Component.text(MISSING_TICKS, NamedTextColor.RED));
             return;
         }
 
@@ -173,10 +221,9 @@ final class TimeCommand extends Command {
      * @param ticks    the tick to put the clock at
      */
     private static void set(CommandSender sender, Instance instance, long ticks) {
-        @Nullable Clock clock = instance.defaultClock();
+        @Nullable Clock clock = clockOf(sender, instance);
 
         if (clock == null) {
-            sender.sendMessage(Component.text(NO_CLOCK, NamedTextColor.RED));
             return;
         }
 
@@ -264,12 +311,36 @@ final class TimeCommand extends Command {
     }
 
     /**
+     * Returns whether a word introduces a raw tick.
+     * <p>
+     * Needed because the word reaches the free argument on its own when the tick behind it is
+     * missing, and a sender who typed a word this command knows should not be told it does not.
+     * </p>
+     *
+     * @param word the word a sender typed, in any capitalisation
+     * @return true if the word asks for a raw tick to follow
+     */
+    @Contract(pure = true)
+    static boolean sets(String word) {
+        return SET.equalsIgnoreCase(word);
+    }
+
+    /**
      * Lists every word the command accepts after its name, for the completion a client asks for.
      *
      * @return the accepted words, in the order they are offered
      */
     @Contract(pure = true)
     static List<String> words() {
+        return WORDS;
+    }
+
+    /**
+     * Builds the list {@link #WORDS} holds, once.
+     *
+     * @return the accepted words, in the order they are offered
+     */
+    private static List<String> buildWords() {
         List<String> words = new ArrayList<>();
 
         for (DayTime time : DayTime.values()) {
