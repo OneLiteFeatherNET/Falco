@@ -958,6 +958,32 @@ and it is the reason the assertion is not merely a count.
 tests, no failure, no error, nothing skipped. `falco-light` matters because `FalcoLightingChunk` still
 extends `DynamicChunk` and was deliberately left alone by this stage.
 
+`./gradlew :falco-benchmarks:test --rerun-tasks`: 36 tests over six classes, no failure, no error, one
+skipped — `EmptySectionCensusTest` needs a real Anvil world next to the repository and aborts its
+assumption when there is none.
+
+The closing review of this stage added tests to `falco-instance`, which is why a run today reports 66
+there instead of 48; the other three counts are unchanged. What they cover: the section a height
+belongs to, asserted through `BlockStorage#section(int)` rather than by reading back what was written,
+because every case used to sit at `y = 0..3` where `- minSection` contributes a constant and could be
+deleted with the whole file staying green; the biomes, which nothing read or wrote through the seam in
+either direction; and a column outside the chunk, which is the contract stage 2's storage inherits.
+
+That run is the one that carries US-1.03 and it is named separately because it is easy to miss: the
+benchmark module's `test` task is an ordinary test task under `check`, but the module's name suggests
+JMH and nothing else. The equivalence it proves is the strongest on the branch.
+`FalcoChunkEquivalenceTest` drives 18 fixtures — three fill shapes against six state counts — through
+`MinestomChunks#assertSameBlocks`, which compares every one of the 16·16·16·`sectionCount` positions
+**and both heightmaps of every column**, and each fixture additionally goes through a scattered write
+batch, a full heightmap refresh on both sides and three copy comparisons. The criterion US-1.03
+spells out is exactly that, heightmaps included.
+
+`falco-instance`'s own `FalcoChunkEquivalenceTest` is deliberately not the evidence for US-1.03. It is
+weaker by construction: one fill shape, no heightmap comparison, no copy, so it would stay green if
+the two `refresh` calls were deleted from `FalcoChunk#setBlock`. It earns its place by needing nothing
+but the module it lives in, which is what makes it run in the fast loop; the criterion is met in
+`falco-benchmarks`.
+
 ### The comparison benchmark, which is NOT citable
 
 `./gradlew :falco-benchmarks:jmh -Pjmh.quick -Pjmh.include="ChunkComparisonBenchmark"
