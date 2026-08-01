@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * Drives an unload against a chunk load which is still running.
  * <p>
- * {@code docs/research/instance-container.md} names this as the one concurrency defect of
+ * The wiki's "Research: Instance Container" page names this as the one concurrency defect of
  * {@code InstanceContainer} which survives every other cleanup: an unload which loses the race
  * against a load leaves a chunk behind that is published, reports itself as loaded and is no longer
  * reachable through anything the instance offers, so nothing will ever unload it again. The cases

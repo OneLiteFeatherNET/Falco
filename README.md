@@ -17,138 +17,14 @@ nothing to do with speed — and it claims none.
 
 ## What "high-performance" means here
 
-Measured, not asserted. Every figure below comes from a JMH benchmark in this repository; the
-methodology is in [`docs/benchmarks.md`](docs/benchmarks.md), the full numbers in
-[`STATUS.md`](STATUS.md). Expand a section for the chart and the table behind it.
-
-<details>
-<summary><b>Anvil loader as threads compete</b> — level on one thread, 8× on four</summary>
-
-<br>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/loader-contention-dark.svg">
-  <img alt="Ratio bars around a baseline of 1.0. On one thread Falco reads 1.14 times slower than Minestom; on two threads it is 1.86 times faster and on four threads 8 times faster." src="docs/charts/loader-contention-light.svg">
-</picture>
-
-Reading one chunk, 200 distinct block states, µs/op:
-
-| Threads | Falco | Minestom | |
-| ---: | ---: | ---: | --- |
-| 1 | 1 203 ± 123 | 1 060 ± 55 | 1.14× **slower** |
-| 2 | 1 181 ± 31 | 2 200 ± 445 | 1.86× faster |
-| 4 | 1 378 ± 84 | 11 021 ± 16 470 | 8.00× faster |
-| 8 | 2 438 ± 252 | 530 905 ± 1 928 261 | see below |
-
-**Single-threaded, Falco is the slower one.** The three-stage pipeline costs something to set up, and
-with no contention there is nothing to win back. From two threads on, the picture inverts, and it
-keeps inverting: Falco's own time grows by a factor of two from one thread to eight, Minestom's by
-a factor of five hundred.
-
-The eight-thread row is **not a usable figure** — its error bar is nearly four times its mean.
-What it does show is that Minestom's read time stops being predictable under load, which for a
-server is worse than being slow. Falco's error bar stays at ten percent of its mean throughout.
-
-**Writing is a tie** (1.00× to 1.05× either way, at every thread count). Both implementations take a
-lock to allocate sectors and update the header, so there is nothing to gain there — and claiming
-otherwise would be easy and wrong.
-
-<sub>Measured on a 16-core machine, JMH with one fork, 3 warmup and 5 measurement iterations of 2 s.
-One fork is few; treat the direction as solid and the exact factors as indicative.</sub>
-
-</details>
-
-<details>
-<summary><b>Light engine against Minestom's</b> — 1.11× to 1.71× faster, byte-identical output</summary>
-
-<br>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/light-engine-dark.svg">
-  <img alt="Grouped bars comparing Falco and Minestom light engines across six scenarios in microseconds per operation. Falco is faster in every one, by 1.11x to 1.71x." src="docs/charts/light-engine-light.svg">
-</picture>
-
-| Sources | Solid | Falco | Minestom | |
-| ---: | ---: | ---: | ---: | --- |
-| 1 | 0 % | 44.5 ± 0.6 | 49.4 ± 1.3 | 1.11× faster |
-| 1 | 30 % | 39.3 ± 0.8 | 62.0 ± 2.0 | 1.58× faster |
-| 8 | 0 % | 98.3 ± 2.4 | 121.1 ± 5.5 | 1.23× faster |
-| 8 | 30 % | 119.3 ± 3.5 | 204.2 ± 3.7 | **1.71× faster** |
-| 64 | 0 % | 109.2 ± 1.6 | 126.5 ± 5.6 | 1.16× faster |
-| 64 | 30 % | 122.6 ± 1.3 | 206.6 ± 4.2 | 1.68× faster |
-
-The lead grows exactly where a real world is hardest — with solid blocks in the section, which is
-every chunk that is not open sky. Both engines produce the same bytes, and
-`LightEngineEquivalenceTest` asserts that on every build, so this is not speed bought with accuracy.
-
-</details>
-
-<details>
-<summary><b>The same, with sources of mixed brightness</b> — the honest case</summary>
-
-<br>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/light-engine-mixed-dark.svg">
-  <img alt="Grouped bars for mixed-brightness light sources. Falco leads in all four scenarios, most clearly at 30 percent solid blocks." src="docs/charts/light-engine-mixed-light.svg">
-</picture>
-
-| Sources | Solid | Falco | Minestom | |
-| ---: | ---: | ---: | ---: | --- |
-| 8 | 0 % | 118.97 ± 8.89 | 126.54 ± 9.55 | 1.06× faster |
-| 8 | 30 % | 116.50 ± 7.63 | 201.46 ± 16.83 | 1.73× faster |
-| 64 | 0 % | 150.42 ± 32.73 | 162.20 ± 3.11 | 1.08× faster |
-| 64 | 30 % | 149.42 ± 12.64 | 252.26 ± 9.28 | 1.69× faster |
-
-Sources of differing brightness make a position get queued more than once, which costs Falco about
-33 % against uniform sources and shrinks the lead in the open-sky rows to a few percent. It is
-reported here rather than left out, because a benchmark that only shows its best case is worth
-nothing.
-
-</details>
-
-<details>
-<summary><b>Where a save spends its time</b> — 97 % of it outside any lock</summary>
-
-<br>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/save-stages-dark.svg">
-  <img alt="A single stacked bar splitting a chunk save into four stages. Snapshot and transfer hold a lock and take 81 microseconds together; codec and compression hold none and take 4057." src="docs/charts/save-stages-light.svg">
-</picture>
-
-| Stage | Time | Lock held |
-| --- | ---: | --- |
-| Snapshot | 64 µs | the read lock of the chunk |
-| Codec, without compression | 1 356 µs | none |
-| zlib compression | 2 701 µs | none |
-| Transfer | 17 µs | the region lock |
-
-This is the design claim as a number. Minestom's `RegionFile` reports
-`supportsParallelLoading() == true` but serialises reading, decompression **and** NBT parsing
-through a single `ReentrantLock`, so its parallelism is largely nominal. Moving that work out of the
-lock is what the three-stage pipeline is for. Compression being 63 % of a save is also what made it
-the optimisation target: at zlib level 2 it runs **1.83× faster** for about 3 % more bytes.
-
-</details>
-
-<details>
-<summary><b>Two fast paths worth 51× and 76×</b></summary>
-
-<br>
-
-A section of pure air or pure stone carries a palette of one entry, and the majority of every world
-looks like that. Detecting the case up front rather than walking 4 096 blocks:
-
-| Fast path for a uniform section | Before | After | |
-| --- | ---: | ---: | --- |
-| Palette encode | 27.9 µs | 0.54 µs | **51×** |
-| Opacity table | 40.8 µs | 0.54 µs | **76×**, and no arrays allocated |
-
-</details>
-
-Where an idea did **not** pay off, that is written down too — see the rejected optimisations in
-`STATUS.md`, including the bucket queue that loses 5–7 % at equal source brightness.
+Measured, not asserted. Every figure comes from a JMH benchmark in this repository: the Anvil loader
+reads up to **8× faster** than Minestom's under thread contention (roughly level single-threaded,
+since the three-stage pipeline has nothing to win back without contention), and the light engine is
+**1.11× to 1.71× faster**, with byte-identical output asserted on every build. The charts, the full
+tables, the benchmark methodology and the optimisations that were tried and did **not** pay off are
+all in the wiki — see
+[Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) and
+[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status).
 
 All three modules are **experimental**. Every public type carries `@ApiStatus.Experimental`;
 signatures and behaviour may still change in a minor release.
@@ -236,8 +112,8 @@ public final class Bootstrap {
 ```
 
 The listener is the explicit route: you decide which chunks are lit and when. There is a shorter one
-that needs no listener at all — `instance.setChunkSupplier(scheduler.supplier())`, in
-[Using it](#using-it) below.
+that needs no listener at all — `instance.setChunkSupplier(scheduler.supplier())`, covered in the
+[Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine) wiki page.
 
 ### 3. Put a world where the loader looks
 
@@ -266,13 +142,16 @@ A non-zero level for a lit position means the loader read the chunk and the engi
 One honest note about the lighting in both steps. If the region files already carry light, it
 recomputes what is already stored, because loading applies the stored arrays and clears the update
 flag — for a pre-lit world the engine is doing work nobody asked for. It earns its keep on worlds
-without stored light and after blocks change at runtime. Which case is which is spelled out in
-[`docs/light-engine.md`](docs/light-engine.md).
+without stored light and after blocks change at runtime. Which case is which, and how to let the
+light maintain itself instead of calling it by hand, is spelled out in
+[Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine).
 
 ## Using it
 
-The quick start above shows the short version. This section has the rest: the BOM, Maven, and
-snapshots.
+The quick start above shows the short version: two of the three modules, and Minestom itself. This
+section adds the third module, the BOM, Maven, and snapshots — how to add it to a build, and nothing
+past that. Standalone usage of each module, and how `falco-instance` is wired into a server, are in
+the wiki pages linked under [Documentation](#documentation) below.
 
 All three modules are published to the OneLiteFeather Reposilite, which serves them without
 authentication. Each carries its own version:
@@ -327,8 +206,8 @@ repositories {
 ```
 
 The coordinates stay the same; only the version changes. It is the released version with its patch
-bumped and `-SNAPSHOT` appended — so while `0.2.1` is the latest release, the snapshot endpoint
-serves `0.2.2-SNAPSHOT`. That version keeps moving as commits land, which is the point of it and
+bumped and `-SNAPSHOT` appended — so while `0.3.0` is the latest release, the snapshot endpoint
+serves `0.3.1-SNAPSHOT`. That version keeps moving as commits land, which is the point of it and
 also the reason not to build a release of your own against it.
 
 </details>
@@ -358,80 +237,30 @@ also the reason not to build a release of your own against it.
 The modules are independent — take one without the other if that is all you need. Minestom itself is
 `compileOnly` here, so you keep control of the version you run.
 
-```java
-// The loader takes the world root, not the region directory, and stays alive with the instance.
-FalcoAnvilLoader loader = new FalcoAnvilLoader(Path.of("worlds", "lobby"), DimensionType.OVERWORLD.key());
-
-instance.setChunkLoader(loader);
-instance.enableAutoChunkLoad(true);
-```
-
-```java
-ChunkLightService lighting = new ChunkLightService();   // one is enough, it is safe to share
-
-lighting.calculate(chunk);
-int level = lighting.blockLightAt(chunk, 8, 40, 8);
-```
-
-The light engine works on any chunk, whichever loader produced it.
-
-To let the light maintain itself instead, give the instance a chunk that reports its own changes.
-One scheduler per instance, and there is nothing else to call:
-
-```java
-ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService());
-instance.setChunkSupplier(scheduler.supplier());
-```
-
-`FalcoLightingChunk` marks itself and its eight neighbours when it is loaded and on every
-`setBlock`; the scheduler collects the marked chunks once per tick, groups them into connected
-areas, computes each area off the tick thread and sends the result to the players who are already
-looking. It works with any instance that lets you set a chunk supplier, `InstanceContainer`
-included. The rules it follows — area size, back pressure, the staleness check — are in the class
-documentation of `ChunkLightScheduler`.
-
-**A changed block costs a changed block.** `setBlock` reports the position that changed, not just
-that the chunk is dirty, and a pass replays it on the light it already holds for that chunk instead
-of searching the chunk again — 2.07× cheaper on block light, 5.60× on sky light, 3.75× on a tick
-that pays for both. A chunk that was generated, loaded, or written past `setBlock` reports a change
-it cannot place and is lit from its block states. The details are in
-[`docs/light-engine.md`](docs/light-engine.md).
-
-`falco-instance` replaces the instance rather than something inside it, so it is used at the point
-where the world is created instead of being handed to one. The one call it asks you to remember is
-the last:
-
-```java
-InstanceManager manager = MinecraftServer.getInstanceManager();
-FalcoAnvilLoader loader = new FalcoAnvilLoader(Path.of("worlds", "arena"), DimensionType.OVERWORLD.key());
-
-FalcoInstance instance = new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD, loader);
-manager.registerInstance(instance);
-
-// Not manager.unregisterInstance(instance): for anything that is not an InstanceContainer that one
-// leaves every loaded chunk, its tick partition and its entities behind.
-instance.unregister(manager);
-```
-
-A foreign instance has to be registered by hand, which is what `registerInstance` above does. The
-chunk supplier stays at `FalcoChunk::new` — the lifecycle hooks a chunk needs to be marked unloaded
-are `protected` in Minestom's own package, so any other chunk type is refused rather than accepted
-and then left unloadable. What this instance will not do is generate: `setGenerator` throws instead
-of storing a generator that nothing would call. A generated world stays with `InstanceContainer`,
-and so does anything backing a `SharedInstance` or built through the block batches. The reasoning,
-and the four places where Minestom quietly treats a foreign instance differently, are in
-[`docs/rationale/instances-and-chunks.md`](docs/rationale/instances-and-chunks.md).
-
 ## Documentation
 
-### What is built
+Everything past this point — how to use each module standalone, the design and its limits, the
+measured numbers, the reasoning behind every decision, and the state of the project — lives in the
+[wiki](https://github.com/OneLiteFeatherNET/Falco/wiki):
 
-- [`docs/anvil-chunk-loader.md`](docs/anvil-chunk-loader.md) — what the loader does, how to use it,
-  and what it deliberately does not do
-- [`docs/light-engine.md`](docs/light-engine.md) — the engine, its guarantees and its limits
-- [`docs/benchmarks.md`](docs/benchmarks.md) — how it was measured and against what
-- [`STATUS.md`](STATUS.md) — the state of the project and the findings that cost real effort to
-  establish
+- [Anvil Chunk Loader](https://github.com/OneLiteFeatherNET/Falco/wiki/Anvil-Chunk-Loader) — what the
+  loader does, how to use it standalone, and what it deliberately does not do
+- [Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine) — the engine, calling
+  it by hand versus letting a chunk maintain its own light, its guarantees and its limits
+- [Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) — headline results,
+  how the JMH suite is run, and what each benchmark measures
+- [Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status) — test counts,
+  environment, the decisions that shape the design, the full measured numbers, defects found and
+  fixed, and what is still open
+- [Rationale](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale) — why the project is built
+  the way it is: what each decision was weighed against, and where the argument is weaker than the
+  headline figures suggest
+- [Research](https://github.com/OneLiteFeatherNET/Falco/wiki/Research) — the investigations run
+  before writing any code, kept because each answers a question worth asking again
+
+`falco-instance` is used at the point a world is created; how it is registered and unregistered, and
+the four places Minestom quietly treats a foreign `Instance` differently, are in
+[Rationale: Instances and Chunks](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Instances-And-Chunks).
 
 ### API documentation
 
@@ -440,39 +269,16 @@ has a page to read in the browser:
 
 | Module | Rendered Javadoc |
 | --- | --- |
-| `falco-anvil` | [`falco-anvil` 0.2.1](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-anvil/0.2.1) |
-| `falco-light` | [`falco-light` 0.2.1](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-light/0.2.1) |
-| `falco-instance` | No release yet, so only the snapshot: [`falco-instance` 0.2.2-SNAPSHOT](https://repo.onelitefeather.dev/javadoc/snapshots/net/onelitefeather/falco-instance/0.2.2-SNAPSHOT) |
-
-The address is built the same way for every module and every version:
-
-```
-https://repo.onelitefeather.dev/javadoc/<releases|snapshots>/net/onelitefeather/<module>/<version>
-```
-
-`latest` works in place of a version and follows the newest one on that endpoint. A version that was
-never published to it answers 404 rather than showing something stale — `falco-instance` on
-`releases` is exactly that case.
+| `falco-anvil` | [`falco-anvil` 0.3.0](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-anvil/0.3.0) |
+| `falco-light` | [`falco-light` 0.3.0](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-light/0.3.0) |
+| `falco-instance` | [`falco-instance` 0.3.0](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-instance/0.3.0) |
 
 The same pages also travel with the artefacts, as the `-javadoc.jar` every published module carries
-next to its main jar. That is the copy the IDE wants: with the dependency declared, *Download
-Sources and Documentation* in IntelliJ IDEA — and the equivalent in Eclipse — fetches it from the
-same repository and attaches it to the classes, which makes the documentation available offline and
-inside the editor.
-
-To build the pages from source instead:
-
-```bash
-./gradlew javadoc     # falco-<module>/build/docs/javadoc/index.html, one tree per module
-```
-
-That is a build of this project, so it needs the credentials described under
-[Building](#building). Reading the rendered pages or downloading a javadoc jar needs none.
-
-### Why it is built this way
-
-- [`docs/rationale/`](docs/rationale/README.md) — the reasoning and the evidence behind the design:
-  what each decision was weighed against, and where the argument is weaker than the numbers suggest
+next to its main jar — the copy an IDE fetches through *Download Sources and Documentation* and
+attaches to the classes, for offline, in-editor reading. To build the pages from source instead,
+`./gradlew javadoc` writes one tree per module to `falco-<module>/build/docs/javadoc/index.html`;
+that needs the credentials described under [Building](#building), reading the rendered pages or a
+javadoc jar needs none.
 
 ## Building
 
