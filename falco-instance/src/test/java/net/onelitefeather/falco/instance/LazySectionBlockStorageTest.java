@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -34,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @DisplayName("The lazy block storage of a chunk")
@@ -114,6 +115,27 @@ class LazySectionBlockStorageTest {
         assertEquals(Block.CAVE_AIR, storage.getBlock(1, 20, 3, Block.Getter.Condition.NONE));
     }
 
+    /**
+     * A read of a shared slot answers air, materialises nothing, and does not reach a palette.
+     * <p>
+     * The first two are asserted by counting; the third needs an observation, because a palette read
+     * of the shared section has no side effect and answers air as well. {@code Palette#get} validates
+     * its coordinates <em>before</em> it takes its own {@code bitsPerEntry == 0} shortcut
+     * ({@code PaletteImpl#get} calls {@code validateCoord} on its first line), so a coordinate the
+     * palette rejects is exactly the input that separates a read which reached one from a read which
+     * did not: the eager layout throws for {@code x = 16}, the lazy one answers air. Without the
+     * shortcut in {@link LazySectionBlockStorage#getBlock(int, int, int, Block.Getter.Condition)}
+     * this case throws instead of passing, which is the whole reason the pair of assertions is here —
+     * every other read in this file is green with the shortcut and without it.
+     * </p>
+     * <p>
+     * The divergence is asserted, not endorsed. {@link BlockStorage} requires the caller to have
+     * folded the coordinate into the chunk already, so {@code x = 16} is a caller bug under both
+     * layouts and neither answer is more correct than the other; what is pinned is that the lazy
+     * layout does not pay a palette call to find that out. A later change that decides the two
+     * layouts must reject it alike belongs in the contract test and has to fail here first.
+     * </p>
+     */
     @Test
     @DisplayName("answers a read of a shared section without touching a palette")
     void testReadingASharedSectionDoesNotMaterialise() {
@@ -122,6 +144,16 @@ class LazySectionBlockStorageTest {
         for (int y = -64; y < 320; y += 16) {
             assertEquals(Block.AIR, storage.getBlock(0, y, 0, Block.Getter.Condition.NONE));
         }
+        assertEquals(0, storage.materialisedSections());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new SectionBlockStorage(MIN_SECTION, SECTIONS)
+                        .getBlock(16, 20, 0, Block.Getter.Condition.NONE),
+                "a read that reaches a palette is refused an x of 16; if Minestom ever stopped "
+                        + "refusing it, the assertion below would no longer prove anything");
+        assertEquals(Block.AIR, storage.getBlock(16, 20, 0, Block.Getter.Condition.NONE),
+                "the shared slot answers without asking its palette, so the coordinate the palette "
+                        + "would have refused never reaches one");
         assertEquals(0, storage.materialisedSections());
     }
 
