@@ -11,12 +11,12 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Keep the coordinates in the README install snippet on the released version. One rule for all three published modules: the module name is captured rather than templated, so `falco-instance` is covered the moment the snippet mentions it. `falco-benchmarks` is deliberately not listed because it is never published.",
+      "description": "Keep the coordinates in the README install snippets on the released version. One rule for all four published modules: the module name is captured rather than templated, so a module is covered the moment a snippet mentions it. `falco-benchmarks` and `falco-demo` are deliberately not listed because they are never published. A consumer declares the BOM inside a `platform(\"…\")` call rather than a bare `implementation(\"…\")` one, so the match string covers both call forms; `falco-bom` is already listed even though the README still writes it in the three-argument form Renovate does not match, because that form only holds until the BOM has its first release and the alternative would be editing this rule again at exactly the moment the snippet changes.",
       "managerFilePatterns": [
         "/^README\\.md$/"
       ],
       "matchStrings": [
-        "implementation\\(\"(?<depName>net\\.onelitefeather:falco-(?:anvil|instance|light)):(?<currentValue>[^\"]+)\"\\)"
+        "(?:implementation|platform)\\(\"(?<depName>net\\.onelitefeather:falco-(?:anvil|instance|light|bom)):(?<currentValue>[^\"]+)\"\\)"
       ],
       "datasourceTemplate": "maven",
       "registryUrlTemplate": "https://repo.onelitefeather.dev/releases"

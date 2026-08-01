@@ -5,6 +5,7 @@ include("falco-light")
 include("falco-instance")
 include("falco-benchmarks")
 include("falco-demo")
+include("falco-bom")
 
 dependencyResolutionManagement {
     repositories {

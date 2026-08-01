@@ -169,15 +169,16 @@ repositories {
 }
 
 dependencies {
-    implementation("net.onelitefeather:falco-anvil:0.2.1")
-    implementation("net.onelitefeather:falco-light:0.2.1")
+    implementation("net.onelitefeather:falco-anvil:0.3.0")
+    implementation("net.onelitefeather:falco-light:0.3.0")
 
     // Falco declares no version for this one, on purpose. You pick it.
     implementation("net.minestom:minestom:<version>")
 }
 ```
 
-Maven, snapshots and the third module are in [Using it](#using-it) below.
+Maven, snapshots, the third module and the BOM that pins all three are in
+[Using it](#using-it) below.
 
 ### 2. Write the server
 
@@ -270,11 +271,11 @@ without stored light and after blocks change at runtime. Which case is which is 
 
 ## Using it
 
-The quick start above shows the short version. This section has the rest: Maven, snapshots, and the
-module that has no release yet.
+The quick start above shows the short version. This section has the rest: the BOM, Maven, and
+snapshots.
 
-Both released modules are published to the OneLiteFeather Reposilite, which serves them without
-authentication:
+All three modules are published to the OneLiteFeather Reposilite, which serves them without
+authentication. Each carries its own version:
 
 ```kotlin
 repositories {
@@ -283,25 +284,35 @@ repositories {
 }
 
 dependencies {
-    implementation("net.onelitefeather:falco-anvil:0.2.1")
-    implementation("net.onelitefeather:falco-light:0.2.1")
+    implementation("net.onelitefeather:falco-anvil:0.3.0")
+    implementation("net.onelitefeather:falco-light:0.3.0")
+    implementation("net.onelitefeather:falco-instance:0.3.0")
 }
 ```
 
-`falco-instance` is **not on the release endpoint** — it has never been released, so there is no
-coordinate there that would resolve. It exists only as a snapshot:
+There is a fourth artefact, `falco-bom`, whose only content is a version for each of the three
+above. Imported as a platform it makes that version a single line, so the modules cannot drift apart
+into a combination nobody tested — they are built and released together, and the BOM is what says so
+to a build that consumes them:
 
 ```kotlin
-repositories {
-    maven("https://repo.onelitefeather.dev/snapshots")
-}
-
 dependencies {
     // Written in the three-argument form on purpose: the README updater in renovate.json rewrites
-    // the "group:name:version" form to the latest release, and this module does not have one.
-    implementation("net.onelitefeather", "falco-instance", "0.2.2-SNAPSHOT")
+    // the "group:name:version" form to the latest release, and the BOM has no release yet.
+    implementation(platform("net.onelitefeather", "falco-bom", "0.3.1-SNAPSHOT"))
+
+    // No versions here — the platform above carries them. Take only the modules you need; a
+    // platform constrains a version for each, it does not pull in one you did not declare.
+    implementation("net.onelitefeather:falco-anvil")
+    implementation("net.onelitefeather:falco-light")
+    implementation("net.onelitefeather:falco-instance")
 }
 ```
+
+The BOM was added after `0.3.0` was cut, so the release endpoint does not serve it yet and the
+snapshot coordinate above is the only one that resolves today. From the next release on it is a
+normal coordinate like the others, and this snippet should lose the snapshot version along with the
+comment explaining it.
 
 <details>
 <summary>Snapshots</summary>
