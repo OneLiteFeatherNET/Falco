@@ -12,8 +12,8 @@ body:
         that the server does not regenerate over real data — but a restart under a different loader
         can still overwrite the evidence.
 
-        Some data is knowingly not preserved yet. Check `STATUS.md` under **Known deviations from
-        vanilla** before filing; the current gaps are heightmaps, unknown chunk-level tags
+        Some data is knowingly not preserved yet. Check the wiki's Project Status page under **Known
+        deviations from vanilla** before filing; the current gaps are heightmaps, unknown chunk-level tags
         (`structures`, `block_ticks`, `fluid_ticks`, …), `entities/`, `poi/`, `level.dat`, LZ4
         (`region-file-compression=lz4`) and corruption recovery for a damaged header.
   - type: dropdown
@@ -144,7 +144,7 @@ body:
     attributes:
       label: "Before submitting"
       options:
-        - label: "I read the \"Known deviations from vanilla\" section of `STATUS.md` and this is not one of them."
+        - label: "I read the \"Known deviations from vanilla\" section of the wiki's Project Status page and this is not one of them."
           required: true
         - label: "I still have the affected region files, or a backup of them, in case a maintainer asks for a sample."
         - label: "I searched the existing issues and did not find this already reported."
