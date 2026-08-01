@@ -35,10 +35,12 @@ dependencyResolutionManagement {
             version("annotations", "26.1.0")
             version("jmh", "1.37")
             version("jmhPlugin", "0.7.3")
+            version("japicmpPlugin", "0.4.6")
             version("adventureBom", "5.1.1")
             version("archunit", "1.4.2")
 
             plugin("jmh", "me.champeau.jmh").versionRef("jmhPlugin")
+            plugin("japicmp", "me.champeau.gradle.japicmp").versionRef("japicmpPlugin")
 
             library("mycelium.bom", "net.onelitefeather", "mycelium-bom").versionRef("bom")
 
