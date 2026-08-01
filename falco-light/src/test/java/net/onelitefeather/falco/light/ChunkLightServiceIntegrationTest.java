@@ -1,13 +1,18 @@
 package net.onelitefeather.falco.light;
 
+import net.kyori.adventure.key.Key;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.block.Block;
 import net.minestom.testing.Env;
 import net.minestom.testing.extension.MicrotusExtension;
+import net.onelitefeather.falco.anvil.FalcoAnvilLoader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -149,10 +154,10 @@ class ChunkLightServiceIntegrationTest {
     }
 
     @Test
-    void testTheServiceWorksOnAChunkFromTheAnvilLoader(Env env, @org.junit.jupiter.api.io.TempDir java.nio.file.Path worldRoot) throws java.io.IOException {
-        net.kyori.adventure.key.Key dimension = net.kyori.adventure.key.Key.key("minecraft:overworld");
+    void testTheServiceWorksOnAChunkFromTheAnvilLoader(Env env, @TempDir Path worldRoot) throws IOException {
+        Key dimension = Key.key("minecraft:overworld");
 
-        try (var loader = new net.onelitefeather.falco.anvil.FalcoAnvilLoader(worldRoot, dimension)) {
+        try (var loader = new FalcoAnvilLoader(worldRoot, dimension)) {
             Instance instance = env.createEmptyInstance(loader);
             Chunk chunk = instance.loadChunk(0, 0).join();
             place(chunk, 8, 40, 8, Block.GLOWSTONE);

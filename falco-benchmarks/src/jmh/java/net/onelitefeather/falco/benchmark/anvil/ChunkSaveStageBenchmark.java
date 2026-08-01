@@ -22,6 +22,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
@@ -125,7 +126,7 @@ public class ChunkSaveStageBenchmark {
                 try {
                     Files.deleteIfExists(path);
                 } catch (IOException exception) {
-                    throw new java.io.UncheckedIOException(exception);
+                    throw new UncheckedIOException(exception);
                 }
             });
         }

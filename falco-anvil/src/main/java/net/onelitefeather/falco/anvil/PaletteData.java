@@ -5,6 +5,7 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -124,7 +125,7 @@ public record PaletteData(int[] palette, long @Nullable [] packed, int bitsPerEn
         int[] mapped = new int[values.length];
 
         for (int i = 0; i < values.length; i++) {
-            mapped[i] = indices.computeIfAbsent(values[i], ignored -> indices.size());
+            mapped[i] = indices.computeIfAbsent(values[i], _ -> indices.size());
         }
 
         int[] palette = new int[indices.size()];
@@ -197,7 +198,7 @@ public record PaletteData(int[] palette, long @Nullable [] packed, int bitsPerEn
         int[] values = new int[this.entryCount];
 
         if (isSingleValue()) {
-            java.util.Arrays.fill(values, this.palette[0]);
+            Arrays.fill(values, this.palette[0]);
             return values;
         }
 

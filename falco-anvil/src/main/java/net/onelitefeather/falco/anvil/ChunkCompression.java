@@ -185,13 +185,12 @@ public enum ChunkCompression {
             return target.toByteArray();
         }
 
-        Deflater deflater = new Deflater(level);
-
-        try (OutputStream stream = new DeflaterOutputStream(target, deflater)) {
+        // A deflater holds native memory which the stream does not release on its own. Closing it
+        // ends it, and the stream is closed before it because it still needs a live deflater to
+        // write out the last block.
+        try (Deflater deflater = new Deflater(level);
+             OutputStream stream = new DeflaterOutputStream(target, deflater)) {
             stream.write(payload);
-        } finally {
-            // A deflater holds native memory which the stream does not release on its own.
-            deflater.end();
         }
         return target.toByteArray();
     }

@@ -119,7 +119,7 @@ class ChunkLightAreaTest {
 
         ChunkLightService service = new ChunkLightService();
         List<ChunkArea> written = new ChunkLightArea(service)
-                .compute(instance, List.of(new ChunkArea(0, 0)), false, area -> false);
+                .compute(instance, List.of(new ChunkArea(0, 0)), false, _ -> false);
 
         assertTrue(written.isEmpty());
         assertEquals(0, service.blockLightAt(chunk, 8, 40, 8), "a discarded result must not reach the sections");

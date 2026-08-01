@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -286,7 +287,7 @@ class FalcoInstanceLoadRaceTest {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             fail("a worker was interrupted while it waited for its barrier");
-        } catch (BrokenBarrierException | java.util.concurrent.TimeoutException exception) {
+        } catch (BrokenBarrierException | TimeoutException exception) {
             fail("a worker waited too long for its barrier: " + exception);
         }
     }

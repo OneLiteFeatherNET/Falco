@@ -40,6 +40,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -419,7 +420,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     RegionConstants.chunkToRegion(chunk.getChunkX()),
                     RegionConstants.chunkToRegion(chunk.getChunkZ())
             );
-            grouped.computeIfAbsent(region, ignored -> new ArrayList<>()).add(chunk);
+            grouped.computeIfAbsent(region, _ -> new ArrayList<>()).add(chunk);
         }
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -574,7 +575,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      */
     private void trackChunk(int chunkX, int chunkZ) {
         this.trackedChunks
-                .computeIfAbsent(regionIndex(chunkX, chunkZ), ignored -> ConcurrentHashMap.newKeySet())
+                .computeIfAbsent(regionIndex(chunkX, chunkZ), _ -> ConcurrentHashMap.newKeySet())
                 .add(CoordConversion.chunkIndex(chunkX, chunkZ));
     }
 
@@ -755,15 +756,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         if (statuses.isEmpty()) {
             return "(no status seen)";
         }
-        StringBuilder rendered = new StringBuilder("(");
-
-        for (Map.Entry<String, Long> entry : statuses.entrySet()) {
-            if (rendered.length() > 1) {
-                rendered.append(", ");
-            }
-            rendered.append(entry.getKey()).append(" x").append(entry.getValue());
-        }
-        return rendered.append(')').toString();
+        return statuses.entrySet().stream()
+                .map(entry -> entry.getKey() + " x" + entry.getValue())
+                .collect(Collectors.joining(", ", "(", ")"));
     }
 
     /**

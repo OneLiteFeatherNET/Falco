@@ -5,6 +5,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -41,7 +42,7 @@ class PaletteDataTest {
     @Test
     void testEncodingAHomogeneousSectionCollapsesToASingleValue() {
         int[] values = new int[BLOCK_ENTRIES];
-        java.util.Arrays.fill(values, 42);
+        Arrays.fill(values, 42);
 
         PaletteData data = PaletteData.encode(values, BLOCK_MIN_BITS);
 
@@ -202,7 +203,7 @@ class PaletteDataTest {
         // sections of a world. Building a palette map over 4096 identical entries to then collapse
         // it again is pure waste, so the uniform case has to be recognised before that happens.
         int[] values = new int[BLOCK_ENTRIES];
-        java.util.Arrays.fill(values, 77);
+        Arrays.fill(values, 77);
 
         PaletteData data = PaletteData.encode(values, BLOCK_MIN_BITS);
 
@@ -216,7 +217,7 @@ class PaletteDataTest {
     void testEncodingStillHandlesASingleDifferingEntry() {
         // The shortcut must not swallow a section that is uniform except for one block.
         int[] values = new int[BLOCK_ENTRIES];
-        java.util.Arrays.fill(values, 5);
+        Arrays.fill(values, 5);
         values[BLOCK_ENTRIES - 1] = 6;
 
         PaletteData data = PaletteData.encode(values, BLOCK_MIN_BITS);

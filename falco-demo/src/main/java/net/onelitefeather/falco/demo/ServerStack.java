@@ -128,7 +128,10 @@ public enum ServerStack {
      */
     @Contract(pure = true)
     public String displayName() {
-        return this == FALCO ? "Falco" : "Minestom";
+        return switch (this) {
+            case FALCO -> "Falco";
+            case MINESTOM -> "Minestom";
+        };
     }
 
     /**

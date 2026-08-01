@@ -224,7 +224,7 @@ class FalcoAnvilLoaderConcurrencyTest {
         try (FalcoAnvilLoader loader = new FalcoAnvilLoader(this.worldRoot, OVERWORLD, 1)) {
             // A failed load reports to the exception manager, which the environment turns into a
             // failed test before the assertion below could describe what went wrong.
-            MinecraftServer.getExceptionManager().setExceptionHandler(ignored -> {
+            MinecraftServer.getExceptionManager().setExceptionHandler(_ -> {
             });
 
             try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -272,7 +272,7 @@ class FalcoAnvilLoaderConcurrencyTest {
         ExceptionHandler previous = MinecraftServer.getExceptionManager().getExceptionHandler();
 
         try (FalcoAnvilLoader loader = loader()) {
-            MinecraftServer.getExceptionManager().setExceptionHandler(ignored -> {
+            MinecraftServer.getExceptionManager().setExceptionHandler(_ -> {
             });
 
             try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {

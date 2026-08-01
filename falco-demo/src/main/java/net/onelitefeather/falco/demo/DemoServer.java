@@ -340,7 +340,7 @@ public final class DemoServer {
     ) {
         Command command = new Command("falco", "demo");
 
-        command.setDefaultExecutor((sender, context) -> {
+        command.setDefaultExecutor((sender, _) -> {
             List<String> lines = LiveStatusLine.details(
                     options.stack(),
                     latest.get(),
@@ -403,7 +403,10 @@ public final class DemoServer {
      * @return the colour of that stack
      */
     private static NamedTextColor colour(ServerStack stack) {
-        return stack == ServerStack.FALCO ? NamedTextColor.AQUA : NamedTextColor.GOLD;
+        return switch (stack) {
+            case FALCO -> NamedTextColor.AQUA;
+            case MINESTOM -> NamedTextColor.GOLD;
+        };
     }
 
     /**

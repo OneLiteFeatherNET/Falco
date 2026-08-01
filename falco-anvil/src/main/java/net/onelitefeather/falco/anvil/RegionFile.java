@@ -591,7 +591,7 @@ public final class RegionFile implements AutoCloseable {
 
                 try {
                     Thread.sleep(EXTERNAL_RETRY_DELAY);
-                } catch (InterruptedException interruption) {
+                } catch (InterruptedException _) {
                     Thread.currentThread().interrupt();
                     throw exception;
                 }

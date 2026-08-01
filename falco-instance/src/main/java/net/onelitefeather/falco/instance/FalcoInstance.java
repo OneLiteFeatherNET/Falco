@@ -343,12 +343,7 @@ public class FalcoInstance extends Instance {
      * @param index the chunk index of the position whose load is claimed
      */
     private void discardRunningLoad(long index) {
-        final AtomicReference<CompletableFuture<Chunk>> claimed = new AtomicReference<>();
-        this.loadingChunks.compute(index, (key, running) -> {
-            claimed.set(running);
-            return null;
-        });
-        final CompletableFuture<Chunk> running = claimed.get();
+        final CompletableFuture<Chunk> running = this.loadingChunks.remove(index);
         if (running == null) return;
         running.completeExceptionally(new FalcoInstanceException("the chunk "
                 + CoordConversion.chunkIndexGetX(index) + ":" + CoordConversion.chunkIndexGetZ(index)
@@ -413,7 +408,7 @@ public class FalcoInstance extends Instance {
      * monitor around the whole method, which turns every block write in the world into a queue
      * behind every other one; two writes to two chunks have no reason to wait for each other.
      * </p>
-     *
+     * <p>
      * The chunk is taken as a {@link FalcoChunk} rather than a {@link Chunk} because the block
      * setter carrying a placement and a destruction is {@code protected} on {@code Chunk} and only
      * widened to public by {@code DynamicChunk}. That is a third lifecycle barrier next to the two
@@ -568,7 +563,7 @@ public class FalcoInstance extends Instance {
 
         final CompletableFuture<Chunk> own = new CompletableFuture<>();
         final AtomicReference<Chunk> published = new AtomicReference<>();
-        final CompletableFuture<Chunk> slot = this.loadingChunks.compute(index, (key, running) -> {
+        final CompletableFuture<Chunk> slot = this.loadingChunks.compute(index, (_, running) -> {
             if (running != null) return running;
             final Chunk cached = this.chunks.get(index);
             if (cached != null) {
@@ -657,7 +652,7 @@ public class FalcoInstance extends Instance {
      */
     private boolean publishChunk(long index, FalcoChunk chunk, CompletableFuture<Chunk> future) {
         final AtomicBoolean published = new AtomicBoolean();
-        this.loadingChunks.compute(index, (key, running) -> {
+        this.loadingChunks.compute(index, (_, running) -> {
             if (running != future) return running;
             this.chunks.put(index, chunk);
             MinecraftServer.process().dispatcher().createPartition(chunk);
@@ -747,7 +742,7 @@ public class FalcoInstance extends Instance {
         final int chunkZ = falcoChunk.getChunkZ();
         final long index = CoordConversion.chunkIndex(chunkX, chunkZ);
         final AtomicBoolean removed = new AtomicBoolean();
-        this.loadingChunks.compute(index, (key, running) -> {
+        this.loadingChunks.compute(index, (_, running) -> {
             if (this.chunks.remove(index, falcoChunk)) {
                 falcoChunk.markUnloaded();
                 MinecraftServer.process().dispatcher().deletePartition(falcoChunk);
@@ -1029,7 +1024,7 @@ public class FalcoInstance extends Instance {
                     target.sendChunk();
                     continue;
                 }
-                this.generationForks.compute(CoordConversion.chunkIndex(start), (key, modifiers) -> {
+                this.generationForks.compute(CoordConversion.chunkIndex(start), (_, modifiers) -> {
                     final List<GeneratorImpl.SectionModifierImpl> pending =
                             modifiers == null ? new ArrayList<>() : modifiers;
                     pending.add(modifier);
@@ -1046,7 +1041,7 @@ public class FalcoInstance extends Instance {
      */
     private void applyPendingForks(Chunk chunk) {
         final long index = CoordConversion.chunkIndex(chunk.getChunkX(), chunk.getChunkZ());
-        this.generationForks.compute(index, (key, modifiers) -> {
+        this.generationForks.compute(index, (_, modifiers) -> {
             if (modifiers != null) {
                 for (GeneratorImpl.SectionModifierImpl modifier : modifiers) applyFork(chunk, modifier);
             }

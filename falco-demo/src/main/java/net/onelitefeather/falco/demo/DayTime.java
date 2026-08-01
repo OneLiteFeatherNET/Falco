@@ -150,7 +150,9 @@ enum DayTime {
         long minute = withinDay % TICKS_PER_HOUR * MINUTES_PER_HOUR / TICKS_PER_HOUR;
         long day = Math.floorDiv(ticks, TICKS_PER_DAY) + 1L;
 
-        return "%02d:%02d on day %d, %s (tick %d)".formatted(
+        // Locale.ROOT rather than the default locale, because %d renders the digits the locale
+        // prescribes and a clock reading answered in Devanagari digits is one nobody asked for.
+        return String.format(Locale.ROOT, "%02d:%02d on day %d, %s (tick %d)",
                 hour, minute, day, paused ? "paused" : "running", ticks
         );
     }

@@ -54,7 +54,7 @@ public final class LightPropagator {
      */
     private void ensureRoom(int tail) {
         if (tail == this.queue.length) {
-            this.queue = java.util.Arrays.copyOf(this.queue, this.queue.length * 2);
+            this.queue = Arrays.copyOf(this.queue, this.queue.length * 2);
         }
     }
 

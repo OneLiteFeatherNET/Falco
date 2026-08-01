@@ -1,6 +1,9 @@
 package net.onelitefeather.falco.demo;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
+
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -19,6 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * @version 1.0.0
  * @since 0.4.0
  */
+// One test here switches the formatting locale of the whole JVM to prove that a description does
+// not depend on it. Restoring the locale afterwards only holds against tests which run before or
+// after this class, and gradle.properties asks for concurrent execution, so the class has to be
+// the one thing running while that window is open.
+@Isolated
 class DayTimeTest {
 
     @Test
@@ -48,7 +56,7 @@ class DayTimeTest {
         String names = DayTime.names();
 
         for (DayTime time : DayTime.values()) {
-            assertTrue(names.contains(time.name().toLowerCase(java.util.Locale.ROOT)),
+            assertTrue(names.contains(time.name().toLowerCase(Locale.ROOT)),
                     "the list has to name " + time + " so a rejected input can show what is allowed");
         }
     }
@@ -99,5 +107,23 @@ class DayTimeTest {
         // absence alone would pass for a negative hour or a negative day as long as the tick was
         // quoted somewhere, which is what this test exists to rule out.
         assertEquals(1L, described.chars().filter(character -> character == '-').count(), described);
+    }
+
+    @Test
+    void testADescriptionReadsTheSameNoMatterWhichLocaleTheServerStartsUnder() {
+        // A clock reading goes to a player, and %d prints the digits the formatting locale
+        // prescribes. Under a locale with its own numerals the description would come out as
+        // "०६:०० on day १" — readable to nobody who typed /time, and invisible to every other
+        // assertion here because the tests themselves run under a locale that uses ASCII digits.
+        Locale format = Locale.getDefault(Locale.Category.FORMAT);
+
+        // Only the formatting category, and only for the length of this test: changing the whole
+        // default locale would follow the JVM into every other test in this module.
+        Locale.setDefault(Locale.Category.FORMAT, Locale.forLanguageTag("hi-IN-u-nu-deva"));
+        try {
+            assertEquals("06:00 on day 1, running (tick 0)", DayTime.describe(0L, false));
+        } finally {
+            Locale.setDefault(Locale.Category.FORMAT, format);
+        }
     }
 }

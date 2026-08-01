@@ -64,7 +64,7 @@ class FalcoInstanceUnloadTest {
         final FalcoInstance instance = registered(env);
         final Chunk chunk = instance.loadChunk(0, 0).join();
         final AtomicInteger calls = new AtomicInteger();
-        instance.eventNode().addListener(InstanceChunkUnloadEvent.class, event -> calls.incrementAndGet());
+        instance.eventNode().addListener(InstanceChunkUnloadEvent.class, _ -> calls.incrementAndGet());
 
         instance.unloadChunk(chunk);
         instance.unloadChunk(chunk);
@@ -93,7 +93,7 @@ class FalcoInstanceUnloadTest {
         final InstanceManager manager = env.process().instance();
         final FalcoInstance instance = registered(env);
         final AtomicInteger calls = new AtomicInteger();
-        instance.eventNode().addListener(InstanceUnregisterEvent.class, event -> calls.incrementAndGet());
+        instance.eventNode().addListener(InstanceUnregisterEvent.class, _ -> calls.incrementAndGet());
 
         instance.unregister(manager);
 

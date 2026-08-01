@@ -235,15 +235,15 @@ public class LightEngineComparisonBenchmark {
      * @return the state ids the sources cycle through
      */
     private static int[] emittersOf(EmissionMix mix) {
-        if (mix == EmissionMix.UNIFORM) {
-            return new int[]{Block.GLOWSTONE.stateId()};
-        }
-        return new int[]{
-                Block.GLOWSTONE.stateId(),
-                Block.LANTERN.stateId(),
-                Block.TORCH.stateId(),
-                Block.REDSTONE_TORCH.stateId(),
-                Block.MAGMA_BLOCK.stateId()
+        return switch (mix) {
+            case UNIFORM -> new int[]{Block.GLOWSTONE.stateId()};
+            case MIXED -> new int[]{
+                    Block.GLOWSTONE.stateId(),
+                    Block.LANTERN.stateId(),
+                    Block.TORCH.stateId(),
+                    Block.REDSTONE_TORCH.stateId(),
+                    Block.MAGMA_BLOCK.stateId()
+            };
         };
     }
 
