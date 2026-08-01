@@ -33,6 +33,11 @@ import org.jetbrains.annotations.ApiStatus;
 public class FalcoInstanceException extends RuntimeException {
 
     /**
+     * The serialisation id, fixed so a failure which crosses a version boundary still deserialises.
+     */
+    private static final long serialVersionUID = 1L;
+
+    /**
      * Creates a new exception with the given message.
      *
      * @param message the message which describes what was asked for and why it was refused
