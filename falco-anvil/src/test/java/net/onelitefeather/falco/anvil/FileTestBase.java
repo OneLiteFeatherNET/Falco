@@ -22,13 +22,11 @@ abstract class FileTestBase {
     protected Path tempDir;
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws IOException {
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(tempDir)) {
             for (Path file : stream) {
                 Files.delete(file);
             }
-        } catch (IOException exception) {
-            exception.printStackTrace();
         }
     }
 }
