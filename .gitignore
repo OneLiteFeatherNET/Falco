@@ -41,3 +41,9 @@ Thumbs.db
 # git add -A picks an existing one up as an embedded repository, which leaves a
 # gitlink to a directory nobody else has.
 .claude/
+
+# A second world, used to count the empty section share of a generated overworld
+# (EmptySectionCensusTest, -Pfalco.census.world). falco-demo/world carries its own
+# .gitignore because that directory is part of the module; this one is not, and a
+# world is large, often private, and never belongs in a git repository.
+falco-demo/full-world/

@@ -35,6 +35,7 @@ dependencyResolutionManagement {
             version("jmh", "1.37")
             version("jmhPlugin", "0.7.3")
             version("adventureBom", "5.1.1")
+            version("jol", "0.17")
 
             plugin("jmh", "me.champeau.jmh").versionRef("jmhPlugin")
 
@@ -53,6 +54,7 @@ dependencyResolutionManagement {
             library("junit.platform.launcher", "org.junit.platform", "junit-platform-launcher").withoutVersion()
 
             library("jmh.core", "org.openjdk.jmh", "jmh-core").versionRef("jmh")
+            library("jol.core", "org.openjdk.jol", "jol-core").versionRef("jol")
         }
     }
 }
