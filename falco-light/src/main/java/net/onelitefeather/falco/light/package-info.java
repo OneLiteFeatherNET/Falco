@@ -10,10 +10,16 @@
  * </p>
  * <p>
  * The propagation works against {@link net.onelitefeather.falco.light.BlockLightSource} rather than
- * the block registry, so the algorithm can be tested without a running server.
- * {@link net.onelitefeather.falco.light.MinestomBlockLightSource} is the only type here that knows
- * about Minestom. Results are handed over through {@code Light#set}, which is why this engine works
- * with chunk implementations the engine of the server ignores.
+ * the block registry, so the algorithm can be tested without a running server. Exactly five types
+ * here know about Minestom and they are the boundary of this package:
+ * {@link net.onelitefeather.falco.light.ChunkLightService},
+ * {@link net.onelitefeather.falco.light.ChunkLightArea},
+ * {@link net.onelitefeather.falco.light.ChunkLightScheduler},
+ * {@link net.onelitefeather.falco.light.FalcoLightingChunk} and
+ * {@link net.onelitefeather.falco.light.MinestomBlockLightSource}. Everything below them, the
+ * propagation itself, names no server type at all. Results are handed over through
+ * {@code Light#set}, which is why this engine works with chunk implementations the engine of the
+ * server ignores.
  * </p>
  * <p>
  * Every public type here is experimental and may still change in a minor release.

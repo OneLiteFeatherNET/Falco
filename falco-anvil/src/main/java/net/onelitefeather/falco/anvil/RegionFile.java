@@ -672,13 +672,25 @@ public final class RegionFile implements AutoCloseable {
     /**
      * The {@link RawChunk} record holds the untouched payload of a chunk together with the
      * compression scheme which is required to decode it.
+     * <p>
+     * The payload array is not copied, neither on the way in nor on the way out. A record which
+     * copied it would double the cost of every chunk read for a guarantee the load path does not
+     * need, because the array is handed straight from the read to the decompressor and no caller
+     * keeps it. Whoever holds a raw chunk owns the array and must not hand it to a second reader
+     * that writes into it.
+     * </p>
+     * <p>
+     * This type is experimental. The Anvil loader is new and its API may still change while it is
+     * being validated against real worlds.
+     * </p>
      *
      * @param compression the compression scheme of the payload
-     * @param payload     the payload as it is stored on disk
+     * @param payload     the payload as it is stored on disk, not copied
      * @author TheMeinerLP
      * @version 1.0.0
      * @since 0.1.0
      */
+    @ApiStatus.Experimental
     public record RawChunk(ChunkCompression compression, byte[] payload) {
 
         /**

@@ -21,9 +21,18 @@ import java.util.Map;
  * A section in which every entry holds the same value carries no packed data at all. The format
  * stores such a section with a palette of a single entry and without a data array.
  * </p>
+ * <p>
+ * Neither array is copied, on the way in or on the way out. That is deliberate: a copy in the
+ * accessor would cost one allocation of both arrays per section on the load path, which is where
+ * this record exists to be cheap. The immutability the paragraph above claims is therefore a
+ * promise of the callers inside this package, not one the record enforces. Whoever receives a
+ * palette must treat both arrays as read-only.
+ * </p>
  *
- * @param palette      the distinct values of the section in the order the format stores them
- * @param packed       the packed palette indices or null if the section holds a single value
+ * @param palette      the distinct values of the section in the order the format stores them, not
+ *                     copied
+ * @param packed       the packed palette indices or null if the section holds a single value, not
+ *                     copied
  * @param bitsPerEntry the amount of bits a single index occupies
  * @param entryCount   the amount of entries the section holds
  * <p>
