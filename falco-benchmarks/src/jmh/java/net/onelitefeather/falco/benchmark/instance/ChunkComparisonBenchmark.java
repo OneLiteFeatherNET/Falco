@@ -47,10 +47,34 @@ import java.util.concurrent.TimeUnit;
  * the two arms executed the same bytecode and their equality was a fact about the class hierarchy.
  * Today it extends {@code Chunk}, holds a {@code BlockStorage} field and overrides all four. The
  * bodies of those overrides are the bodies of {@code DynamicChunk} with the palette access moved
- * behind the field, and the storage this benchmark runs on, {@code SectionBlockStorage}, is
- * deliberately the layout {@code DynamicChunk} has: one {@code Section} per sixteen blocks of
- * height, allocated eagerly. The two arms therefore still do the same work on the same data, but
- * that is now a property somebody maintains rather than one the compiler enforces.
+ * behind the field, so the two arms still do the same work on the same data — but that is now a
+ * property somebody maintains rather than one the compiler enforces.
+ * </p>
+ *
+ * <h2>Which storage the Falco arm runs on, and why the arms are still comparable on it</h2>
+ * <p>
+ * {@code LazySectionBlockStorage}, since stage 2 of the same work made it the default of
+ * {@code FalcoChunk}. That storage hands out one shared, empty {@code Section} for every section the
+ * chunk has never written into and only creates a private one on the first write, which is a
+ * different layout from the one {@code DynamicChunk} has and not the eager
+ * {@code SectionBlockStorage} this paragraph named while stage 1 was the newest thing on the branch.
+ * </p>
+ * <p>
+ * It does not cost the comparison, and the reason is a property of the fixture rather than of the
+ * storage. {@code MinestomChunks#fill} walks {@code y} from the floor of the chunk to its build
+ * limit and writes a block at every one of the {@code 98304} positions, whatever the shape; the air
+ * check that follows it refuses a chunk that came out empty. Every section of the Falco arm is
+ * therefore private and populated before the first measured invocation, and a lazy storage whose
+ * sections have all been written into holds exactly what an eager one holds. What the two arms
+ * measure is two full chunks, once through the field of {@code DynamicChunk} and once through the
+ * seam of {@code FalcoChunk}.
+ * </p>
+ * <p>
+ * The condition that buys that is also the limit of these numbers and belongs next to them: this
+ * class only ever measures a fully materialised chunk. It says nothing about what stage 2 was built
+ * for — a chunk whose empty sections were never created — and no figure from here may be quoted for
+ * or against that. {@code SectionMaterialisationTest} counts the sections a chunk holds and
+ * {@code ChunkFootprintTest} weighs them; those two are where the saving is stated.
  * </p>
  * <p>
  * What follows for a reader of these numbers is that a difference between the arms is no longer
@@ -59,10 +83,13 @@ import java.util.concurrent.TimeUnit;
  * reported. Two other measurements are what make that possible.
  * {@code FalcoChunkEquivalenceTest} shows that both sides hold the same blocks and the same
  * heightmaps after exactly these operations, so a difference is not a difference in content, and
- * {@code ChunkFootprintTest} shows that the seam costs one object and 24 bytes per chunk and nothing
- * per block, so a difference that grows with the chunk is not the seam. Neither of them would notice
- * a harness that drives the two arms differently, which is why the checks below still exist and
- * still abort the trial.
+ * {@code ChunkFootprintTest} weighs the seam, which is a fixed per chunk cost of a field and the
+ * objects behind it — so a difference that grows with the block count is not the seam whatever that
+ * test currently reports. What that test may no longer be quoted for is the stage 1 sentence that
+ * the two chunks retain the same objects: the lazy layout holds fewer, by construction, and the
+ * per class figures are restated there rather than here. Neither of the two measurements would
+ * notice a harness that drives the two arms differently, which is why the checks below still exist
+ * and still abort the trial.
  * </p>
  * <p>
  * The class deliberately does not live in {@code net.minestom.server.instance}. Two benchmarks of
@@ -254,7 +281,7 @@ import java.util.concurrent.TimeUnit;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.3.0
  * @since 0.4.0
  */
 @State(Scope.Thread)
@@ -647,8 +674,9 @@ public class ChunkComparisonBenchmark {
     /**
      * Recomputes both heightmaps of a chunk from scratch and sums the heights that come out.
      * <p>
-     * This is the body of the private {@code DynamicChunk#calculateFullHeightmap}, reproduced
-     * through public API. The method itself cannot be called from outside the chunk, and the public
+     * This is the body of the private {@code calculateFullHeightmap} of whichever chunk it is
+     * handed, reproduced through public API. The method itself cannot be called from outside the
+     * chunk, and the public
      * {@code Heightmap#refresh(int)} that it uses returns immediately once a heightmap has been
      * refreshed, with no public way to arm it again. {@code Heightmap#refresh(int, int, int)} is
      * the same scan per column without that guard, so driving it over all {@code 256} columns
@@ -671,6 +699,19 @@ public class ChunkComparisonBenchmark {
      * {@code calculateFullHeightmap} recomputes it too. It walks the sections from the top until it
      * meets one with a block in it, which on a filled chunk stops at the first section.
      * </p>
+     * <p>
+     * Each arm computes that height the way its own chunk computes it, which is the one place where
+     * this helper deliberately does not run the same code on both sides.
+     * {@code DynamicChunk#calculateFullHeightmap} calls
+     * {@code Heightmap#getHighestBlockSection(Chunk)}, which walks the chunk through
+     * {@code Chunk#getSection(int)}; {@code FalcoChunk#calculateFullHeightmap} calls
+     * {@link FalcoChunk#highestBlockSection()}, which walks its storage through a view and creates
+     * nothing. Driving both arms through the static helper would be the same code but the wrong
+     * model — it would charge the Falco arm a scan its chunk does not perform, on sections its chunk
+     * does not create. The two return the same number on two chunks holding the same blocks, which
+     * is asserted rather than assumed in {@code FalcoChunkEquivalenceTest}, and a disagreement
+     * surfaces here as a differing sum and aborts the trial.
+     * </p>
      *
      * @param chunk the chunk to refresh the heightmaps of
      * @return the sum of the refreshed heights of both heightmaps
@@ -680,7 +721,9 @@ public class ChunkComparisonBenchmark {
 
         chunk.lockWriteLock();
         try {
-            final int startY = Heightmap.getHighestBlockSection(chunk);
+            final int startY = chunk instanceof FalcoChunk falcoChunk
+                    ? falcoChunk.highestBlockSection()
+                    : Heightmap.getHighestBlockSection(chunk);
             final Heightmap motionBlocking = chunk.motionBlockingHeightmap();
             final Heightmap worldSurface = chunk.worldSurfaceHeightmap();
 

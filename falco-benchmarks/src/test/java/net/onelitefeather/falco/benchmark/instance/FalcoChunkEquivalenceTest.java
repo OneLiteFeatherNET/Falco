@@ -89,13 +89,40 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the benchmark measures.
  * </p>
  *
+ * <h2>Why a chunk with an empty top is tested separately</h2>
+ * <p>
+ * Because the fixtures above cannot reach the code that decides it. Every one of them fills the
+ * chunk from its floor to its build limit, which leaves no section empty, and a scan for the highest
+ * non-empty section on such a chunk stops at the first section it looks at whatever it does
+ * afterwards. Since stage 2 {@code FalcoChunk} no longer starts its heightmap refresh from
+ * {@code Heightmap#getHighestBlockSection(Chunk)} but from a copy of it that reads the storage
+ * instead of {@code Chunk#getSection(int)}, and a copy is exactly the kind of code that has to be
+ * run against its original on the inputs where the two could differ — a chunk whose top is empty,
+ * which is every chunk of a real world.
+ * {@link #testTheCopiedHighestSectionScanAgreesWithMinestom(String, int[], int)} supplies those
+ * inputs, compares the two start heights on them, and rebuilds both heightmaps from the height each
+ * arm computed for itself.
+ * </p>
+ * <p>
+ * It rebuilds them through {@link #refreshHeightmaps(Chunk)} rather than through the chunk, and that
+ * is a limitation of Minestom rather than a shortcut. {@code calculateFullHeightmap} is private on
+ * both arms; the only public way to reach it is {@code Chunk#invalidate()} followed by a write, and
+ * that path recomputes nothing, because it ends in {@code Heightmap#refresh(int)} whose first line
+ * returns unless the heightmap's own {@code needsRefresh} is still set — a flag {@code invalidate()}
+ * does not touch and nothing public can set again. A full recompute therefore happens exactly once
+ * in the life of a chunk, on its first write, and a test that drove it that way would be asserting
+ * against heightmaps that were never rebuilt. The per column {@code Heightmap#refresh(int, int, int)}
+ * carries no such guard, which is why both this test and the benchmark reproduce the body instead of
+ * triggering it.
+ * </p>
+ *
  * <h2>Running it</h2>
  * <pre>{@code
  * ./gradlew :falco-benchmarks:test --tests "*FalcoChunkEquivalenceTest"
  * }</pre>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 class FalcoChunkEquivalenceTest {
@@ -128,6 +155,16 @@ class FalcoChunkEquivalenceTest {
      * The chunk position the compared chunks are created at.
      */
     private static final int CHUNK_POSITION = 0;
+
+    /**
+     * The floor of the world the chunks of this test live in.
+     */
+    private static final int OVERWORLD_MIN_Y = -64;
+
+    /**
+     * The build limit of the world the chunks of this test live in.
+     */
+    private static final int OVERWORLD_MAX_Y = 320;
 
     private InstanceContainer container;
     private FalcoInstance falco;
@@ -244,6 +281,101 @@ class FalcoChunkEquivalenceTest {
                 "the comparison accepted two chunks built from different seeds, so it proves nothing");
     }
 
+    /**
+     * Returns the fixtures {@link #testTheCopiedHighestSectionScanAgreesWithMinestom(String, int[], int)}
+     * runs, as a name, the world heights that hold a full layer of blocks, and the height the scan
+     * has to start at.
+     * <p>
+     * Every expected start height is the arithmetic of {@code Heightmap#getHighestBlockSection}
+     * written out by hand for that fixture rather than taken from a run: the build limit of the
+     * overworld is {@value #OVERWORLD_MAX_Y}, and the scan subtracts one section of
+     * {@code 16} for every section above the highest one holding a block. The floor layer leaves
+     * {@code 23} sections empty above it and therefore starts at {@code -48}; the island at
+     * {@code 200} sits in the section spanning {@code 192} to {@code 207} and leaves {@code 7},
+     * therefore {@code 208}; a layer at the build limit leaves none. The untouched chunk is the
+     * degenerate end where every section is empty and the scan walks the whole chunk down to its
+     * floor.
+     * </p>
+     * <p>
+     * The last two fixtures differ in nothing but a layer on the floor, far below the island. That
+     * pair is what separates a scan that reports the highest non-empty section from one that reports
+     * any non-empty section: an implementation walking upwards, or one breaking on the wrong end,
+     * agrees with Minestom on every other fixture here and disagrees on that one.
+     * </p>
+     *
+     * @return the arguments of {@link #testTheCopiedHighestSectionScanAgreesWithMinestom(String, int[], int)}
+     */
+    static Stream<Arguments> emptyTopFixtures() {
+        return Stream.of(
+                Arguments.of("an untouched chunk", new int[0], OVERWORLD_MIN_Y),
+                Arguments.of("a layer on the floor", new int[]{-64}, -48),
+                Arguments.of("a layer at the build limit", new int[]{319}, 320),
+                Arguments.of("an island at 200 to 203", new int[]{200, 201, 202, 203}, 208),
+                Arguments.of("an island at 200 to 203 over a floor", new int[]{-64, 200, 201, 202, 203}, 208)
+        );
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("emptyTopFixtures")
+    void testTheCopiedHighestSectionScanAgreesWithMinestom(String name, int[] filledLayers, int expectedStartY) {
+        Chunk minestomChunk = MinestomChunks.newChunk(this.container, CHUNK_POSITION, CHUNK_POSITION);
+        Chunk falcoChunk = MinestomChunks.newChunk(this.falco, CHUNK_POSITION, CHUNK_POSITION);
+        FalcoChunk typedFalcoChunk = assertInstanceOf(FalcoChunk.class, falcoChunk);
+
+        // The expected start heights are literals derived from these two bounds. A dimension whose
+        // extent changed would make every one of them wrong while the comparison of the two arms
+        // still passed, so the bounds are asserted rather than assumed.
+        assertEquals(OVERWORLD_MIN_Y, minestomChunk.getMinSection() * Chunk.CHUNK_SECTION_SIZE,
+                "the fixture no longer starts at the floor the expected start heights were computed for");
+        assertEquals(OVERWORLD_MAX_Y, minestomChunk.getMaxSection() * Chunk.CHUNK_SECTION_SIZE,
+                "the fixture no longer ends at the build limit the expected start heights were computed for");
+
+        final Block block = MinestomChunks.distinctBlocks(1)[0];
+        fillLayers(minestomChunk, filledLayers, block);
+        fillLayers(falcoChunk, filledLayers, block);
+
+        // Both start heights are taken before the block walk, because the walk reaches the sections
+        // of the Falco chunk through Chunk#getSections() and creates every one of them. The scan
+        // under test runs on the storage as the chunk keeps it, which for the empty part of these
+        // fixtures is a shared section rather than one of its own.
+        minestomChunk.lockReadLock();
+        try {
+            assertEquals(expectedStartY, Heightmap.getHighestBlockSection(minestomChunk),
+                    "Minestom does not start its scan where the fixture says it has to");
+        } finally {
+            minestomChunk.unlockReadLock();
+        }
+        falcoChunk.lockReadLock();
+        try {
+            assertEquals(expectedStartY, typedFalcoChunk.highestBlockSection(),
+                    "the copied scan of FalcoChunk starts at a different height than Minestom's");
+        } finally {
+            falcoChunk.unlockReadLock();
+        }
+        MinestomChunks.assertSameBlocks(minestomChunk, falcoChunk);
+
+        // The scan is compared above and used here. Both chunks rebuild their heightmaps column by
+        // column from the start height their own arm computed, which is what turns a wrong start
+        // height into a wrong heightmap rather than only into a wrong number: a scan beginning below
+        // the top of the fixture cannot see it and reports the floor for every column.
+        assertEquals(refreshHeightmaps(minestomChunk), refreshHeightmaps(falcoChunk),
+                "the heightmaps rebuilt from the two start heights disagree");
+        MinestomChunks.assertSameBlocks(minestomChunk, falcoChunk);
+
+        // Equality alone would also hold if both chunks had missed the island and reported their
+        // floor, so the height itself is pinned. The world surface heightmap is the one asked,
+        // because its predicate is "not air" and therefore says nothing about which block the
+        // fixture happened to draw; an empty column reports the minimum height of a heightmap,
+        // which Minestom defines as one below the floor of the world.
+        final int expectedSurface = filledLayers.length == 0
+                ? OVERWORLD_MIN_Y - 1
+                : Arrays.stream(filledLayers).max().orElseThrow();
+        assertEquals(expectedSurface, minestomChunk.worldSurfaceHeightmap().getHeight(0, 0),
+                "the refreshed Minestom heightmap did not find the top of the fixture");
+        assertEquals(expectedSurface, falcoChunk.worldSurfaceHeightmap().getHeight(0, 0),
+                "the refreshed Falco heightmap did not find the top of the fixture");
+    }
+
     @Test
     void testTheEqualityDoesNotDependOnTheSeed() {
         Chunk minestomChunk = MinestomChunks.newChunk(this.container, CHUNK_POSITION, CHUNK_POSITION);
@@ -335,6 +467,35 @@ class FalcoChunkEquivalenceTest {
     }
 
     /**
+     * Writes a full horizontal layer of one block into a chunk, for every height it is given.
+     * <p>
+     * A whole layer rather than a single block, because the scan under test asks a palette for its
+     * count and a section that holds one block answers the same as one that holds two hundred and
+     * fifty six. The layer is what makes the resulting heightmap worth comparing: it gives every
+     * column of the chunk the same top, so a column that came out wrong is a column the scan missed
+     * rather than a column the fixture never filled.
+     * </p>
+     *
+     * @param chunk  the chunk to write into
+     * @param layers the world heights that receive a full layer
+     * @param block  the block every layer is written with
+     */
+    private static void fillLayers(Chunk chunk, int[] layers, Block block) {
+        chunk.lockWriteLock();
+        try {
+            for (int y : layers) {
+                for (int x = 0; x < Chunk.CHUNK_SIZE_X; x++) {
+                    for (int z = 0; z < Chunk.CHUNK_SIZE_Z; z++) {
+                        chunk.setBlock(x, y, z, block);
+                    }
+                }
+            }
+        } finally {
+            chunk.unlockWriteLock();
+        }
+    }
+
+    /**
      * Writes the scattered batch into a chunk, with the write lock the setter demands.
      *
      * @param chunk         the chunk to write into
@@ -383,9 +544,16 @@ class FalcoChunkEquivalenceTest {
     /**
      * Recomputes both heightmaps of a chunk from its palettes and sums the heights that come out.
      * <p>
-     * The same reproduction of the private {@code DynamicChunk#calculateFullHeightmap} the benchmark
-     * measures, through the per column {@code Heightmap#refresh(int, int, int)} which carries no
-     * refresh guard and therefore performs the scan every time it is called.
+     * The same reproduction of the private {@code calculateFullHeightmap} of the chunk it is handed
+     * that the benchmark measures, through the per column {@code Heightmap#refresh(int, int, int)}
+     * which carries no refresh guard and therefore performs the scan every time it is called.
+     * </p>
+     * <p>
+     * The start of the scan is taken from the arm's own chunk, exactly as the benchmark takes it:
+     * {@code DynamicChunk} starts from {@code Heightmap#getHighestBlockSection(Chunk)},
+     * {@code FalcoChunk} from {@link FalcoChunk#highestBlockSection()}. Running the static helper on
+     * both arms would compare Minestom's scan against itself and would leave the copy inside
+     * {@code FalcoChunk} untested by every fixture of this class.
      * </p>
      *
      * @param chunk the chunk to refresh the heightmaps of
@@ -396,7 +564,9 @@ class FalcoChunkEquivalenceTest {
 
         chunk.lockWriteLock();
         try {
-            final int startY = Heightmap.getHighestBlockSection(chunk);
+            final int startY = chunk instanceof FalcoChunk falcoChunk
+                    ? falcoChunk.highestBlockSection()
+                    : Heightmap.getHighestBlockSection(chunk);
             final Heightmap motionBlocking = chunk.motionBlockingHeightmap();
             final Heightmap worldSurface = chunk.worldSurfaceHeightmap();
 

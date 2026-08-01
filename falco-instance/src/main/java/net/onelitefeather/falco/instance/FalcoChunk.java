@@ -134,7 +134,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 3.0.0
+ * @version 3.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -744,10 +744,26 @@ public class FalcoChunk extends Chunk {
      * heightmap computed from a different starting height than Minestom's is not a faster heightmap,
      * it is a different one.
      * </p>
+     * <p>
+     * It is public because a copy of an algorithm needs a caller that can check it and a harness that
+     * can measure it, and neither of the two lives in this class. {@code FalcoChunkEquivalenceTest}
+     * runs the result against {@code Heightmap#getHighestBlockSection(Chunk)} on a chunk holding the
+     * same blocks, which is the only assertion that reaches this body directly rather than through
+     * whatever heightmap happens to be refreshed; and {@code ChunkComparisonBenchmark} reproduces
+     * {@code calculateFullHeightmap} through public API, so without this method its Falco arm would
+     * have to start its scan from Minestom's static helper — which walks this chunk through
+     * {@link #getSection(int)} and materialises what it walks over. That is a scan this chunk no
+     * longer performs and an allocation profile it no longer has, so the figure would describe a
+     * chunk that does not exist.
+     * </p>
+     * <p>
+     * The caller has to hold the read lock of this chunk.
+     * </p>
      *
      * @return the world Y at which the scan starts
      */
-    private int highestBlockSection() {
+    public int highestBlockSection() {
+        assertReadLock();
         int y = instance.getCachedDimensionType().maxY();
 
         for (int index = this.storage.sectionCount() - 1; index >= 0; index--) {
