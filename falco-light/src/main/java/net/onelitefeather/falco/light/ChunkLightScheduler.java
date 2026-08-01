@@ -415,6 +415,19 @@ public final class ChunkLightScheduler {
      * result would be far worse than a late one. Clearing the in flight marks happens in every
      * case, because a mark that survives a failure freezes its chunks forever.
      * </p>
+     * <p>
+     * A chunk which is no longer part of the instance is dropped rather than computed. Only a
+     * completed computation used to clear an entry, and a chunk that is not loaded is never
+     * computed, so its entry survived every following pass: claimed again on every tick, released
+     * again, never clean. The dirty set grew for the lifetime of the server, by one entry per chunk
+     * that was ever edited and then unloaded. The kept light of those chunks needs no handling here,
+     * because {@code ChunkLightArea#computeIncrementally} already drops it when it finds no chunk.
+     * </p>
+     * <p>
+     * Both removals are conditional on the recorded revision for the same reason: a change which
+     * arrived while the area was being computed must survive the pass, whether the chunk is still
+     * loaded or not.
+     * </p>
      *
      * @param instance the instance whose chunks are lit
      * @param group    the chunks of the area
@@ -436,6 +449,12 @@ public final class ChunkLightScheduler {
             for (ChunkArea position : written) {
                 this.dirty.remove(position, recorded.get(position));
                 deliver(instance, position);
+            }
+
+            for (ChunkArea position : group) {
+                if (instance.getChunk(position.x(), position.z()) == null) {
+                    this.dirty.remove(position, recorded.get(position));
+                }
             }
         } catch (Throwable throwable) {
             report(throwable);
