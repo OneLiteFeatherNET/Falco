@@ -286,28 +286,14 @@ public class ChunkSaveComparisonBenchmark {
      * @throws IllegalStateException if the registry holds fewer states than requested
      */
     private static int[] distinctStates(int wanted) {
-        List<Integer> collected = new ArrayList<>(wanted);
+        int[] states = Block.values().stream()
+                .flatMap(block -> block.possibleStates().stream())
+                .mapToInt(Block::stateId)
+                .limit(wanted)
+                .toArray();
 
-        for (Block block : Block.values()) {
-            for (Block state : block.possibleStates()) {
-                collected.add(state.stateId());
-
-                if (collected.size() >= wanted) {
-                    break;
-                }
-            }
-            if (collected.size() >= wanted) {
-                break;
-            }
-        }
-        if (collected.size() < wanted) {
-            throw new IllegalStateException("The registry holds only " + collected.size() + " of " + wanted + " states");
-        }
-
-        int[] states = new int[wanted];
-
-        for (int index = 0; index < wanted; index++) {
-            states[index] = collected.get(index);
+        if (states.length < wanted) {
+            throw new IllegalStateException("The registry holds only " + states.length + " of " + wanted + " states");
         }
         return states;
     }
