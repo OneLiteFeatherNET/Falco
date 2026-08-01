@@ -357,7 +357,7 @@ public final class DemoReport {
         report.append('\n');
         report.append("Where the world goes\n");
         bullet(report, "Copy your world folder into " + worldsDirectory + " so that the result looks like "
-                + worldsDirectory.resolve("<your-world>") + ".");
+                + examplePath(worldsDirectory, "<your-world>") + ".");
         bullet(report, "Copy the world ROOT — the folder which contains level.dat and either a 'region' "
                 + "directory or a 'dimensions' directory. Not the 'region' directory itself: both loaders "
                 + "resolve <world>/dimensions/<namespace>/<value>/region and fall back to <world>/region, so "
@@ -381,6 +381,28 @@ public final class DemoReport {
         report.append('\n');
         rule(report);
         return report.toString();
+    }
+
+    /**
+     * Builds an example child path for display, without asking the filesystem to parse the child
+     * name as a path segment.
+     * <p>
+     * {@link Path#resolve(String)} parses its argument as a path on the same filesystem, and on
+     * Windows that parser rejects the angle brackets a placeholder name like {@code <your-world>}
+     * is written with — {@code < > : " | ? *} are reserved characters there. This message is a hint
+     * for a human, not a path anything is ever opened with, so it is built by joining strings with
+     * the filesystem's own separator instead, which accepts any text.
+     * </p>
+     *
+     * @param directory the parent directory
+     * @param childName the display name of the child, not necessarily a valid path segment
+     * @return the parent directory and the child name joined by the filesystem separator
+     */
+    @Contract(pure = true)
+    private static String examplePath(Path directory, String childName) {
+        String separator = directory.getFileSystem().getSeparator();
+        String parent = directory.toString();
+        return parent.endsWith(separator) ? parent + childName : parent + separator + childName;
     }
 
     /**
