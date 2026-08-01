@@ -17,13 +17,31 @@ nothing to do with speed — and it claims none.
 
 ## What "high-performance" means here
 
-Measured, not asserted. Every figure comes from a JMH benchmark in this repository: the Anvil loader
-reads up to **8× faster** than Minestom's under thread contention (roughly level single-threaded,
-since the three-stage pipeline has nothing to win back without contention), and the light engine is
-**1.11× to 1.71× faster**, with byte-identical output asserted on every build. The charts, the full
-tables, the benchmark methodology and the optimisations that were tried and did **not** pay off are
-all in the wiki — see
-[Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) and
+Measured, not asserted. Every figure comes from a JMH benchmark in this repository, and each one is
+quoted here with the condition it was measured under.
+
+**The Anvil loader is 1.9× faster on two threads** — 1 181 ± 31 against 2 200 ± 445 µs/op, reading
+one chunk of 200 distinct block states. On one thread the intervals overlap and no difference is
+resolvable in either direction, which is the expected result: the claim is about lock granularity,
+and with one reader there is no lock to contend for. At four and eight threads no factor can be
+quoted at all, because Minestom's half-width there exceeds its own mean. What those two rows do
+establish is qualitative and, for a server, worse than being slow: under that load its read time
+stops being predictable, while Falco's stays at or below about a tenth of its mean at every thread
+count. Writing shows no resolvable difference at any thread count.
+
+The two-thread figure did not reproduce, and that belongs next to it: an independent run of the same
+configuration put Minestom at 103 437 ± 856 306 µs/op there, a half-width 8.3 times its own mean,
+which carries no factor at all. Falco's side reproduced on every row of both runs and Minestom's on
+none above one thread. What survives both is the direction and the loss of predictability, not the
+1.9×.
+
+**The light engine is 1.11× to 1.71× faster** over six scenarios, every pair of intervals disjoint,
+with byte-identical output asserted on every build.
+
+The figure after a `±` is the half-width of a confidence interval over the measurement iterations of
+one JVM launch; where two intervals overlap, no factor is printed. The charts, the full tables, the
+benchmark methodology and the optimisations that were tried and did **not** pay off are all in the
+wiki — see [Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) and
 [Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status).
 
 All three modules are **experimental**. Every public type carries `@ApiStatus.Experimental`;
