@@ -11,9 +11,13 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -25,9 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * Pins down the contract of {@link BlockStorage} on the storage stage 1 ships,
- * {@link SectionBlockStorage}, so that the implementation stage 2 adds can be held to the same
- * file without a line of it being rewritten for the new layout.
+ * Pins down the contract of {@link BlockStorage} on every implementation of it, which since stage 2
+ * means {@link SectionBlockStorage} and {@link LazySectionBlockStorage} running the same cases from
+ * the same file.
  * <p>
  * Everything here therefore goes through the interface and never through a section, with two
  * deliberate exceptions. The tests that pin the height arithmetic and the unknown state read
@@ -36,6 +40,24 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * {@link BlockStorage#view(int)} and {@link BlockStorage#views()} for the same reason: whether a
  * view is the live section or a copy of it is invisible to {@code getBlock}, which would answer
  * from the storage either way.
+ * </p>
+ *
+ * <h2>Why the layout is a parameter rather than a second file</h2>
+ * <p>
+ * A lazy layout is only worth having if it is indistinguishable from the eager one through this
+ * interface, so the cases that say what the interface promises must not be rewritten for it — a
+ * second file would drift, and the first thing to drift would be exactly the guard the second layout
+ * is most likely to lose. {@link #storages()} therefore names the layouts and every case takes a
+ * factory rather than calling one. What the lazy layout does <em>beyond</em> the contract lives in
+ * {@code LazySectionBlockStorageTest}, because none of it can be phrased about the eager one.
+ * </p>
+ * <p>
+ * Three cases stayed behind as plain tests over {@link SectionBlockStorage}, and the reason is the
+ * same for all three: they are statements about the eager layout rather than about the interface.
+ * A storage that shares nothing, a view that is the section itself and a section list that exists
+ * without being asked for are all false for the lazy layout by construction, and running them
+ * against it would either fail or — worse — force it to materialise everything and quietly assert
+ * the opposite of what stage 2 is about.
  * </p>
  *
  * <h2>Why the height tests name the section</h2>
@@ -62,7 +84,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * </p>
  *
  * @author TheMeinerLP
- * @version 2.1.0
+ * @version 3.0.0
  * @since 0.4.0
  */
 @DisplayName("The block storage of a chunk")
@@ -78,20 +100,74 @@ class BlockStorageTest {
         }
     }
 
-    private static BlockStorage storage() {
-        return new SectionBlockStorage(MIN_SECTION, SECTIONS);
+    /**
+     * The layouts every case of this file runs against.
+     *
+     * @return the name of each layout and a factory for an empty storage of it
+     */
+    static Stream<Arguments> storages() {
+        return Stream.of(
+                Arguments.of("eager",
+                        (Supplier<BlockStorage>) () -> new SectionBlockStorage(MIN_SECTION, SECTIONS)),
+                Arguments.of("lazy",
+                        (Supplier<BlockStorage>) () -> new LazySectionBlockStorage(MIN_SECTION, SECTIONS)));
     }
 
-    @Test
+    /**
+     * The heights that pin the section arithmetic, once per layout.
+     * <p>
+     * Built as a product rather than written out, so that adding a layout cannot leave a height
+     * untested for it, and adding a height cannot leave a layout untested for that height.
+     * </p>
+     *
+     * @return the layout, its factory, a world height and the section that height belongs to
+     */
+    static Stream<Arguments> heights() {
+        final int[][] cases = {{-64, 0}, {-49, 0}, {-48, 1}, {-1, 3}, {0, 4}, {127, 11}, {300, 22}, {319, 23}};
+
+        return product(cases);
+    }
+
+    /**
+     * The columns outside the chunk that have to be refused, once per layout.
+     *
+     * @return the layout, its factory and a column that does not belong to the chunk
+     */
+    static Stream<Arguments> columns() {
+        final int[][] cases = {{16, 0}, {-1, 0}, {0, 16}, {0, -1}, {48, 48}};
+
+        return product(cases);
+    }
+
+    /**
+     * Combines every layout with every pair of a case table.
+     *
+     * @param cases the pairs, each of which becomes one case per layout
+     * @return the layout name, its factory and the two values of the pair
+     */
+    private static Stream<Arguments> product(int[][] cases) {
+        final List<Arguments> combined = new ArrayList<>();
+
+        storages().forEach(layout -> {
+            for (int[] values : cases) {
+                combined.add(Arguments.of(layout.get()[0], layout.get()[1], values[0], values[1]));
+            }
+        });
+        return combined.stream();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("returns air for a position nothing was written to")
-    void testEmptyReadsAir() {
-        assertEquals(Block.AIR, storage().getBlock(0, 0, 0, Block.Getter.Condition.NONE));
+    void testEmptyReadsAir(String name, Supplier<BlockStorage> factory) {
+        assertEquals(Block.AIR, factory.get().getBlock(0, 0, 0, Block.Getter.Condition.NONE));
     }
 
-    @Test
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("returns what was written, at the position it was written to")
-    void testWriteThenRead() {
-        final BlockStorage storage = storage();
+    void testWriteThenRead(String name, Supplier<BlockStorage> factory) {
+        final BlockStorage storage = factory.get();
 
         storage.setBlock(1, 2, 3, Block.STONE);
 
@@ -99,11 +175,11 @@ class BlockStorageTest {
         assertEquals(Block.AIR, storage.getBlock(1, 2, 4, Block.Getter.Condition.NONE));
     }
 
-    @ParameterizedTest(name = "y = {0} belongs to section {1}")
-    @CsvSource({"-64, 0", "-49, 0", "-48, 1", "-1, 3", "0, 4", "127, 11", "300, 22", "319, 23"})
+    @ParameterizedTest(name = "{0}: y = {2} belongs to section {3}")
+    @MethodSource("heights")
     @DisplayName("writes a height into the section that height belongs to, and into no other")
-    void testHeightSelectsItsSection(int y, int expectedSection) {
-        final BlockStorage storage = storage();
+    void testHeightSelectsItsSection(String name, Supplier<BlockStorage> factory, int y, int expectedSection) {
+        final BlockStorage storage = factory.get();
 
         storage.setBlock(1, y, 3, Block.STONE);
 
@@ -120,17 +196,36 @@ class BlockStorageTest {
         assertEquals(1, written, "exactly one section of the storage may hold a block");
     }
 
-    @Test
-    @DisplayName("holds one section per section of the chunk")
-    void testSectionCount() {
-        assertEquals(SECTIONS, storage().sectionCount());
-        assertEquals(SECTIONS, storage().sections().size());
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
+    @DisplayName("spans one section per section of the chunk")
+    void testSectionCount(String name, Supplier<BlockStorage> factory) {
+        assertEquals(SECTIONS, factory.get().sectionCount());
     }
 
+    /**
+     * The eager storage holds a section list before anyone asks for one.
+     * <p>
+     * Not parameterised, and the omission is the point rather than an oversight:
+     * {@link BlockStorage#sections()} is the boundary method, so asking the lazy storage for its list
+     * materialises every section of it. A case that asserted the size of that list for both layouts
+     * would be asserting that the lazy one gives up its whole saving on being asked a question about
+     * its size. What the lazy layout does at that boundary is pinned in
+     * {@code LazySectionBlockStorageTest} instead, where the materialisation is the subject rather
+     * than a side effect.
+     * </p>
+     */
     @Test
+    @DisplayName("holds one section per section of the chunk when it holds them eagerly")
+    void testEagerStorageHoldsEverySection() {
+        assertEquals(SECTIONS, new SectionBlockStorage(MIN_SECTION, SECTIONS).sections().size());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("copies without sharing storage with the original")
-    void testCopyIsIndependent() {
-        final BlockStorage original = storage();
+    void testCopyIsIndependent(String name, Supplier<BlockStorage> factory) {
+        final BlockStorage original = factory.get();
         original.setBlock(1, 2, 3, Block.STONE);
 
         final BlockStorage copy = original.copy();
@@ -141,10 +236,11 @@ class BlockStorageTest {
         assertEquals(Block.DIRT, copy.getBlock(1, 2, 3, Block.Getter.Condition.NONE));
     }
 
-    @Test
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("copies the height of every block along with it")
-    void testCopyKeepsTheHeights() {
-        final BlockStorage original = storage();
+    void testCopyKeepsTheHeights(String name, Supplier<BlockStorage> factory) {
+        final BlockStorage original = factory.get();
         original.setBlock(1, -64, 3, Block.STONE);
         original.setBlock(1, 300, 3, Block.DIRT);
 
@@ -158,10 +254,11 @@ class BlockStorageTest {
                 copy.section(22).blockPalette().get(1, 12, 3));
     }
 
-    @Test
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("reads air everywhere after being cleared")
-    void testClear() {
-        final BlockStorage storage = storage();
+    void testClear(String name, Supplier<BlockStorage> factory) {
+        final BlockStorage storage = factory.get();
         storage.setBlock(1, 2, 3, Block.STONE);
 
         storage.clear();
@@ -188,10 +285,11 @@ class BlockStorageTest {
      * {@code DynamicChunk} fails rather than being quietly reported as air.
      * </p>
      */
-    @Test
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("answers every state id its table holds with a block and refuses one it does not")
-    void testRawStateIdsAreNeverAnsweredWithNull() {
-        final BlockStorage storage = storage();
+    void testRawStateIdsAreNeverAnsweredWithNull(String name, Supplier<BlockStorage> factory) {
+        final BlockStorage storage = factory.get();
 
         storage.section(4).blockPalette().set(1, 2, 3, Block.statesCount() - 1);
         assertNotNull(storage.getBlock(1, 2, 3, Block.Getter.Condition.NONE),
@@ -203,10 +301,11 @@ class BlockStorageTest {
                 "a state id past the table has to fail rather than be reported as some block");
     }
 
-    @Test
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("returns the biome that was written")
-    void testBiomeRoundTrip() {
-        final BlockStorage storage = storage();
+    void testBiomeRoundTrip(String name, Supplier<BlockStorage> factory) {
+        final BlockStorage storage = factory.get();
         // Minestom keeps its Biomes constants package private, so the key is resolved through the
         // registry. Desert rather than plains because an empty biome palette reads back as id zero,
         // and a round trip through the id an empty palette already answers with proves nothing.
@@ -229,10 +328,11 @@ class BlockStorageTest {
      * count for it and hands it to the chunk packet.
      * </p>
      */
-    @Test
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("refuses to write a biome that is not registered")
-    void testUnregisteredBiomeIsRejected() {
-        final BlockStorage storage = storage();
+    void testUnregisteredBiomeIsRejected(String name, Supplier<BlockStorage> factory) {
+        final BlockStorage storage = factory.get();
         final RegistryKey<Biome> unregistered = RegistryKey.unsafeOf("falco:not_a_biome");
 
         assertThrows(IllegalStateException.class, () -> storage.setBiome(4, 20, 8, unregistered));
@@ -240,10 +340,11 @@ class BlockStorageTest {
                 "a rejected biome must not have reached the palette");
     }
 
-    @Test
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("refuses to read a biome id that is not registered")
-    void testUnregisteredBiomeIdIsRejectedOnRead() {
-        final BlockStorage storage = storage();
+    void testUnregisteredBiomeIdIsRejectedOnRead(String name, Supplier<BlockStorage> factory) {
+        final BlockStorage storage = factory.get();
         final int unregisteredId = 30_000;
 
         assertNull(MinecraftServer.getBiomeRegistry().getKey(unregisteredId),
@@ -270,12 +371,18 @@ class BlockStorageTest {
      * the palette here, an {@code IndexOutOfBoundsException} from an array in a packed layout — and
      * the contract is that the storage refuses, not which class it refuses with.
      * </p>
+     * <p>
+     * The block written is stone rather than air on purpose. A lazy layout skips a write of the
+     * state its shared section already holds without ever reaching a palette, so a case phrased with
+     * air would be refused by the eager storage and silently accepted by the lazy one — and would be
+     * reporting the skip rather than the missing guard.
+     * </p>
      */
-    @ParameterizedTest(name = "x = {0}, z = {1}")
-    @CsvSource({"16, 0", "-1, 0", "0, 16", "0, -1", "48, 48"})
+    @ParameterizedTest(name = "{0}: x = {2}, z = {3}")
+    @MethodSource("columns")
     @DisplayName("refuses a column outside the chunk instead of folding it back in")
-    void testColumnOutsideTheChunkIsRejected(int x, int z) {
-        final BlockStorage storage = storage();
+    void testColumnOutsideTheChunkIsRejected(String name, Supplier<BlockStorage> factory, int x, int z) {
+        final BlockStorage storage = factory.get();
 
         assertThrows(RuntimeException.class, () -> storage.setBlock(x, 20, z, Block.STONE));
     }
@@ -283,7 +390,7 @@ class BlockStorageTest {
     @Test
     @DisplayName("reports every section as materialised when it holds one of its own")
     void testEagerStorageSharesNothing() {
-        final BlockStorage storage = storage();
+        final BlockStorage storage = new SectionBlockStorage(MIN_SECTION, SECTIONS);
 
         assertEquals(SECTIONS, storage.materialisedSections());
         for (int section = 0; section < SECTIONS; section++) {
@@ -295,7 +402,7 @@ class BlockStorageTest {
     @Test
     @DisplayName("hands out the same section through the view as through the boundary")
     void testViewAndSectionAgree() {
-        final BlockStorage storage = storage();
+        final BlockStorage storage = new SectionBlockStorage(MIN_SECTION, SECTIONS);
 
         storage.setBlock(1, 2, 3, Block.STONE);
 
@@ -308,10 +415,11 @@ class BlockStorageTest {
         }
     }
 
-    @Test
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("storages")
     @DisplayName("keeps the view in step with what was written after it was handed out")
-    void testViewFollowsLaterWrites() {
-        final BlockStorage storage = storage();
+    void testViewFollowsLaterWrites(String name, Supplier<BlockStorage> factory) {
+        final BlockStorage storage = factory.get();
         final List<Section> views = storage.views();
 
         // y = 2 lands in section 4 of this fixture (MIN_SECTION = -4), the same section
