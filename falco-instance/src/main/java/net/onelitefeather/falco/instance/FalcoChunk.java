@@ -108,12 +108,33 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * Like {@code DynamicChunk}, this chunk is not thread-safe on its own. Callers hold the chunk lock,
  * which {@link Chunk#lockWriteLock()} and {@link Chunk#lockReadLock()} provide.
  * </p>
+ *
+ * <h2>Which of its own sections this chunk is allowed to create</h2>
+ * <p>
+ * None, on any path of its own. The packet it sends, the light data it collects, the snapshot it
+ * takes and the scan that starts a heightmap refresh all read through {@link BlockStorage#views()}
+ * and {@link BlockStorage#view(int)}, which hand out whatever the storage currently holds and create
+ * nothing. Only {@link #getSections()} and {@link #getSection(int)} materialise, because those two
+ * are what Minestom calls when it is about to write into a section — the generator of an
+ * {@code InstanceContainer}, a chunk loader, the light engine — and a storage cannot tell a reader
+ * from a writer through them.
+ * </p>
+ * <p>
+ * The one place where that boundary is crossed against this chunk's will is the heightmap.
+ * {@code Heightmap#refresh(int, int, int)} reaches its sections through {@code Chunk#getSection(int)}
+ * and cannot be overridden, because it ends in a {@code private} setter over a {@code private}
+ * array. A refresh therefore materialises every empty section it walks through below the highest
+ * non-empty one. In a generated overworld that is none; the height profile of the census puts the
+ * empty share below world height sixty-four at {@code 0,0 %}. In a world of floating islands it is
+ * not none, and {@code SectionMaterialisationTest} states the number rather than leaving it to the
+ * imagination.
+ * </p>
  * <p>
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
  * @author TheMeinerLP
- * @version 2.1.0
+ * @version 3.0.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -166,7 +187,14 @@ public class FalcoChunk extends Chunk {
     private final CachedPacket chunkCache = new CachedPacket(this::createChunkPacket);
 
     /**
-     * Creates an empty chunk at the given position, storing its blocks in sections.
+     * Creates an empty chunk at the given position, storing its blocks in sections which are
+     * allocated only once something is written into them.
+     * <p>
+     * {@link LazySectionBlockStorage} is the default rather than {@link SectionBlockStorage} because
+     * an empty chunk is the state every chunk starts in and the state most sections of a finished
+     * chunk stay in; a caller who wants a section per slot regardless still gets one by passing
+     * {@link SectionBlockStorage} to {@link #FalcoChunk(Instance, int, int, BlockStorage)}.
+     * </p>
      *
      * @param instance the instance which owns the chunk
      * @param chunkX   the chunk X
@@ -176,7 +204,7 @@ public class FalcoChunk extends Chunk {
         super(instance, chunkX, chunkZ, true);
         // Must be built here and not in a field initialiser: the super constructor is what computes
         // minSection and maxSection, and the storage is sized from them.
-        this.storage = new SectionBlockStorage(minSection, maxSection - minSection);
+        this.storage = new LazySectionBlockStorage(minSection, maxSection - minSection);
     }
 
     /**
@@ -577,10 +605,16 @@ public class FalcoChunk extends Chunk {
      */
     @Override
     public ChunkSnapshot updateSnapshot(SnapshotUpdater updater) {
-        final List<Section> sections = this.storage.sections();
+        final List<Section> sections = this.storage.views();
         final Section[] clonedSections = new Section[sections.size()];
-        for (int i = 0; i < clonedSections.length; i++)
-            clonedSections[i] = sections.get(i).clone();
+        for (int i = 0; i < clonedSections.length; i++) {
+            final Section section = sections.get(i);
+            // A shared section must not end up inside a snapshot even though it never changes: a
+            // snapshot is read without any lock and by callers this class does not know, and one that
+            // wrote into it would write into every empty section of the process. A fresh section is
+            // the same content and cannot be aliased.
+            clonedSections[i] = this.storage.shared(i) ? new Section() : section.clone();
+        }
         final var entities = instance.getEntityTracker().chunkEntities(chunkX, chunkZ, EntityTracker.Target.ENTITIES);
         final int[] entityIds = ArrayUtils.mapToIntArray(entities, Entity::getEntityId);
         return new SnapshotImpl.Chunk(minSection, chunkX, chunkZ,
@@ -615,7 +649,7 @@ public class FalcoChunk extends Chunk {
             final NetworkBuffer.Type<ChunkData.Section> sectionSerializer =
                     ChunkData.Section.networkType(MinecraftServer.getBiomeRegistry().size());
             final byte[] data = NetworkBuffer.makeArray(networkBuffer -> {
-                for (Section section : this.storage.sections()) {
+                for (Section section : this.storage.views()) {
                     final short blockCount = (short) section.blockPalette().count();
                     final short liquidCount = (short) (blockCount > 0 ? 1 : 0); //TODO(26.1) proper fluid count
                     networkBuffer.write(sectionSerializer,
@@ -656,7 +690,7 @@ public class FalcoChunk extends Chunk {
         final List<byte[]> blockLights = new ArrayList<>();
 
         int index = 0;
-        for (Section section : this.storage.sections()) {
+        for (Section section : this.storage.views()) {
             index++;
             final byte[] skyLight = section.skyLight().array();
             final byte[] blockLight = section.blockLight().array();
@@ -695,6 +729,35 @@ public class FalcoChunk extends Chunk {
     }
 
     /**
+     * Reports the world height at which a heightmap scan of this chunk may start.
+     * <p>
+     * The body of {@code Heightmap#getHighestBlockSection} with one substitution: it reaches its
+     * sections through {@code Chunk#getSection(int)}, which is the boundary that hands a section to
+     * an arbitrary caller and therefore has to create one. Walking a chunk from the build limit
+     * downwards through that method materialises exactly the empty top sections this chunk exists not
+     * to hold, on the first block anybody writes into it. Reading through
+     * {@link BlockStorage#view(int)} answers the same question and creates nothing.
+     * </p>
+     * <p>
+     * The arithmetic is copied rather than re-derived, including the descent by one section per step
+     * and the break on the first palette whose count is not zero, because the two have to agree: a
+     * heightmap computed from a different starting height than Minestom's is not a faster heightmap,
+     * it is a different one.
+     * </p>
+     *
+     * @return the world Y at which the scan starts
+     */
+    private int highestBlockSection() {
+        int y = instance.getCachedDimensionType().maxY();
+
+        for (int index = this.storage.sectionCount() - 1; index >= 0; index--) {
+            if (this.storage.view(index).blockPalette().count() != 0) break;
+            y -= CHUNK_SECTION_SIZE;
+        }
+        return y;
+    }
+
+    /**
      * Rebuilds both heightmaps from the blocks of this chunk.
      * <p>
      * The scan starts at the highest section that holds anything, so an empty chunk costs nothing and
@@ -703,7 +766,7 @@ public class FalcoChunk extends Chunk {
      */
     private void calculateFullHeightmap() {
         assertWriteLock();
-        final int startY = Heightmap.getHighestBlockSection(this);
+        final int startY = highestBlockSection();
         this.motionBlocking.refresh(startY);
         this.worldSurface.refresh(startY);
         this.needsCompleteHeightmapRefresh = false;
