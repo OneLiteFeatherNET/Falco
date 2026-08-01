@@ -69,6 +69,16 @@ import org.jetbrains.annotations.Nullable;
  * well, which Minestom's path does not manage.
  * </p>
  * <p>
+ * <b>{@code copy} is deliberately not overridden.</b> Minestom copies a chunk into <em>another</em>
+ * instance, and a scheduler serves exactly one. A copy that kept this binding would turn the first
+ * block change placed into it into an {@link IllegalStateException}, because reporting that change
+ * would try to bind a second instance. The inherited implementation returns a {@link DynamicChunk}
+ * that carries the cloned sections and therefore the light as a snapshot, with nothing updating it
+ * afterwards — which is the only correct answer here. Note that this is the opposite of
+ * {@code FalcoChunk}, which does override {@code copy} so its instance can still unload the copy;
+ * the two look inconsistent and are not.
+ * </p>
+ * <p>
  * This type is experimental. The light engine is new and its API may still change.
  * </p>
  *

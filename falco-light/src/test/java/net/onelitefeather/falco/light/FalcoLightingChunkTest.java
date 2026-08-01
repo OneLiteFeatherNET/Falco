@@ -63,6 +63,52 @@ class FalcoLightingChunkTest {
         }
     }
 
+    /**
+     * A copy carries the light it had, and does not carry the scheduler it came from.
+     * <p>
+     * Minestom calls {@code Chunk#copy} when a chunk is copied into another instance. A copy that
+     * kept the binding would report its changes to a scheduler that already serves the origin, and
+     * a scheduler rejects a second instance — the copy would take the first block change placed in
+     * it and turn it into an {@link IllegalStateException}. The inherited implementation is
+     * therefore the correct one here, unlike in {@code FalcoChunk}, where the copy has to keep its
+     * type so the instance can unload it.
+     * </p>
+     * <p>
+     * What the copy does keep is the light data itself, because the sections are cloned with it.
+     * It is a snapshot: nothing updates it afterwards.
+     * </p>
+     */
+    @Test
+    void testACopyKeepsItsLightButNotTheSchedulerItCameFrom(Env env) {
+        Instance origin = env.createEmptyInstance();
+        Instance other = env.createEmptyInstance();
+        ChunkLightService service = new ChunkLightService();
+        ChunkLightScheduler scheduler = new ChunkLightScheduler(service, Runnable::run, 16);
+        origin.setChunkSupplier(scheduler.supplier());
+
+        Chunk chunk = origin.loadChunk(0, 0).join();
+        place(chunk, 8, 40, 8, Block.GLOWSTONE);
+        chunk.tick(1L);
+
+        assertEquals(15, service.blockLightAt(chunk, 8, 40, 8), "the origin is lit before it is copied");
+
+        chunk.lockReadLock();
+        final Chunk copy;
+        try {
+            copy = chunk.copy(other, 0, 0);
+        } finally {
+            chunk.unlockReadLock();
+        }
+
+        assertEquals(15, service.blockLightAt(copy, 8, 40, 8), "the copy carries the light it was made from");
+
+        // If the copy were bound to the scheduler of the origin, this would bind a second instance
+        // and throw rather than place a block.
+        place(copy, 1, 40, 1, Block.STONE);
+
+        assertFalse(scheduler.isDirty(0, 0), "a change in the copy is not a change of the origin");
+    }
+
     @Test
     void testPlacingALightSourceLightsTheChunkAfterATick(Env env) {
         Instance instance = env.createEmptyInstance();
