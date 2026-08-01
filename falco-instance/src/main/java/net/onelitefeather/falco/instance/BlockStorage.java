@@ -26,8 +26,18 @@ import java.util.List;
  * </p>
  * <p>
  * Coordinates are chunk-local: {@code x} and {@code z} are {@code 0} to {@code 15}, and {@code y} is
- * an absolute world height, because that is the form both {@code Chunk} and the anvil format use and
- * translating twice would be a second place to get it wrong.
+ * an absolute world height, because that is the form the anvil format uses and because a storage has
+ * no chunk position to fold a world coordinate against.
+ * </p>
+ * <p>
+ * That asymmetry is the whole point of the rule and it is the caller's job, not the storage's.
+ * {@code Chunk#setBlock} is handed instance-level coordinates, so {@code FalcoChunk} masks
+ * {@code x} and {@code z} once, on its side of the seam, and every implementation here may index by
+ * them directly — which is what makes a packed layout possible at all, since such a layout has no
+ * cheap way to detect that it was handed a coordinate belonging to a chunk far away. An
+ * implementation is free to reject an out-of-range coordinate, and is expected to do so loudly
+ * rather than to fold it back into range: folding turns a caller error into a block written to the
+ * wrong place, which no test can distinguish from a block written correctly.
  * </p>
  * <p>
  * Implementations are not thread-safe on their own. The caller holds the lock of the chunk, which
@@ -35,7 +45,7 @@ import java.util.List;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -43,12 +53,20 @@ public interface BlockStorage {
 
     /**
      * Reads the block at a position.
+     * <p>
+     * A storage always answers with a block and never with {@code null}. A stored value the block
+     * registry does not know — which a raw palette write or a world from another version can produce
+     * — is answered with air, because {@code Block.Getter.Condition#NONE} promises a block "no matter
+     * what" and {@code Block.Getter#getBlock(int, int, int)} dereferences the result. The
+     * {@code null} case that {@code Chunk#getBlock} has belongs to the chunk, which owns the block
+     * entity map the condition selects over; nothing here can answer {@code Condition#CACHED}.
+     * </p>
      *
      * @param x         the chunk-local block X, {@code 0} to {@code 15}
      * @param y         the absolute block Y
      * @param z         the chunk-local block Z, {@code 0} to {@code 15}
      * @param condition what the caller is willing to accept, as {@code Block.Getter} defines it
-     * @return the block, or {@code null} if the condition excludes it
+     * @return the block, air if the stored state is unknown, never {@code null}
      */
     Block getBlock(int x, int y, int z, Block.Getter.Condition condition);
 
@@ -64,21 +82,35 @@ public interface BlockStorage {
 
     /**
      * Reads the biome at a position.
+     * <p>
+     * Biomes are stored by their registry id, so a storage that was filled through a raw palette
+     * write can hold an id no biome answers to. Such a read fails rather than returning
+     * {@code null}: the caller of a biome getter has no reasonable substitute the way an unknown
+     * block has air, and a {@code null} would surface far from the write that caused it.
+     * </p>
      *
      * @param x the chunk-local block X, {@code 0} to {@code 15}
      * @param y the absolute block Y
      * @param z the chunk-local block Z, {@code 0} to {@code 15}
-     * @return the biome
+     * @return the biome, never {@code null}
+     * @throws NullPointerException if the stored id belongs to no registered biome
      */
     RegistryKey<Biome> getBiome(int x, int y, int z);
 
     /**
      * Writes a biome to a position.
+     * <p>
+     * An unregistered biome is rejected here rather than stored. A biome registry lookup answers a
+     * miss with {@code -1}, and a palette accepts that value like any other, counts it and hands it
+     * to the chunk packet — so a storage that did not check would turn a caller error into a corrupt
+     * chunk that only fails on a read, or on a client, long afterwards.
+     * </p>
      *
      * @param x     the chunk-local block X, {@code 0} to {@code 15}
      * @param y     the absolute block Y
      * @param z     the chunk-local block Z, {@code 0} to {@code 15}
      * @param biome the biome to write
+     * @throws IllegalStateException if the biome is not registered
      */
     void setBiome(int x, int y, int z, RegistryKey<Biome> biome);
 

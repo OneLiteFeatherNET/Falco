@@ -87,6 +87,23 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * rewriting the bookkeeping would be indistinguishable from a difference that came from the
  * storage.
  * </p>
+ *
+ * <h2>Where the coordinates are folded</h2>
+ * <p>
+ * {@code Instance#setBlock} hands a chunk the coordinates of the world, not of the chunk: an
+ * {@code x} of {@code -3} is a legitimate argument here and means the fourteenth column of the chunk
+ * at {@code chunkX == -1}. {@code DynamicChunk} folds them itself, at every use. This class folds
+ * them once, on this side of the seam, and passes chunk-local {@code x} and {@code z} to
+ * {@link BlockStorage}, which is what that interface documents.
+ * </p>
+ * <p>
+ * The alternative — handing the storage what the instance handed the chunk — would work for
+ * {@link SectionBlockStorage}, which folds again internally, and would quietly break any
+ * implementation that indexes an array by {@code x}. A storage cannot fold on its own without
+ * knowing which chunk it belongs to, and giving it that knowledge would put the chunk position into
+ * the one part of the design that was built not to need it. The height stays absolute, because a
+ * storage does know its own vertical extent.
+ * </p>
  * <p>
  * Like {@code DynamicChunk}, this chunk is not thread-safe on its own. Callers hold the chunk lock,
  * which {@link Chunk#lockWriteLock()} and {@link Chunk#lockReadLock()} provide.
@@ -96,7 +113,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 2.0.0
+ * @version 2.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -261,7 +278,7 @@ public class FalcoChunk extends Chunk {
         final int sectionRelativeX = globalToSectionRelative(x);
         final int sectionRelativeZ = globalToSectionRelative(z);
 
-        this.storage.setBlock(x, y, z, block);
+        this.storage.setBlock(sectionRelativeX, y, sectionRelativeZ, block);
 
         final int index = CoordConversion.chunkBlockIndex(x, y, z);
         // Handler
@@ -311,7 +328,10 @@ public class FalcoChunk extends Chunk {
      * <p>
      * A height outside the world is answered with air rather than with an exception, because the
      * neighbour updates of a block write walk one block up and down and would otherwise fall off the
-     * world at its floor and its ceiling.
+     * world at its floor and its ceiling. Air is also what a stored state the block registry does not
+     * know reads back as, which {@link BlockStorage#getBlock(int, int, int, Condition)} guarantees —
+     * together the two are what lets this method promise a block for every height, which
+     * {@code Condition#NONE} requires of it.
      * </p>
      * <p>
      * The caller has to hold the read lock of this chunk.
@@ -337,7 +357,7 @@ public class FalcoChunk extends Chunk {
                 return entry;
             }
         }
-        return this.storage.getBlock(x, y, z, condition);
+        return this.storage.getBlock(globalToSectionRelative(x), y, globalToSectionRelative(z), condition);
     }
 
     /**
@@ -359,7 +379,7 @@ public class FalcoChunk extends Chunk {
     public void setBiome(int x, int y, int z, RegistryKey<Biome> biome) {
         assertWriteLock();
         this.chunkCache.invalidate();
-        this.storage.setBiome(x, y, z, biome);
+        this.storage.setBiome(globalToSectionRelative(x), y, globalToSectionRelative(z), biome);
     }
 
     /**
@@ -376,7 +396,7 @@ public class FalcoChunk extends Chunk {
     @Override
     public RegistryKey<Biome> getBiome(int x, int y, int z) {
         assertReadLock();
-        return this.storage.getBiome(x, y, z);
+        return this.storage.getBiome(globalToSectionRelative(x), y, globalToSectionRelative(z));
     }
 
     /**
