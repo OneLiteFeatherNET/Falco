@@ -206,8 +206,8 @@ repositories {
 ```
 
 The coordinates stay the same; only the version changes. It is the released version with its patch
-bumped and `-SNAPSHOT` appended — so while `0.2.1` is the latest release, the snapshot endpoint
-serves `0.2.2-SNAPSHOT`. That version keeps moving as commits land, which is the point of it and
+bumped and `-SNAPSHOT` appended — so while `0.3.0` is the latest release, the snapshot endpoint
+serves `0.3.1-SNAPSHOT`. That version keeps moving as commits land, which is the point of it and
 also the reason not to build a release of your own against it.
 
 </details>
@@ -269,9 +269,9 @@ has a page to read in the browser:
 
 | Module | Rendered Javadoc |
 | --- | --- |
-| `falco-anvil` | [`falco-anvil` 0.2.1](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-anvil/0.2.1) |
-| `falco-light` | [`falco-light` 0.2.1](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-light/0.2.1) |
-| `falco-instance` | No release yet, so only the snapshot: [`falco-instance` 0.2.2-SNAPSHOT](https://repo.onelitefeather.dev/javadoc/snapshots/net/onelitefeather/falco-instance/0.2.2-SNAPSHOT) |
+| `falco-anvil` | [`falco-anvil` 0.3.0](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-anvil/0.3.0) |
+| `falco-light` | [`falco-light` 0.3.0](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-light/0.3.0) |
+| `falco-instance` | [`falco-instance` 0.3.0](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-instance/0.3.0) |
 
 The same pages also travel with the artefacts, as the `-javadoc.jar` every published module carries
 next to its main jar — the copy an IDE fetches through *Download Sources and Documentation* and
