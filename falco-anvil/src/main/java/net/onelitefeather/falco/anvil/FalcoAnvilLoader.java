@@ -40,6 +40,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -118,6 +119,17 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     private final int dataVersion;
 
     /**
+     * Where failures are reported, or null for the exception manager of the running server.
+     * <p>
+     * Null rather than a captured default on purpose. {@code MinecraftServer.getExceptionManager()}
+     * reads a field which only {@code MinecraftServer.init()} sets, so resolving it while the loader
+     * is built would turn a loader created before the server into one that dies in its own error
+     * path — on a null pointer which hides whatever actually went wrong.
+     * </p>
+     */
+    private final @Nullable Consumer<Throwable> exceptionHandler;
+
+    /**
      * The lock which serialises the shutdown of the loader.
      * <p>
      * A private lock rather than the monitor of the loader itself, in the shape the region file
@@ -154,23 +166,46 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @throws IllegalArgumentException if the limit is not positive
      */
     public FalcoAnvilLoader(Path worldRoot, Key dimension, int openRegionLimit) {
-        if (openRegionLimit <= 0) {
-            throw new IllegalArgumentException("The amount of open region files must be positive but was " + openRegionLimit);
-        }
-        ResolvedRegionDirectory resolved = resolveRegionDirectory(worldRoot, dimension);
+        this(worldRoot, dimension, builder().openRegionLimit(openRegionLimit));
+    }
 
-        this.openRegionLimit = openRegionLimit;
-        this.compressionLevel = ChunkCompression.DEFAULT_LEVEL;
+    /**
+     * Creates a loader from the values collected by a builder.
+     * <p>
+     * Everything that has to exist once per loader is created here rather than in the builder, which
+     * is what lets one builder produce several independent loaders: the region cache, the tracked
+     * chunks, the save permit and, unless the caller named one, the diagnostics.
+     * </p>
+     *
+     * @param worldRoot the root directory of the world
+     * @param dimension the key of the dimension the loader reads and writes
+     * @param settings  the builder which holds the configured values
+     */
+    private FalcoAnvilLoader(Path worldRoot, Key dimension, Builder settings) {
+        ResolvedRegionDirectory resolved = resolveRegionDirectory(worldRoot, dimension);
+        // The resolvers see whichever diagnostics this loader ends up with, exactly as the
+        // constructor does: the counters of a resolver and those the loader reports have to be the
+        // same object, or logSummary reports zero unknown blocks past a resolver that counted them.
+        AnvilDiagnostics effective =
+                settings.diagnostics == null ? new AnvilDiagnostics() : settings.diagnostics;
+
+        this.openRegionLimit = settings.openRegionLimit;
+        this.compressionLevel = settings.compressionLevel;
         this.regionDirectory = resolved.directory();
         this.legacyLayout = resolved.legacyLayout();
         this.dimensionLabel = dimension.asString();
-        this.diagnostics = new AnvilDiagnostics();
-        this.blockResolver = new BlockPaletteResolver(this.diagnostics);
-        this.biomeResolver = new BiomePaletteResolver(this.diagnostics);
+        this.diagnostics = effective;
+        this.blockResolver = settings.blockResolver == null
+                ? new BlockPaletteResolver(effective)
+                : settings.blockResolver;
+        this.biomeResolver = settings.biomeResolver == null
+                ? new BiomePaletteResolver(effective)
+                : settings.biomeResolver;
         this.regions = new ConcurrentHashMap<>();
         this.trackedChunks = new ConcurrentHashMap<>();
-        this.saveLimit = new Semaphore(Math.max(Runtime.getRuntime().availableProcessors(), 2));
-        this.dataVersion = MinecraftServer.DATA_VERSION;
+        this.saveLimit = new Semaphore(settings.saveParallelism);
+        this.dataVersion = settings.dataVersion;
+        this.exceptionHandler = settings.exceptionHandler;
         this.closeLock = new ReentrantLock();
 
         // Which directory was chosen, and how many region files are in it, is the first thing
@@ -185,6 +220,265 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                 describeRegionFileCount(this.regionDirectory),
                 this.dimensionLabel
         );
+    }
+
+    /**
+     * Reports a failure to the configured sink, or to the exception manager of the server.
+     * <p>
+     * The default is resolved here rather than when the loader is built, because
+     * {@code MinecraftServer.getExceptionManager()} needs a server process which a loader may well
+     * outlive on both ends — a tool that reads a world without ever starting a server has none at
+     * all, and would get a null pointer instead of its actual failure.
+     * </p>
+     *
+     * @param exception the failure to report
+     */
+    private void reportException(Throwable exception) {
+        if (this.exceptionHandler == null) {
+            MinecraftServer.getExceptionManager().handleException(exception);
+            return;
+        }
+        this.exceptionHandler.accept(exception);
+    }
+
+    /**
+     * Returns a builder for a loader whose defaults are those of the constructors.
+     * <p>
+     * The builder reaches the values the constructors set for themselves — the compression level,
+     * the diagnostics, both palette resolvers, the save parallelism and the data version. The world
+     * directory and the dimension are not among them: they are required, so they sit in
+     * {@link Builder#build(Path, Key)} rather than in a slot.
+     * </p>
+     *
+     * @return a new builder with the defaults of the constructors
+     */
+    @Contract(value = "-> new", pure = true)
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /**
+     * Collects the values of a loader before it is built.
+     * <p>
+     * <b>Not thread-safe.</b> A builder belongs to the thread that configures it; the loaders it
+     * produces are the thread-safe objects. Nothing here is published across threads, and nothing
+     * here needs to be.
+     * </p>
+     * <p>
+     * The builder can be reused. {@link #build(Path, Key)} may be called any number of times and
+     * returns an independent loader every time, which is what a caller opening the same world for
+     * several dimensions needs. Two properties follow from that and are stated on the slots
+     * concerned: the diagnostics default to a <em>new</em> instance per {@code build}, and
+     * {@link #saveParallelism(int)} applies per loader, so three loaders from one builder with
+     * {@code saveParallelism(4)} perform twelve concurrent saves and not four.
+     * </p>
+     * <p>
+     * Slots which take a bounded number check it immediately rather than in {@code build}. A wrong
+     * compression level does not fail construction: {@code saveChunk} catches the exception and
+     * swallows it with a log line, so the world would silently stop being written.
+     * </p>
+     * <p>
+     * This type is experimental, like everything else in this package.
+     * </p>
+     *
+     * @author TheMeinerLP
+     * @version 1.0.0
+     * @since 0.4.0
+     */
+    @ApiStatus.Experimental
+    public static final class Builder {
+
+        private int openRegionLimit = DEFAULT_OPEN_REGION_LIMIT;
+        private int compressionLevel = ChunkCompression.DEFAULT_LEVEL;
+        private int saveParallelism = Math.max(Runtime.getRuntime().availableProcessors(), 2);
+        private int dataVersion = MinecraftServer.DATA_VERSION;
+        private @Nullable AnvilDiagnostics diagnostics;
+        private @Nullable PaletteEntryResolver blockResolver;
+        private @Nullable PaletteEntryResolver biomeResolver;
+        private @Nullable Consumer<Throwable> exceptionHandler;
+
+        private Builder() {
+        }
+
+        /**
+         * Sets how many region files the loader keeps open.
+         * <p>
+         * A region file is normally closed as soon as every chunk taken from it has been unloaded.
+         * The limit is the second line of defence for the case that unload calls never arrive.
+         * </p>
+         *
+         * @param openRegionLimit the amount of region files the loader keeps open
+         * @return this builder
+         * @throws IllegalArgumentException if the limit is not positive
+         */
+        @Contract(value = "_ -> this", mutates = "this")
+        public Builder openRegionLimit(int openRegionLimit) {
+            if (openRegionLimit <= 0) {
+                throw new IllegalArgumentException("The amount of open region files must be positive but was " + openRegionLimit);
+            }
+            this.openRegionLimit = openRegionLimit;
+            return this;
+        }
+
+        /**
+         * Sets the deflate level the loader writes chunks with.
+         * <p>
+         * The default is {@link ChunkCompression#DEFAULT_LEVEL}. A caller who writes a world once
+         * and reads it often is the reason this slot exists — a higher level costs write time and
+         * saves read time for the entire life of the world.
+         * </p>
+         *
+         * @param compressionLevel the deflate level between {@link ChunkCompression#FASTEST_LEVEL}
+         *                         and {@link ChunkCompression#SMALLEST_LEVEL}
+         * @return this builder
+         * @throws IllegalArgumentException if the level is outside the supported range
+         */
+        @Contract(value = "_ -> this", mutates = "this")
+        public Builder compressionLevel(int compressionLevel) {
+            if (compressionLevel < ChunkCompression.FASTEST_LEVEL || compressionLevel > ChunkCompression.SMALLEST_LEVEL) {
+                throw new IllegalArgumentException("The compression level has to be between "
+                        + ChunkCompression.FASTEST_LEVEL + " and " + ChunkCompression.SMALLEST_LEVEL
+                        + " but was " + compressionLevel);
+            }
+            this.compressionLevel = compressionLevel;
+            return this;
+        }
+
+        /**
+         * Sets how many chunks the loader saves at the same time.
+         * <p>
+         * The bound belongs to one loader. Several loaders from one builder each get their own, so
+         * the concurrent saves of a server are this number times the amount of loaders.
+         * </p>
+         *
+         * @param saveParallelism the amount of chunks saved concurrently by one loader
+         * @return this builder
+         * @throws IllegalArgumentException if the amount is smaller than one
+         */
+        @Contract(value = "_ -> this", mutates = "this")
+        public Builder saveParallelism(int saveParallelism) {
+            if (saveParallelism < 1) {
+                throw new IllegalArgumentException("A loader has to be able to save at least one chunk at a time but the bound was " + saveParallelism);
+            }
+            this.saveParallelism = saveParallelism;
+            return this;
+        }
+
+        /**
+         * Sets the data version the loader stamps onto the chunks it writes.
+         * <p>
+         * The default is the data version of the Minestom that Falco was compiled against, which is
+         * inlined by the compiler and is therefore not necessarily the one the caller runs against.
+         * This slot is the only way to write a world for a divergent Minestom.
+         * </p>
+         *
+         * @param dataVersion the data version written into every saved chunk
+         * @return this builder
+         */
+        @Contract(value = "_ -> this", mutates = "this")
+        public Builder dataVersion(int dataVersion) {
+            this.dataVersion = dataVersion;
+            return this;
+        }
+
+        /**
+         * Sets the diagnostics the loader counts into.
+         * <p>
+         * Without this slot every {@link #build(Path, Key)} creates its own instance, which is what
+         * keeps two loaders from sharing their counters <em>and</em> the throttles of their
+         * warnings — one world would stop being warned about because another had used the warning
+         * up. Pass one instance here to deliberately collect several loaders into one place.
+         * </p>
+         * <p>
+         * The default resolvers are created from whichever diagnostics are effective, so the order
+         * of the calls on this builder does not matter.
+         * </p>
+         *
+         * @param diagnostics the diagnostics of the loader
+         * @return this builder
+         */
+        @Contract(value = "_ -> this", mutates = "this")
+        public Builder diagnostics(AnvilDiagnostics diagnostics) {
+            this.diagnostics = diagnostics;
+            return this;
+        }
+
+        /**
+         * Sets the resolver which turns block palette entries into state ids.
+         * <p>
+         * <b>A resolver of your own does not count into the diagnostics of the loader.</b> The
+         * default is created from the effective diagnostics; a foreign resolver counts wherever it
+         * was built to count, and the closing summary of the loader then reports zero unknown
+         * blocks although the resolver saw them. {@link PaletteEntryResolver} exposes no
+         * diagnostics, so this cannot be checked in {@code build}.
+         * </p>
+         *
+         * @param blockResolver the resolver for block palette entries
+         * @return this builder
+         */
+        @Contract(value = "_ -> this", mutates = "this")
+        public Builder blockResolver(PaletteEntryResolver blockResolver) {
+            this.blockResolver = blockResolver;
+            return this;
+        }
+
+        /**
+         * Sets the resolver which turns biome palette entries into ids.
+         * <p>
+         * The same caveat as {@link #blockResolver(PaletteEntryResolver)}: a resolver of your own
+         * counts past the diagnostics of the loader.
+         * </p>
+         *
+         * @param biomeResolver the resolver for biome palette entries
+         * @return this builder
+         */
+        @Contract(value = "_ -> this", mutates = "this")
+        public Builder biomeResolver(PaletteEntryResolver biomeResolver) {
+            this.biomeResolver = biomeResolver;
+            return this;
+        }
+
+        /**
+         * Sets where the loader reports the failures it survives.
+         * <p>
+         * This moves the sink, not the control flow: a chunk which cannot be read still throws
+         * afterwards, and a chunk which cannot be saved is still swallowed with a log line. The
+         * asymmetry is deliberate — a chunk reported as absent would be regenerated and would
+         * overwrite the real data.
+         * </p>
+         * <p>
+         * Beyond metrics, the slot has a hard reason. The default needs
+         * {@code MinecraftServer.getExceptionManager()}, which reads a field only
+         * {@code MinecraftServer.init()} sets; a loader used without a server process would die in
+         * its error path on a null pointer that hides the actual cause. Naming a sink here avoids
+         * that entirely.
+         * </p>
+         *
+         * @param exceptionHandler the sink which receives every reported failure
+         * @return this builder
+         */
+        @Contract(value = "_ -> this", mutates = "this")
+        public Builder exceptionHandler(Consumer<Throwable> exceptionHandler) {
+            this.exceptionHandler = exceptionHandler;
+            return this;
+        }
+
+        /**
+         * Builds a loader for the given world and dimension.
+         * <p>
+         * Both values are required, which is why they are parameters here and not slots. They are
+         * resolved to a region directory immediately and are not kept, so this is also the reason
+         * the builder offers no {@code copy}: a loader cannot say which world it came from.
+         * </p>
+         *
+         * @param worldRoot the root directory of the world
+         * @param dimension the key of the dimension the loader reads and writes
+         * @return a new loader, independent of every other loader from this builder
+         */
+        @Contract(value = "_, _ -> new", pure = true)
+        public FalcoAnvilLoader build(Path worldRoot, Key dimension) {
+            return new FalcoAnvilLoader(worldRoot, dimension, this);
+        }
     }
 
     /**
@@ -352,7 +646,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                 "Failed to load the chunk chunk=[{},{}] region={} dim={}",
                 chunkX, chunkZ, this.regionDirectory, this.dimensionLabel, exception
         );
-        MinecraftServer.getExceptionManager().handleException(exception);
+        reportException(exception);
         return new AnvilChunkException("The chunk " + chunkX + "/" + chunkZ + " could not be loaded", exception);
     }
 
@@ -396,7 +690,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     "Failed to save the chunk chunk=[{},{}] region={} dim={}",
                     chunkX, chunkZ, this.regionDirectory, this.dimensionLabel, exception
             );
-            MinecraftServer.getExceptionManager().handleException(exception);
+            reportException(exception);
         }
     }
 
@@ -1316,7 +1610,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             } catch (ExecutionException exception) {
                 this.diagnostics.countError();
                 LOGGER.error("Failed to save a group of chunks region={} dim={}", this.regionDirectory, this.dimensionLabel, exception.getCause());
-                MinecraftServer.getExceptionManager().handleException(exception.getCause());
+                reportException(exception.getCause());
             }
         }
     }
