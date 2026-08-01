@@ -167,6 +167,20 @@ Stage 4 rests on US-1.05 rather than on stage 3: a shared instance needs its blo
 `InstanceContainer` (§4.4), so the Falco chunk has to work inside one before a shared instance can be
 built over it. That is why US-1.05 is a Must and not the convenience it reads like.
 
+**Two corrections, made while planning stage 1.** Both were requirements placed in a stage that
+cannot satisfy them, and both moved rather than being weakened.
+
+*Combining the lifecycle with Falco's light* was a stage 1 story. The bridge alone does not achieve
+it, because `FalcoLightingChunk` still extends `DynamicChunk` and the combination needs the listener
+stage 3 introduces. It is now US-3.06.
+
+*Producing Minestom's types only at the boundary* was also a stage 1 story, and stage 1 does the
+opposite on purpose: its storage holds sections eagerly so that the chunk measures identical to
+`DynamicChunk` and the bridge is proven free before anything moves. Holding none is what the
+flyweight buys, so the requirement is now US-2.09.
+
+Stage 1 buys the seam the later stages need. It delivers no saving, and it must not appear to.
+
 ## 6. User stories
 
 ### Stage 1 — storage behind a bridge
@@ -174,9 +188,7 @@ built over it. That is why US-1.05 is a Must and not the convenience it reads li
 | ID | Story | Acceptance criterion (EARS) | API | Priority |
 |---|---|---|---|---|
 | US-1.01 | As a developer I want a chunk that owns its storage, so that its memory layout is mine to change | While a chunk is loaded, shall every block read and write reach `BlockStorage` rather than an inherited section list | `BlockStorage` | Must |
-| US-1.02 | As a developer I want the chunk combinable with Falco's light, so that I do not have to choose | When both the lifecycle and the light extension are installed, shall a single chunk instance serve both | `ChunkLifecycleListener` | Must |
 | US-1.03 | As a developer I want equivalence proven against `DynamicChunk`, so that a faster number never comes from computing something else | When a comparison benchmark starts, shall it verify all `16·16·16·sectionCount` positions and both heightmaps and abort the trial on any difference | `MinestomChunks#assertSameBlocks` | Must |
-| US-1.04 | As a developer I want Minestom's types produced only at the boundary, so that the saving is not undone internally | When `getSection` is called, shall the chunk materialise a Minestom `Section` and, while it is not called, shall it hold none | `Chunk#getSection` | Must |
 | US-1.05 | As an operator I want the chunk usable inside a plain `InstanceContainer`, so that shared worlds are possible at all | When `setChunkSupplier` is given the Falco chunk, shall a container load and unload it correctly | `InstanceContainer#setChunkSupplier` | Must |
 
 ### Stage 2 — the memory that §2 measured
@@ -190,6 +202,7 @@ built over it. That is why US-1.05 is a Must and not the convenience it reads li
 | US-2.05 | As a developer I want the flags packed | While a chunk exists, shall it hold at most one object carrying the per-section send flags | — | Should |
 | US-2.06 | As a developer I want the duplicate tickable map gone | When a block with a handler is placed or removed, shall exactly one map be updated | — | Should |
 | US-2.07 | As a developer I want reading an empty section to be no slower than today | When a read reaches a shared empty section, shall it return without touching a palette | `BlockStorage` | Must |
+| US-2.09 | As a developer I want Minestom's types produced only at the boundary, so that the saving is not undone internally | When `getSection` is called, shall the chunk materialise a Minestom `Section` and, while it is not called, shall it hold none for an empty section | `Chunk#getSection` | Must |
 | US-2.08 | As a developer I want the chunk `UUID` gone, since nothing reads it | While a chunk exists, shall it hold no identifier that no caller consumes | `Chunk#getIdentifier` | Could |
 
 ### Stage 3 — instance, structure and the leak
@@ -199,6 +212,7 @@ built over it. That is why US-1.05 is a Must and not the convenience it reads li
 | US-3.01 | As an operator I want unloading to leave nothing behind, so that a long-running server does not grow | When a chunk is unloaded, shall its viewer cache entry be removed | `EntityTracker#viewable` | Must |
 | US-3.02 | As a developer I want the instance split along its responsibilities, so that its steps can be tested one at a time | When a chunk is published, shall that step be reachable and assertable without driving a full load | `ChunkLifecycle` | Must |
 | US-3.03 | As a developer I want more than one lifecycle extension | When two listeners are registered, shall both be notified on every transition | `ChunkLifecycleListener` | Must |
+| US-3.06 | As a developer I want the chunk combinable with Falco's light, so that I do not have to choose | When both the lifecycle and the light extension are installed, shall a single chunk instance serve both | `ChunkLifecycleListener` | Must |
 | US-3.04 | As a developer I want no cost when nothing listens | While no listener is registered, shall a lifecycle transition allocate nothing | `ChunkLifecycleListener` | Should |
 | US-3.05 | As a developer I want the chunk index unboxed | When a chunk is looked up, shall no `Long` be allocated | — | Could |
 
