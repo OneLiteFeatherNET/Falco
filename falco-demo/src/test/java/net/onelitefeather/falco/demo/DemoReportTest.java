@@ -4,6 +4,7 @@ import net.kyori.adventure.key.Key;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -69,7 +70,7 @@ class DemoReportTest {
      * @return the rounds
      */
     private List<LoadMeasurement.Round> rounds(long[] millis) {
-        return java.util.Arrays.stream(millis)
+        return Arrays.stream(millis)
                 .mapToObj(value -> new LoadMeasurement.Round(value * 1_000_000L, 64))
                 .toList();
     }

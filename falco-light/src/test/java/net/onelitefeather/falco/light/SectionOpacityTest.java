@@ -4,6 +4,7 @@ import com.sun.management.ThreadMXBean;
 import org.junit.jupiter.api.Test;
 
 import java.lang.management.ManagementFactory;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -72,7 +73,7 @@ class SectionOpacityTest {
      */
     private static SectionOpacity uniformSection(int stateId) {
         int[] states = new int[LightNibbles.BLOCK_COUNT];
-        java.util.Arrays.fill(states, stateId);
+        Arrays.fill(states, stateId);
         return SectionOpacity.of(states, SOURCE);
     }
 
@@ -152,7 +153,7 @@ class SectionOpacityTest {
     @Test
     void testEveryDistinctStateIsResolvedOnlyOnce() {
         int[] states = new int[LightNibbles.BLOCK_COUNT];
-        java.util.Arrays.fill(states, STONE);
+        Arrays.fill(states, STONE);
         CountingSource counting = new CountingSource();
 
         SectionOpacity.of(states, counting);
@@ -339,7 +340,7 @@ class SectionOpacityTest {
     @Test
     void testAUniformSectionResolvesExactlyOneState() {
         int[] states = new int[LightNibbles.BLOCK_COUNT];
-        java.util.Arrays.fill(states, STONE);
+        Arrays.fill(states, STONE);
         CountingSource counting = new CountingSource();
 
         SectionOpacity.of(states, counting);

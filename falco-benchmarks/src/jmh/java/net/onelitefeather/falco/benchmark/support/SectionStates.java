@@ -1,5 +1,6 @@
 package net.onelitefeather.falco.benchmark.support;
 
+import java.util.Arrays;
 import java.util.Random;
 
 /**
@@ -34,7 +35,7 @@ public final class SectionStates {
      */
     public static int[] uniform(int entryCount, int stateId) {
         int[] values = new int[entryCount];
-        java.util.Arrays.fill(values, stateId);
+        Arrays.fill(values, stateId);
         return values;
     }
 
@@ -72,7 +73,7 @@ public final class SectionStates {
 
         while (index < entryCount) {
             int length = Math.min(1 + random.nextInt(runLength * 2), entryCount - index);
-            java.util.Arrays.fill(values, index, index + length, firstStateId + state);
+            Arrays.fill(values, index, index + length, firstStateId + state);
             index += length;
             state = (state + 1) % distinctStates;
         }

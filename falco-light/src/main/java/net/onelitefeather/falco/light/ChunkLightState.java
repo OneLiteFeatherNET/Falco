@@ -4,6 +4,7 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -130,7 +131,7 @@ public final class ChunkLightState {
      */
     private void ensureRoom(int tail) {
         if (tail == this.additionQueue.length) {
-            this.additionQueue = java.util.Arrays.copyOf(this.additionQueue, this.additionQueue.length * 2);
+            this.additionQueue = Arrays.copyOf(this.additionQueue, this.additionQueue.length * 2);
         }
     }
 
@@ -141,8 +142,8 @@ public final class ChunkLightState {
      */
     private void ensureRemovalRoom(int tail) {
         if (tail == this.removalQueue.length) {
-            this.removalQueue = java.util.Arrays.copyOf(this.removalQueue, this.removalQueue.length * 2);
-            this.removalLevels = java.util.Arrays.copyOf(this.removalLevels, this.removalLevels.length * 2);
+            this.removalQueue = Arrays.copyOf(this.removalQueue, this.removalQueue.length * 2);
+            this.removalLevels = Arrays.copyOf(this.removalLevels, this.removalLevels.length * 2);
         }
     }
 

@@ -29,6 +29,8 @@ import org.jetbrains.annotations.Nullable;
 @ApiStatus.Experimental
 public final class MinestomBlockLightSource implements BlockLightSource {
 
+    // Written out because this package holds a BlockFace of its own, which owns the simple name
+    // here. Importing the one of the server would not even compile against it.
     private static final net.minestom.server.instance.block.BlockFace[] SERVER_FACES =
             net.minestom.server.instance.block.BlockFace.values();
 

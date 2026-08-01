@@ -7,6 +7,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -88,9 +90,9 @@ class ChunkCompressionTest {
     @Test
     void testTheCompressionLevelCanBeChosen() throws IOException {
         byte[] payload = new byte[64 * 1024];
-        new java.util.Random(7).nextBytes(payload);
+        new Random(7).nextBytes(payload);
         // Half the array is compressible so the level actually has an effect.
-        java.util.Arrays.fill(payload, 0, payload.length / 2, (byte) 7);
+        Arrays.fill(payload, 0, payload.length / 2, (byte) 7);
 
         byte[] fast = ChunkCompression.ZLIB.compress(payload, ChunkCompression.FASTEST_LEVEL);
         byte[] balanced = ChunkCompression.ZLIB.compress(payload, ChunkCompression.DEFAULT_LEVEL);
