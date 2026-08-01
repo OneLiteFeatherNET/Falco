@@ -1,11 +1,15 @@
 package net.onelitefeather.falco.light;
 
+import com.sun.management.ThreadMXBean;
 import org.junit.jupiter.api.Test;
+
+import java.lang.management.ManagementFactory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.abort;
 
 /**
  * Tests the precomputed opacity table of a section. Resolving the properties of a block for every
@@ -223,7 +227,7 @@ class SectionOpacityTest {
         // over the blocks, which left one throwaway object per block behind. That is 4096 objects
         // for a table that keeps two arrays of 4096 bytes, and it showed up as a light engine which
         // scattered far more than the one of the server. The table must not allocate per block.
-        com.sun.management.ThreadMXBean threads = allocationCounter();
+        ThreadMXBean threads = allocationCounter();
         int[] states = new int[LightNibbles.BLOCK_COUNT];
 
         for (int index = 0; index < states.length; index++) {
@@ -250,15 +254,17 @@ class SectionOpacityTest {
      *
      * @return the bean of the running virtual machine
      */
-    private static com.sun.management.ThreadMXBean allocationCounter() {
-        java.lang.management.ThreadMXBean bean = java.lang.management.ManagementFactory.getThreadMXBean();
+    private static ThreadMXBean allocationCounter() {
+        // The platform interface carries the same simple name as the imported one and cannot be
+        // imported next to it. It is spelled out here because that is precisely the point: the
+        // factory hands back the platform bean, and only some virtual machines return one which
+        // also implements the extension below.
+        java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
 
-        if (bean instanceof com.sun.management.ThreadMXBean counter) {
+        if (bean instanceof ThreadMXBean counter) {
             return counter;
         }
-        return org.junit.jupiter.api.Assumptions.abort(
-                "the running virtual machine does not report the allocation of a thread"
-        );
+        return abort("the running virtual machine does not report the allocation of a thread");
     }
 
     /**
