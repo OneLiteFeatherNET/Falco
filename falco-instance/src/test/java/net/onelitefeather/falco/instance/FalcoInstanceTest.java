@@ -4,6 +4,7 @@ import net.minestom.server.coordinate.Pos;
 import net.minestom.server.entity.Player;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.DynamicChunk;
+import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.InstanceManager;
 import net.minestom.server.instance.block.Block;
 import net.minestom.server.world.DimensionType;
@@ -12,6 +13,8 @@ import net.minestom.testing.extension.MicrotusExtension;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 
@@ -148,6 +151,64 @@ class FalcoInstanceTest {
         // The generator path itself lives in FalcoInstanceGeneratorTest; this only pins that a world
         // without one is a world of air rather than a failure.
         assertNull(instance.generator());
+    }
+
+    /**
+     * A foreign chunk type is accepted once the caller says how to drive its lifecycle.
+     * <p>
+     * This is what keeps {@code FalcoInstance} and a lighting chunk from another module apart:
+     * {@code Chunk#onLoad()} and {@code Chunk#unload()} are {@code protected}, so this package can
+     * only reach them on a type it defined itself. A caller that owns both types can reach both, so
+     * the instance stops guessing and lets the caller connect them.
+     * </p>
+     */
+    @Test
+    void testAForeignChunkTypeIsAcceptedWithAConfiguredLifecycle(Env env) {
+        final FalcoInstance instance = registered(env);
+        final List<String> calls = new ArrayList<>();
+
+        instance.setChunkSupplier(ForeignChunk::new);
+        instance.setChunkLifecycle(
+                chunk -> {
+                    calls.add("loaded");
+                    ((ForeignChunk) chunk).markLoaded();
+                },
+                chunk -> {
+                    calls.add("unloaded");
+                    ((ForeignChunk) chunk).markUnloaded();
+                });
+
+        final Chunk loaded = instance.loadChunk(0, 0).join();
+
+        assertInstanceOf(ForeignChunk.class, loaded);
+        assertEquals(List.of("loaded"), calls);
+
+        instance.unloadChunk(loaded);
+
+        assertEquals(List.of("loaded", "unloaded"), calls);
+        assertNull(instance.getChunk(0, 0));
+    }
+
+    /**
+     * A chunk type this package cannot drive stands in for a lighting chunk from another module.
+     * <p>
+     * It exposes the two {@code protected} hooks the way {@code FalcoLightingChunk} does, which is
+     * exactly the shape a caller owning both modules connects with a configured lifecycle.
+     * </p>
+     */
+    private static final class ForeignChunk extends DynamicChunk {
+
+        private ForeignChunk(Instance instance, int chunkX, int chunkZ) {
+            super(instance, chunkX, chunkZ);
+        }
+
+        void markLoaded() {
+            onLoad();
+        }
+
+        void markUnloaded() {
+            unload();
+        }
     }
 
     @Test

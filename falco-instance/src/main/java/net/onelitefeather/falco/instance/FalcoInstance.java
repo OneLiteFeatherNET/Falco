@@ -17,6 +17,7 @@ import net.minestom.server.event.instance.InstanceChunkUnloadEvent;
 import net.minestom.server.event.player.PlayerBlockBreakEvent;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.ChunkLoader;
+import net.minestom.server.instance.DynamicChunk;
 import net.minestom.server.instance.EntityTracker;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.InstanceManager;
@@ -61,6 +62,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * The {@link FalcoInstance} class is a world of a Minestom server which cleans up after itself.
@@ -237,6 +239,29 @@ public class FalcoInstance extends Instance {
     private volatile long lastBlockChangeTime;
 
     /**
+     * How a chunk of this instance is told that it was loaded, or null for the built-in way.
+     * <p>
+     * {@code Chunk#onLoad()} and {@code Chunk#unload()} are {@code protected}, so this package can
+     * drive them only on {@link FalcoChunk}, a type it defines itself. A caller that owns another
+     * chunk type — a lighting chunk from {@code falco-light}, say — can reach both hooks and hands
+     * them over here. Null means the built-in pair, which requires a {@link FalcoChunk} exactly as
+     * before.
+     * </p>
+     * <p>
+     * Volatile for the same reason as {@link #chunkSupplier}: a caller object written by a public
+     * setter and read on the load path from another thread.
+     * </p>
+     */
+    private volatile @Nullable Consumer<Chunk> chunkLoaded;
+
+    /**
+     * How a chunk of this instance is told that it left, or null for the built-in way.
+     *
+     * @see #chunkLoaded
+     */
+    private volatile @Nullable Consumer<Chunk> chunkUnloaded;
+
+    /**
      * Creates an instance in the overworld dimension without a chunk loader.
      *
      * @param uuid          the unique id of the instance
@@ -361,7 +386,7 @@ public class FalcoInstance extends Instance {
             }
             chunk = loadChunk(CoordConversion.globalToChunk(x), CoordConversion.globalToChunk(z)).join();
         }
-        if (chunk.isLoaded()) writeBlock(requireFalcoChunk(chunk), x, y, z, block, null, null, doBlockUpdates, 0);
+        if (chunk.isLoaded()) writeBlock(requireManagedChunk(chunk), x, y, z, block, null, null, doBlockUpdates, 0);
     }
 
     @Override
@@ -369,7 +394,7 @@ public class FalcoInstance extends Instance {
         final Point blockPosition = placement.getBlockPosition();
         final Chunk chunk = getChunkAt(blockPosition);
         if (chunk == null || !chunk.isLoaded()) return false;
-        writeBlock(requireFalcoChunk(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(),
+        writeBlock(requireManagedChunk(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(),
                 placement.getBlock(), placement, null, doBlockUpdates, 0);
         return true;
     }
@@ -391,7 +416,7 @@ public class FalcoInstance extends Instance {
         if (event.isCancelled()) return false;
 
         final Block resultBlock = event.getResultBlock();
-        writeBlock(requireFalcoChunk(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(), resultBlock,
+        writeBlock(requireManagedChunk(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(), resultBlock,
                 null, new BlockHandler.PlayerDestroy(block, resultBlock, this, blockPosition, player),
                 doBlockUpdates, 0);
         PacketSendingUtils.sendGroupedPacket(chunk.getViewers(),
@@ -425,7 +450,7 @@ public class FalcoInstance extends Instance {
      * @param doBlockUpdates true to let the neighbours of the block reshape themselves
      * @param updateDistance how many neighbour updates deep this write already is
      */
-    private void writeBlock(FalcoChunk chunk, int x, int y, int z, Block block,
+    private void writeBlock(DynamicChunk chunk, int x, int y, int z, Block block,
                             @Nullable BlockHandler.Placement placement, @Nullable BlockHandler.Destroy destroy,
                             boolean doBlockUpdates, int updateDistance) {
         if (chunk.isReadOnly()) return;
@@ -512,7 +537,7 @@ public class FalcoInstance extends Instance {
             if (neighbour.equals(updated)) continue;
             final Chunk neighbourChunk = getChunkAt(neighbourPosition);
             if (neighbourChunk == null || !neighbourChunk.isLoaded()) continue;
-            writeBlock(requireFalcoChunk(neighbourChunk), neighbourX, neighbourY, neighbourZ, updated, null, null,
+            writeBlock(requireManagedChunk(neighbourChunk), neighbourX, neighbourY, neighbourZ, updated, null, null,
                     true, updateDistance + 1);
         }
     }
@@ -603,14 +628,14 @@ public class FalcoInstance extends Instance {
      * @param future the future handed to the callers waiting for this chunk
      */
     private void completeLoad(long index, int chunkX, int chunkZ, ChunkLoader loader, CompletableFuture<Chunk> future) {
-        final FalcoChunk falcoChunk;
+        final DynamicChunk falcoChunk;
         try {
             Chunk chunk = loader.loadChunk(this, chunkX, chunkZ);
             if (chunk == null) {
                 chunk = createChunk(chunkX, chunkZ);
                 chunk.onGenerate();
             }
-            falcoChunk = requireFalcoChunk(chunk);
+            falcoChunk = requireManagedChunk(chunk);
         } catch (Throwable throwable) {
             this.loadingChunks.remove(index, future);
             future.completeExceptionally(throwable);
@@ -620,13 +645,13 @@ public class FalcoInstance extends Instance {
             // The chunk was never part of this instance, so there is no map entry and no partition
             // to clean up. The loader is still told, because it created the chunk and may hold
             // bookkeeping for it, which its own documentation allows for explicitly.
-            falcoChunk.markUnloaded();
+            notifyUnloaded(falcoChunk);
             this.chunkLoader.unloadChunk(falcoChunk);
             future.completeExceptionally(new FalcoInstanceException("the chunk " + chunkX + ":" + chunkZ
                     + " was unloaded while it was being loaded, so the loaded chunk was discarded"));
             return;
         }
-        falcoChunk.markLoaded();
+        notifyLoaded(falcoChunk);
         future.complete(falcoChunk);
         EventDispatcher.call(new InstanceChunkLoadEvent(this, falcoChunk));
     }
@@ -650,7 +675,7 @@ public class FalcoInstance extends Instance {
      * @param future the future of this load, which has to still be the entry of the position
      * @return true if the chunk is now part of this instance, false if the load was claimed
      */
-    private boolean publishChunk(long index, FalcoChunk chunk, CompletableFuture<Chunk> future) {
+    private boolean publishChunk(long index, DynamicChunk chunk, CompletableFuture<Chunk> future) {
         final AtomicBoolean published = new AtomicBoolean();
         this.loadingChunks.compute(index, (_, running) -> {
             if (running != future) return running;
@@ -702,11 +727,48 @@ public class FalcoInstance extends Instance {
      * @throws FalcoInstanceException if the chunk is not a {@link FalcoChunk}
      */
     @Contract("_ -> param1")
-    private FalcoChunk requireFalcoChunk(Chunk chunk) {
-        if (chunk instanceof FalcoChunk falcoChunk) return falcoChunk;
-        throw new FalcoInstanceException("this instance only manages " + FalcoChunk.class.getName()
-                + ", but its chunk supplier produced a " + chunk.getClass().getName()
-                + "; the lifecycle hooks of any other chunk cannot be reached from this package");
+    private DynamicChunk requireManagedChunk(Chunk chunk) {
+        if (this.chunkLoaded == null || this.chunkUnloaded == null) {
+            if (chunk instanceof FalcoChunk falcoChunk) return falcoChunk;
+            throw new FalcoInstanceException("this instance only manages " + FalcoChunk.class.getName()
+                    + ", but its chunk supplier produced a " + chunk.getClass().getName()
+                    + "; the lifecycle hooks of any other chunk cannot be reached from this package."
+                    + " Configure setChunkLifecycle if you own the chunk type and can reach them");
+        }
+        if (chunk instanceof DynamicChunk dynamicChunk) return dynamicChunk;
+        throw new FalcoInstanceException("this instance manages subtypes of "
+                + DynamicChunk.class.getName() + ", but its chunk supplier produced a "
+                + chunk.getClass().getName());
+    }
+
+    /**
+     * Tells a chunk that it is now part of this instance.
+     *
+     * @param chunk the chunk which finished loading
+     */
+    private void notifyLoaded(DynamicChunk chunk) {
+        @Nullable Consumer<Chunk> configured = this.chunkLoaded;
+
+        if (configured == null) {
+            ((FalcoChunk) chunk).markLoaded();
+            return;
+        }
+        configured.accept(chunk);
+    }
+
+    /**
+     * Tells a chunk that it is no longer part of this instance.
+     *
+     * @param chunk the chunk which left the instance
+     */
+    private void notifyUnloaded(DynamicChunk chunk) {
+        @Nullable Consumer<Chunk> configured = this.chunkUnloaded;
+
+        if (configured == null) {
+            ((FalcoChunk) chunk).markUnloaded();
+            return;
+        }
+        configured.accept(chunk);
     }
 
     /**
@@ -737,14 +799,14 @@ public class FalcoInstance extends Instance {
     @Override
     public void unloadChunk(Chunk chunk) {
         if (!chunk.isLoaded()) return;
-        final FalcoChunk falcoChunk = requireFalcoChunk(chunk);
+        final DynamicChunk falcoChunk = requireManagedChunk(chunk);
         final int chunkX = falcoChunk.getChunkX();
         final int chunkZ = falcoChunk.getChunkZ();
         final long index = CoordConversion.chunkIndex(chunkX, chunkZ);
         final AtomicBoolean removed = new AtomicBoolean();
         this.loadingChunks.compute(index, (_, running) -> {
             if (this.chunks.remove(index, falcoChunk)) {
-                falcoChunk.markUnloaded();
+                notifyUnloaded(falcoChunk);
                 MinecraftServer.process().dispatcher().deletePartition(falcoChunk);
                 removed.set(true);
             }
@@ -822,6 +884,41 @@ public class FalcoInstance extends Instance {
     @Override
     public ChunkSupplier getChunkSupplier() {
         return this.chunkSupplier;
+    }
+
+    /**
+     * Says how a chunk of this instance is told that it was loaded and that it left.
+     * <p>
+     * Without this the instance manages {@link FalcoChunk} and nothing else, for a reason that is
+     * not a preference: {@code Chunk#onLoad()} and {@code Chunk#unload()} are {@code protected}, so
+     * this package can drive them only on a type it defines itself. A caller who owns another chunk
+     * type can reach both hooks and connects them here — which is how a chunk from another module,
+     * a lighting chunk for instance, becomes usable in this instance without either module having
+     * to know the other.
+     * </p>
+     * <pre>{@code
+     * instance.setChunkSupplier(scheduler.supplier());
+     * instance.setChunkLifecycle(
+     *         chunk -> ((FalcoLightingChunk) chunk).markLoaded(),
+     *         chunk -> ((FalcoLightingChunk) chunk).markUnloaded());
+     * }</pre>
+     * <p>
+     * Both halves are one call so the pair cannot be set half way. Set them before the first chunk
+     * is loaded; a chunk that was published under one lifecycle is not told about a later change.
+     * The instance stops checking for {@link FalcoChunk} from here on and requires only a
+     * {@code DynamicChunk}, so an unsuitable supplier now fails on the cast inside your own
+     * function rather than with a message from this class.
+     * </p>
+     *
+     * @param onLoaded   what tells a chunk that it is part of this instance
+     * @param onUnloaded what tells a chunk that it left this instance
+     * @throws NullPointerException if either half is null
+     */
+    public void setChunkLifecycle(Consumer<Chunk> onLoaded, Consumer<Chunk> onUnloaded) {
+        Objects.requireNonNull(onLoaded, "the loaded half of the lifecycle cannot be null");
+        Objects.requireNonNull(onUnloaded, "the unloaded half of the lifecycle cannot be null");
+        this.chunkLoaded = onLoaded;
+        this.chunkUnloaded = onUnloaded;
     }
 
     /**
