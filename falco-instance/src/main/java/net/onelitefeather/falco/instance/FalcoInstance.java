@@ -343,12 +343,7 @@ public class FalcoInstance extends Instance {
      * @param index the chunk index of the position whose load is claimed
      */
     private void discardRunningLoad(long index) {
-        final AtomicReference<CompletableFuture<Chunk>> claimed = new AtomicReference<>();
-        this.loadingChunks.compute(index, (key, running) -> {
-            claimed.set(running);
-            return null;
-        });
-        final CompletableFuture<Chunk> running = claimed.get();
+        final CompletableFuture<Chunk> running = this.loadingChunks.remove(index);
         if (running == null) return;
         running.completeExceptionally(new FalcoInstanceException("the chunk "
                 + CoordConversion.chunkIndexGetX(index) + ":" + CoordConversion.chunkIndexGetZ(index)
