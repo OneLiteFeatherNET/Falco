@@ -34,7 +34,7 @@ class NbtReadsTest {
         LongArrayBinaryTag tag = LongArrayBinaryTag.longArrayBinaryTag(1L, 2L, 3L, 4L);
         int visited = 0;
 
-        for (long ignored : tag) {
+        for (long _ : tag) {
             visited++;
         }
 

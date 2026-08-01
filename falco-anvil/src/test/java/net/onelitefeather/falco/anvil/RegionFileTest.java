@@ -48,7 +48,7 @@ class RegionFileTest extends FileTestBase {
 
     @Test
     void testOpeningAMissingFileCreatesTheHeader() throws IOException {
-        try (RegionFile ignored = RegionFile.open(regionPath())) {
+        try (RegionFile _ = RegionFile.open(regionPath())) {
             assertTrue(Files.exists(regionPath()));
         }
         assertEquals(RegionConstants.HEADER_SIZE, Files.size(regionPath()));

@@ -95,7 +95,7 @@ public final class MinestomBlockLightSource implements BlockLightSource {
 
         try {
             return Block.fromStateId(stateId);
-        } catch (IndexOutOfBoundsException exception) {
+        } catch (IndexOutOfBoundsException _) {
             return null;
         }
     }

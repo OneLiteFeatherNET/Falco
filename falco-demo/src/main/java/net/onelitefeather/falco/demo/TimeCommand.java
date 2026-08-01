@@ -112,7 +112,7 @@ final class TimeCommand extends Command {
         // give the completion a restriction would have given, without taking the error message
         // away.
         ArgumentWord name = ArgumentType.Word("name");
-        name.setSuggestionCallback((sender, context, suggestion) -> {
+        name.setSuggestionCallback((_, _, suggestion) -> {
             for (String word : words()) {
                 suggestion.addEntry(new SuggestionEntry(word));
             }
@@ -120,7 +120,7 @@ final class TimeCommand extends Command {
 
         ArgumentLong ticks = ArgumentType.Long("ticks");
 
-        setDefaultExecutor((sender, context) -> read(sender, instance));
+        setDefaultExecutor((sender, _) -> read(sender, instance));
         addSyntax((sender, context) -> apply(sender, instance, context.get(name)), name);
         addSyntax((sender, context) -> set(sender, instance, context.get(ticks)), ArgumentType.Literal(SET), ticks);
     }

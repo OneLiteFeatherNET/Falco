@@ -420,7 +420,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     RegionConstants.chunkToRegion(chunk.getChunkX()),
                     RegionConstants.chunkToRegion(chunk.getChunkZ())
             );
-            grouped.computeIfAbsent(region, ignored -> new ArrayList<>()).add(chunk);
+            grouped.computeIfAbsent(region, _ -> new ArrayList<>()).add(chunk);
         }
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -575,7 +575,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      */
     private void trackChunk(int chunkX, int chunkZ) {
         this.trackedChunks
-                .computeIfAbsent(regionIndex(chunkX, chunkZ), ignored -> ConcurrentHashMap.newKeySet())
+                .computeIfAbsent(regionIndex(chunkX, chunkZ), _ -> ConcurrentHashMap.newKeySet())
                 .add(CoordConversion.chunkIndex(chunkX, chunkZ));
     }
 

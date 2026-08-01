@@ -161,7 +161,7 @@ class FalcoAnvilLoaderLifecycleTest {
         CountDownLatch running = new CountDownLatch(regionCount);
         FalcoAnvilLoader loader = loader();
         ExceptionHandler previous = MinecraftServer.getExceptionManager().getExceptionHandler();
-        MinecraftServer.getExceptionManager().setExceptionHandler(ignored -> {
+        MinecraftServer.getExceptionManager().setExceptionHandler(_ -> {
         });
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {

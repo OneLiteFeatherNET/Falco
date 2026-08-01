@@ -140,7 +140,7 @@ public final class ChunkLightArea {
     /**
      * A caller which wants every chunk of the area written back.
      */
-    private static final Predicate<ChunkArea> ALWAYS = area -> true;
+    private static final Predicate<ChunkArea> ALWAYS = _ -> true;
 
     private final ChunkLightService service;
     private final Map<ChunkArea, Kept> kept;
@@ -197,7 +197,7 @@ public final class ChunkLightArea {
                     "The position " + x + "/" + columnY + "/" + z + " is not inside a chunk column"
             );
         }
-        this.kept.computeIfAbsent(position, key -> new Kept()).changes().add((columnY << 8) | (z << 4) | x);
+        this.kept.computeIfAbsent(position, _ -> new Kept()).changes().add((columnY << 8) | (z << 4) | x);
     }
 
     /**
@@ -565,7 +565,7 @@ public final class ChunkLightArea {
             forget(position);
             return;
         }
-        this.kept.computeIfAbsent(position, key -> new Kept()).store(solo, sky);
+        this.kept.computeIfAbsent(position, _ -> new Kept()).store(solo, sky);
     }
 
     /**

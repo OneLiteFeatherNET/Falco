@@ -174,7 +174,7 @@ public class RegionFileComparisonBenchmark {
             entries.sorted(Comparator.reverseOrder()).forEach(path -> {
                 try {
                     Files.deleteIfExists(path);
-                } catch (IOException ignored) {
+                } catch (IOException _) {
                     // A leftover file in the temporary directory does not invalidate a measurement.
                 }
             });

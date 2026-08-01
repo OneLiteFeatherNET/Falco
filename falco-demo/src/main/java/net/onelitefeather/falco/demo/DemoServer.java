@@ -340,7 +340,7 @@ public final class DemoServer {
     ) {
         Command command = new Command("falco", "demo");
 
-        command.setDefaultExecutor((sender, context) -> {
+        command.setDefaultExecutor((sender, _) -> {
             List<String> lines = LiveStatusLine.details(
                     options.stack(),
                     latest.get(),

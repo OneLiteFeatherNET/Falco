@@ -124,7 +124,7 @@ public record PaletteData(int[] palette, long @Nullable [] packed, int bitsPerEn
         int[] mapped = new int[values.length];
 
         for (int i = 0; i < values.length; i++) {
-            mapped[i] = indices.computeIfAbsent(values[i], ignored -> indices.size());
+            mapped[i] = indices.computeIfAbsent(values[i], _ -> indices.size());
         }
 
         int[] palette = new int[indices.size()];

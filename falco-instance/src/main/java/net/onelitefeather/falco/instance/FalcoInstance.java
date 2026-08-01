@@ -563,7 +563,7 @@ public class FalcoInstance extends Instance {
 
         final CompletableFuture<Chunk> own = new CompletableFuture<>();
         final AtomicReference<Chunk> published = new AtomicReference<>();
-        final CompletableFuture<Chunk> slot = this.loadingChunks.compute(index, (key, running) -> {
+        final CompletableFuture<Chunk> slot = this.loadingChunks.compute(index, (_, running) -> {
             if (running != null) return running;
             final Chunk cached = this.chunks.get(index);
             if (cached != null) {
@@ -652,7 +652,7 @@ public class FalcoInstance extends Instance {
      */
     private boolean publishChunk(long index, FalcoChunk chunk, CompletableFuture<Chunk> future) {
         final AtomicBoolean published = new AtomicBoolean();
-        this.loadingChunks.compute(index, (key, running) -> {
+        this.loadingChunks.compute(index, (_, running) -> {
             if (running != future) return running;
             this.chunks.put(index, chunk);
             MinecraftServer.process().dispatcher().createPartition(chunk);
@@ -742,7 +742,7 @@ public class FalcoInstance extends Instance {
         final int chunkZ = falcoChunk.getChunkZ();
         final long index = CoordConversion.chunkIndex(chunkX, chunkZ);
         final AtomicBoolean removed = new AtomicBoolean();
-        this.loadingChunks.compute(index, (key, running) -> {
+        this.loadingChunks.compute(index, (_, running) -> {
             if (this.chunks.remove(index, falcoChunk)) {
                 falcoChunk.markUnloaded();
                 MinecraftServer.process().dispatcher().deletePartition(falcoChunk);
@@ -1024,7 +1024,7 @@ public class FalcoInstance extends Instance {
                     target.sendChunk();
                     continue;
                 }
-                this.generationForks.compute(CoordConversion.chunkIndex(start), (key, modifiers) -> {
+                this.generationForks.compute(CoordConversion.chunkIndex(start), (_, modifiers) -> {
                     final List<GeneratorImpl.SectionModifierImpl> pending =
                             modifiers == null ? new ArrayList<>() : modifiers;
                     pending.add(modifier);
@@ -1041,7 +1041,7 @@ public class FalcoInstance extends Instance {
      */
     private void applyPendingForks(Chunk chunk) {
         final long index = CoordConversion.chunkIndex(chunk.getChunkX(), chunk.getChunkZ());
-        this.generationForks.compute(index, (key, modifiers) -> {
+        this.generationForks.compute(index, (_, modifiers) -> {
             if (modifiers != null) {
                 for (GeneratorImpl.SectionModifierImpl modifier : modifiers) applyFork(chunk, modifier);
             }
