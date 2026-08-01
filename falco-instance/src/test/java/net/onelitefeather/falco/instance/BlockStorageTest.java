@@ -3,6 +3,7 @@ package net.onelitefeather.falco.instance;
 import net.kyori.adventure.key.Key;
 import net.minestom.server.MinecraftServer;
 import net.minestom.server.coordinate.CoordConversion;
+import net.minestom.server.instance.Section;
 import net.minestom.server.instance.block.Block;
 import net.minestom.server.registry.RegistryKey;
 import net.minestom.server.world.biome.Biome;
@@ -12,11 +13,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -270,5 +275,50 @@ class BlockStorageTest {
         final BlockStorage storage = storage();
 
         assertThrows(RuntimeException.class, () -> storage.setBlock(x, 20, z, Block.STONE));
+    }
+
+    @Test
+    @DisplayName("reports every section as materialised when it holds one of its own")
+    void testEagerStorageSharesNothing() {
+        final BlockStorage storage = storage();
+
+        assertEquals(SECTIONS, storage.materialisedSections());
+        for (int section = 0; section < SECTIONS; section++) {
+            assertFalse(storage.shared(section),
+                    "section " + section + " of an eager storage cannot be shared");
+        }
+    }
+
+    @Test
+    @DisplayName("hands out the same section through the view as through the boundary")
+    void testViewAndSectionAgree() {
+        final BlockStorage storage = storage();
+
+        storage.setBlock(1, 2, 3, Block.STONE);
+
+        assertSame(storage.section(0), storage.view(0),
+                "an eager storage has nothing to materialise, so the two accessors are one");
+        assertEquals(SECTIONS, storage.views().size());
+        for (int section = 0; section < SECTIONS; section++) {
+            assertSame(storage.sections().get(section), storage.views().get(section),
+                    "the view of section " + section + " has to be the section itself");
+        }
+    }
+
+    @Test
+    @DisplayName("keeps the view in step with what was written after it was handed out")
+    void testViewFollowsLaterWrites() {
+        final BlockStorage storage = storage();
+        final List<Section> views = storage.views();
+
+        // y = 2 lands in section 4 of this fixture (MIN_SECTION = -4), the same section
+        // testHeightSelectsItsSection pins for y = 0. See the concern in task-1-report.md: the
+        // brief's version of this test read views.get(0), which is only the section a write to
+        // y = 2 would land in for a storage whose bottom section is 0, not -4.
+        storage.setBlock(1, 2, 3, Block.STONE);
+
+        assertEquals(Block.STONE.stateId(), views.get(4).blockPalette().get(1, 2, 3),
+                "a view that was taken before a write has to show the write, or a caller which "
+                        + "holds one is reading a chunk that no longer exists");
     }
 }

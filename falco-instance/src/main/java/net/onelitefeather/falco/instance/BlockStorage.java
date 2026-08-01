@@ -44,8 +44,19 @@ import java.util.List;
  * {@code Chunk#lockWriteLock()} and {@code Chunk#lockReadLock()} provide.
  * </p>
  *
+ * <h2>Two ways to reach a section, and why that is not one too many</h2>
+ * <p>
+ * {@link #section(int)} and {@link #sections()} answer {@code Chunk#getSection(int)} and
+ * {@code Chunk#getSections()}, which are public methods of Minestom that hand a {@code Section} to
+ * an arbitrary caller. A storage cannot know whether such a caller reads or writes, so those two
+ * have to produce a section the chunk owns. {@link #view(int)} and {@link #views()} are for the
+ * chunk itself, which does know: its packet builder, its light data builder and its heightmap scan
+ * only read. Without the second pair a lazy layout would be undone from inside the very class that
+ * chose it, on the first packet a chunk sends.
+ * </p>
+ *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 2.0.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -142,6 +153,76 @@ public interface BlockStorage {
      * @return the amount of sections
      */
     int sectionCount();
+
+    /**
+     * Hands out one section of this storage as it stands, without creating one.
+     * <p>
+     * This is the read-only counterpart of {@link #section(int)} and the difference between the two
+     * is the whole economy of a lazy layout. {@link #section(int)} exists to answer
+     * {@code Chunk#getSection(int)}, which gives a {@code Section} to a caller this storage knows
+     * nothing about — a chunk loader, the light engine of Minestom, the generator of an
+     * {@code InstanceContainer} — and every one of those may write into it, so the slot has to hold a
+     * section of its own before it is handed over. This method promises the opposite: the caller only
+     * reads, so an implementation which shares one section between every empty slot may hand that
+     * shared section out instead of creating a private one.
+     * </p>
+     * <p>
+     * The contract that comes with it is therefore sharp, and violating it corrupts more than one
+     * chunk: <strong>the returned section must not be written to</strong>, neither through its
+     * palettes nor through its light carriers, and it must not be kept beyond the call. A write
+     * through a shared section is not a write to this chunk, it is a write to every chunk in the
+     * process whose slot at that height happens to be empty.
+     * </p>
+     * <p>
+     * The section a view answers with is always the one the storage currently holds, so a view taken
+     * before a write shows the write. An implementation must not answer from a snapshot.
+     * </p>
+     *
+     * @param section the index of the section, counted from the bottom one
+     * @return the section as it stands, which may be shared with other chunks
+     */
+    Section view(int section);
+
+    /**
+     * Hands out the sections of this storage as they stand, without creating any.
+     * <p>
+     * The same contract as {@link #view(int)}, over the whole chunk: read only, do not keep, and
+     * expect a shared section wherever the chunk holds nothing. An implementation is expected to
+     * answer with a list it owns rather than with a fresh one, because this is the method the packet
+     * builder of a chunk walks, and a list allocated per send is a cost this stage exists to remove
+     * rather than to add.
+     * </p>
+     *
+     * @return the sections as they stand, from the bottom one upwards
+     */
+    List<Section> views();
+
+    /**
+     * Reports whether a section is still shared with other chunks rather than owned by this one.
+     * <p>
+     * The question a caller which is about to write needs answered without triggering the write it is
+     * asking about. {@code FalcoInstance} uses it to decide whether a generated section is worth
+     * committing at all, and the tests of this stage use it to prove that a saving happened rather
+     * than assuming it.
+     * </p>
+     *
+     * @param section the index of the section, counted from the bottom one
+     * @return whether the slot still points at a section this storage does not own
+     */
+    boolean shared(int section);
+
+    /**
+     * Reports how many sections this storage owns rather than shares.
+     * <p>
+     * The one number that makes the whole stage assertable. Every claim about a saving is a claim
+     * about this counter, and every boundary method that materialises raises it, so a test can state
+     * exactly what a chunk send, a generator run or a save costs instead of estimating it.
+     * </p>
+     *
+     * @return the amount of sections this storage holds of its own, between zero and
+     *         {@link #sectionCount()}
+     */
+    int materialisedSections();
 
     /**
      * Creates a storage holding the same blocks and biomes as this one, sharing nothing with it.

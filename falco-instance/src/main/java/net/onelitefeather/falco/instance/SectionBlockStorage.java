@@ -70,9 +70,17 @@ import java.util.Objects;
  * about the current registry rather than on the signature of the method it calls is a promise that
  * breaks silently and elsewhere.
  * </p>
+ * <p>
+ * The four members that exist for a lazy layout are constant answers in this one. Every section is
+ * allocated in the constructor, so nothing is ever shared and nothing is ever materialised: a view
+ * is the section, {@code shared} is always false and {@code materialisedSections} is the section
+ * count. That is not a stub — it is what makes this class usable as the eager control in every
+ * comparison of the next stage, and it is why the same interface can describe both layouts without
+ * either of them carrying a flag about which one it is.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -163,6 +171,26 @@ public final class SectionBlockStorage implements BlockStorage {
 
     @Override
     public int sectionCount() {
+        return this.sections.size();
+    }
+
+    @Override
+    public Section view(int section) {
+        return section(section);
+    }
+
+    @Override
+    public List<Section> views() {
+        return this.sections;
+    }
+
+    @Override
+    public boolean shared(int section) {
+        return false;
+    }
+
+    @Override
+    public int materialisedSections() {
         return this.sections.size();
     }
 
