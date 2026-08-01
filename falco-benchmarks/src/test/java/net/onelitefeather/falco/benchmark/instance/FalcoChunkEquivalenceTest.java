@@ -35,12 +35,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * operation {@link ChunkComparisonBenchmark} measures, so the control of that benchmark also falls
  * during an ordinary {@code ./gradlew check} instead of only during a JMH run.
  * <p>
- * {@code FalcoChunk} extends {@code DynamicChunk}, adds no field and overrides nothing but
- * {@code copy} and two widened lifecycle hooks. The equality this test asserts is therefore not a
- * hopeful property of two independent implementations but a structural consequence of the
- * inheritance, and that is exactly why it is worth a test: the moment it stops holding, either the
- * inheritance changed or the fixture stopped building the two sides equally, and both of those turn
- * every comparison this module publishes into a comparison of two different things.
+ * This test was written while {@code FalcoChunk} still extended {@code DynamicChunk}, added no
+ * field and overrode nothing but {@code copy} and two widened lifecycle hooks. The equality it
+ * asserts was a structural consequence of that inheritance, and the test existed to catch the day
+ * the structure changed. That day has come: since stage 1 of the block storage work
+ * {@code FalcoChunk} extends {@code Chunk}, keeps its blocks behind a {@code BlockStorage} field
+ * and overrides {@code setBlock}, {@code getBlock} and both heightmap accessors itself.
+ * </p>
+ * <p>
+ * The change makes this file more important, not less. The equality is now a property of two
+ * implementations that no longer share a line of code — {@code SectionBlockStorage} reproduces the
+ * layout of {@code DynamicChunk} on purpose, but reproducing it is a claim somebody has to check
+ * rather than something the compiler can enforce. Every comparison this module publishes rests on
+ * that claim, so it is asserted here position by position and heightmap by heightmap instead of
+ * being inferred from a class hierarchy that no longer exists.
  * </p>
  * <p>
  * The benchmark takes the same check in its {@code @Setup} and aborts the trial when it fails. That
@@ -87,7 +95,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * }</pre>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 class FalcoChunkEquivalenceTest {
@@ -162,6 +170,8 @@ class FalcoChunkEquivalenceTest {
 
         // The arms have to be two different types before anything else is worth asserting; a
         // comparison of a type against itself would pass every check below without measuring one.
+        // The two are siblings under Chunk since stage 1, so the first assertion already excludes a
+        // FalcoChunk; the second stays because it names what is being excluded and why.
         assertInstanceOf(DynamicChunk.class, minestomChunk);
         assertFalse(minestomChunk instanceof FalcoChunk,
                 "the container has to hand out a plain DynamicChunk, otherwise the two arms are one");

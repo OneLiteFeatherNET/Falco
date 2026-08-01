@@ -34,15 +34,35 @@ import java.util.concurrent.TimeUnit;
  * Minestom on the four operations a chunk spends its life in, and it is the control that decides
  * whether every other chunk measurement of this module means anything.
  * <p>
- * {@code FalcoChunk} extends {@code DynamicChunk}, declares no field of its own and overrides
- * neither {@code setBlock} nor {@code getBlock} nor the heightmaps. The two arms of this benchmark
- * therefore execute the same bytecode on the same data, and the expected result is not "Falco is
- * faster" but "the two sides are indistinguishable". That is precisely what makes the class
- * valuable: it is the only measurement in this module whose correct answer is known in advance, so
- * a difference between its arms is never a finding about a chunk — it is a defect in the harness,
- * in the fixture or in the way the operations are driven, and it has to surface here rather than
- * later, when a prototype with its own storage runs against the same scaffolding and any harness
- * bias would be read as a property of the prototype.
+ * The expected result is not "Falco is faster" but "the two sides are indistinguishable", and that
+ * is what makes the class valuable: it is the only measurement in this module whose correct answer
+ * is known in advance, so a bias of the harness has to surface here rather than later, when a
+ * prototype with its own storage runs against the same scaffolding and the bias would be read as a
+ * property of the prototype.
+ * </p>
+ * <p>
+ * Why that answer is known in advance changed with stage 1 of the block storage work, and the change
+ * is worth stating precisely. {@code FalcoChunk} used to extend {@code DynamicChunk}, declare no
+ * field of its own and override neither {@code setBlock} nor {@code getBlock} nor the heightmaps, so
+ * the two arms executed the same bytecode and their equality was a fact about the class hierarchy.
+ * Today it extends {@code Chunk}, holds a {@code BlockStorage} field and overrides all four. The
+ * bodies of those overrides are the bodies of {@code DynamicChunk} with the palette access moved
+ * behind the field, and the storage this benchmark runs on, {@code SectionBlockStorage}, is
+ * deliberately the layout {@code DynamicChunk} has: one {@code Section} per sixteen blocks of
+ * height, allocated eagerly. The two arms therefore still do the same work on the same data, but
+ * that is now a property somebody maintains rather than one the compiler enforces.
+ * </p>
+ * <p>
+ * What follows for a reader of these numbers is that a difference between the arms is no longer
+ * automatically a defect in the harness. It can still be one, and it can now equally be a finding
+ * about the chunk — that the seam costs time — and the two have to be told apart before either is
+ * reported. Two other measurements are what make that possible.
+ * {@code FalcoChunkEquivalenceTest} shows that both sides hold the same blocks and the same
+ * heightmaps after exactly these operations, so a difference is not a difference in content, and
+ * {@code ChunkFootprintTest} shows that the seam costs one object and 24 bytes per chunk and nothing
+ * per block, so a difference that grows with the chunk is not the seam. Neither of them would notice
+ * a harness that drives the two arms differently, which is why the checks below still exist and
+ * still abort the trial.
  * </p>
  * <p>
  * The class deliberately does not live in {@code net.minestom.server.instance}. Two benchmarks of
@@ -234,7 +254,7 @@ import java.util.concurrent.TimeUnit;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @State(Scope.Thread)
@@ -741,11 +761,19 @@ public class ChunkComparisonBenchmark {
      * two arms that agree perfectly. That is the one failure this benchmark could not survive
      * undetected, because agreement is exactly the result it expects.
      * </p>
+     * <p>
+     * The Minestom arm used to carry a second clause, {@code || minestomChunk instanceof FalcoChunk},
+     * and it was load bearing while {@code FalcoChunk} extended {@code DynamicChunk}: a Falco chunk
+     * passed the first check back then. Since stage 1 of the block storage work the two are
+     * siblings under {@code Chunk}, so no object can satisfy both tests and the clause could never
+     * fire again. It is gone rather than kept as insurance, because a check that cannot fail reads
+     * like a check that does.
+     * </p>
      *
      * @throws IllegalStateException if either chunk is not of the type its arm claims to measure
      */
     private void verifyArms() {
-        if (!(this.minestomChunk instanceof DynamicChunk) || this.minestomChunk instanceof FalcoChunk) {
+        if (!(this.minestomChunk instanceof DynamicChunk)) {
             throw new IllegalStateException("The Minestom arm has to measure a plain DynamicChunk but the"
                     + " container handed out a " + this.minestomChunk.getClass().getName());
         }
