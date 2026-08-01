@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Read [`docs/benchmarks.md`](https://github.com/OneLiteFeatherNET/Falco/blob/main/docs/benchmarks.md)
+        **Read [Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking)
         before filing this.** Every number this project publishes comes from a JMH benchmark in
         `falco-benchmarks`, and the conditions are published next to it. A number without its
         methodology cannot be compared with one that has it, so this form asks for the methodology
@@ -86,7 +86,7 @@ body:
     id: idle
     attributes:
       label: "Was the machine otherwise idle during the run?"
-      description: "Answer honestly — the figures in `STATUS.md` were taken on a machine that was not, and say so."
+      description: "Answer honestly — the figures in Project Status were taken on a machine that was not, and say so."
       options:
         - "Yes, nothing else was running"
         - "No, other work was running"
@@ -126,7 +126,7 @@ body:
     attributes:
       label: "Before submitting"
       options:
-        - label: "I read `docs/benchmarks.md`, in particular \"What the numbers are not\"."
+        - label: "I read the wiki's Benchmarking page, in particular \"What the numbers are not\"."
           required: true
         - label: "My run used the configured forks and iterations, not a single smoke run."
           required: true

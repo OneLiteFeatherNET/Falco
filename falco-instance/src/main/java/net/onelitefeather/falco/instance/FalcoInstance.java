@@ -278,8 +278,8 @@ public class FalcoInstance extends Instance {
      * <p>
      * A chunk which is still being loaded is not in the chunk map yet, so walking that map is not
      * enough: the load would finish afterwards and publish its chunk into an instance nothing
-     * reaches any more, which is the permanent zombie {@code docs/research/instance-container.md}
-     * describes. Every running load is therefore claimed first, which makes it throw its result away
+     * reaches any more, which is the permanent zombie the wiki's "Research: Instance Container"
+     * page describes. Every running load is therefore claimed first, which makes it throw its result away
      * instead of publishing it, and only then are the chunks which are already there unloaded. The
      * second pass exists because a load may publish while the first claim is still walking, and it
      * is the last one which can produce anything.

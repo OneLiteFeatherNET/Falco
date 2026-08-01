@@ -2,7 +2,8 @@
 
 Put your own world in here and find out, on your own machine, whether the Falco stack does better
 than the one Minestom ships with. Nothing in this module is published; it exists so the claims in
-[`STATUS.md`](../STATUS.md) can be checked rather than believed.
+[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status) can be checked
+rather than believed.
 
 There are two ways to check, and they answer different questions:
 
@@ -122,8 +123,8 @@ counted; timing those would report the speed of a header lookup as the speed of 
 - **It is not a benchmark and cannot be quoted.** One session, one machine, one route flown by hand,
   no repetition, no isolation, no statistical model. Anything you intend to publish belongs in the
   JMH benchmarks of [`falco-benchmarks`](../falco-benchmarks) — see
-  [`docs/benchmarks.md`](../docs/benchmarks.md) — with the machine, the jvm and the JMH configuration
-  next to the number.
+  [Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) — with the machine, the
+  jvm and the JMH configuration next to the number.
 - **Your route is a variable.** Two flights over the same world load different chunks in a different
   order. Two impressions that differ by a little are not a result.
 - **The first minute is warm-up.** The first chunks pay for class loading, for the interpreter
@@ -213,8 +214,8 @@ then lists the warm-up rounds, then the measured ones, then the summary:
 
 - **It is not a benchmark.** No forks, no statistical model, no isolation. For anything you intend to
   quote, use the JMH benchmarks in [`falco-benchmarks`](../falco-benchmarks) — see
-  [`docs/benchmarks.md`](../docs/benchmarks.md) — and report the machine, the jvm and the JMH
-  configuration alongside the number, as that document requires.
+  [Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) — and report the
+  machine, the jvm and the JMH configuration alongside the number, as that document requires.
 - **A number without its thread count means nothing here.** The Falco loader wins on lock
   granularity, which by definition cannot show itself without contention. Single threaded it is if
   anything the slower of the two; the JMH comparison has its region file about a tenth behind
