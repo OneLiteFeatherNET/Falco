@@ -1,5 +1,11 @@
 # Falco
 
+[![Release](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo.onelitefeather.dev%2Freleases%2Fnet%2Fonelitefeather%2Ffalco-anvil%2Fmaven-metadata.xml&label=release&color=blue)](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation)
+[![Java 25](https://img.shields.io/badge/Java-25-orange)](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation#building-from-source)
+[![API status: experimental](https://img.shields.io/badge/API-experimental-yellow)](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status)
+[![Documentation](https://img.shields.io/badge/docs-wiki-lightgrey)](https://github.com/OneLiteFeatherNET/Falco/wiki)
+[![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-lightgrey)](LICENSE)
+
 A high-performance Anvil chunk loader and light engine for
 [Minestom](https://github.com/Minestom/Minestom), plus an `Instance` implementation that cleans up
 after itself.
