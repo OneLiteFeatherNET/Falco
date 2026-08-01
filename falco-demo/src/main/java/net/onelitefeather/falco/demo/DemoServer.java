@@ -12,6 +12,7 @@ import net.minestom.server.event.GlobalEventHandler;
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent;
 import net.minestom.server.event.player.PlayerSpawnEvent;
 import net.minestom.server.event.server.ServerTickMonitorEvent;
+import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.registry.RegistryKey;
 import net.minestom.server.timer.TaskSchedule;
@@ -156,7 +157,7 @@ public final class DemoServer {
                 .createInstanceContainer(dimensionType(options), loader);
         instance.setChunkSupplier(options.stack().chunkSupplier());
 
-        Pos spawn = new Pos(0, 65, 0);
+        Pos spawn = spawn(instance, spawnChunk);
 
         registerEvents(instance, spawn, options, metrics);
         AtomicReference<LiveMetrics.Snapshot> latest = scheduleReporting(instance, options, metrics);
@@ -203,7 +204,7 @@ public final class DemoServer {
      * @param spawnChunk the chunk the player is put into
      * @return the position the player spawns at
      */
-    private static Pos spawn(InstanceContainer instance, ChunkPosition spawnChunk) {
+    static Pos spawn(Instance instance, ChunkPosition spawnChunk) {
         instance.loadChunk(spawnChunk.x(), spawnChunk.z()).join();
 
         int x = spawnChunk.x() * 16 + 8;
