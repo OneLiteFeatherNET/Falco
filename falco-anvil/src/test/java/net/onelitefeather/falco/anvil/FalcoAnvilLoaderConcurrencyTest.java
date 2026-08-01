@@ -23,6 +23,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -51,6 +52,17 @@ class FalcoAnvilLoaderConcurrencyTest {
      * The time a latch is waited for before the test is considered stuck.
      */
     private static final long AWAIT_SECONDS = 60L;
+
+    /**
+     * The time {@code close()} is given to return while another thread holds the monitor of the
+     * loader.
+     * <p>
+     * Deliberately far shorter than {@link #AWAIT_SECONDS}: this latch is only reached in the
+     * failing case, and a regression should report itself in seconds rather than stall the build
+     * for a minute.
+     * </p>
+     */
+    private static final long CLOSE_SECONDS = 5L;
 
     /**
      * The amount of region files the chunks of the first test are spread over.
@@ -292,6 +304,86 @@ class FalcoAnvilLoaderConcurrencyTest {
             }
         }
         assertNoFailure(failures, "a load may not fail because another thread unloaded a chunk of the same region");
+    }
+
+    /**
+     * A caller who holds the monitor of the loader cannot stop it from closing.
+     * <p>
+     * The loader is handed to the server and from there to arbitrary code, so any of it may write
+     * {@code synchronized (loader)} — over a batch of saves, for instance. While {@code close()}
+     * carried the {@code synchronized} modifier it locked on that same monitor, and such a caller
+     * blocked the shutdown of a loader whose own Javadoc says it is closed while chunk tasks are
+     * still in flight. The lock is private now, and this test is what distinguishes the two: with
+     * the modifier back on {@code close()} it fails on the latch below rather than passing quietly.
+     * </p>
+     * <p>
+     * The threads are platform threads on purpose. What is under test is the monitor, and a
+     * platform thread parks on it with no scheduler in between.
+     * </p>
+     *
+     * @throws InterruptedException if the test thread is interrupted while waiting for a latch
+     */
+    @Test
+    void testCloseReturnsWhileAnotherThreadHoldsTheLoaderMonitor() throws InterruptedException {
+        FalcoAnvilLoader loader = loader();
+
+        CountDownLatch monitorHeld = new CountDownLatch(1);
+        CountDownLatch releaseMonitor = new CountDownLatch(1);
+        CountDownLatch closeReturned = new CountDownLatch(1);
+        AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+
+        Thread holder = new Thread(() -> {
+            synchronized (loader) {
+                monitorHeld.countDown();
+                awaitQuietly(releaseMonitor, AWAIT_SECONDS);
+            }
+        }, "loader-monitor-holder");
+
+        Thread closer = new Thread(() -> {
+            try {
+                loader.close();
+            } catch (Throwable throwable) {
+                closeFailure.set(throwable);
+            } finally {
+                closeReturned.countDown();
+            }
+        }, "loader-closer");
+
+        holder.start();
+        assertTrue(monitorHeld.await(AWAIT_SECONDS, TimeUnit.SECONDS),
+                "the holder thread never entered synchronized (loader)");
+
+        try {
+            closer.start();
+            assertTrue(closeReturned.await(CLOSE_SECONDS, TimeUnit.SECONDS),
+                    "close() did not return within " + CLOSE_SECONDS + " s while another thread held "
+                            + "synchronized (loader), so the loader is sharing its own monitor with "
+                            + "its callers");
+        } finally {
+            releaseMonitor.countDown();
+            closer.join(TimeUnit.SECONDS.toMillis(AWAIT_SECONDS));
+            holder.join(TimeUnit.SECONDS.toMillis(AWAIT_SECONDS));
+        }
+
+        Throwable failure = closeFailure.get();
+
+        if (failure != null) {
+            fail("close() failed instead of completing: " + failure);
+        }
+    }
+
+    /**
+     * Waits for the given latch and restores the interrupt flag instead of failing the thread.
+     *
+     * @param latch   the latch to wait for
+     * @param seconds the amount of seconds to wait at most
+     */
+    private static void awaitQuietly(CountDownLatch latch, long seconds) {
+        try {
+            latch.await(seconds, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
