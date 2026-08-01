@@ -14,6 +14,7 @@ dependencies {
 
     runtimeOnly(libs.slf4j.simple)
 
+    testImplementation(libs.cyano)
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.junit.platform.launcher)
     testRuntimeOnly(libs.junit.jupiter.engine)
