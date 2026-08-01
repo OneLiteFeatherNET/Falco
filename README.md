@@ -1,8 +1,8 @@
 # Falco
 
+[![API status: experimental](https://img.shields.io/badge/API-experimental-yellow)](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status)
 [![Release](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo.onelitefeather.dev%2Freleases%2Fnet%2Fonelitefeather%2Ffalco-anvil%2Fmaven-metadata.xml&label=release&color=blue)](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation)
 [![Java 25](https://img.shields.io/badge/Java-25-orange)](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation#building-from-source)
-[![API status: experimental](https://img.shields.io/badge/API-experimental-yellow)](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status)
 [![Documentation](https://img.shields.io/badge/docs-wiki-lightgrey)](https://github.com/OneLiteFeatherNET/Falco/wiki)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-lightgrey)](LICENSE)
 
@@ -24,33 +24,6 @@ nothing to do with speed — and it claims none.
 All three modules are **experimental**. Every public type carries `@ApiStatus.Experimental`;
 signatures and behaviour may still change in a minor release.
 
-## What "high-performance" means here
-
-Measured, not asserted. Every figure comes from a JMH benchmark in this repository and is quoted
-with the condition it was measured under.
-
-**The Anvil loader is 1.9× faster on two threads** — 1 181 ± 31 against 2 200 ± 445 µs/op, reading
-one chunk of 200 distinct block states. On one thread the intervals overlap and nothing is resolved
-in either direction, which is the expected result: the claim is about lock granularity, and with one
-reader there is no lock to contend for. At four and eight threads no factor can be quoted at all,
-because Minestom's half-width there exceeds its own mean. What those rows establish is qualitative
-and, for a server, the worse finding: under that load its read time stops being predictable, while
-Falco's stays at or below about a tenth of its mean at every thread count. Writing shows no
-resolvable difference anywhere.
-
-The two-thread figure did not reproduce, and that belongs next to it: an independent run of the same
-configuration put Minestom at 103 437 ± 856 306 µs/op there, which carries no factor at all. What
-survives both runs is the direction and the loss of predictability, not the 1.9×.
-
-**The light engine is 1.11× to 1.71× faster** over six scenarios, every pair of intervals disjoint,
-with byte-identical output asserted on every build.
-
-The figure after a `±` is the half-width of a confidence interval over the measurement iterations of
-one JVM launch; where two intervals overlap, no factor is printed. The charts, the full tables, the
-methodology and the optimisations that did **not** pay off are in
-[Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) and
-[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status).
-
 ## Quick start
 
 From nothing to a server that serves a stored world, in four steps. The last one needs no client.
@@ -69,6 +42,8 @@ dependencies {
 
     // Minestom is compileOnly in Falco, so it does not arrive with these
     // artefacts. Falco declares no version for it, on purpose. You pick it.
+    // The version Falco compiles and measures against is recorded in the wiki:
+    // https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status#environment
     implementation("net.minestom:minestom:<version>")
 }
 ```
@@ -152,6 +127,74 @@ flag — for a pre-lit world the engine is doing work nobody asked for. It earns
 without stored light and after blocks change at runtime. Which case is which is spelled out in
 [Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine).
 
+## What "high-performance" means here
+
+Measured, not asserted. Every figure comes from a JMH benchmark in this repository and is quoted
+with the condition it was measured under.
+
+**The Anvil loader is 1.9× faster on two threads** — 1 181 ± 31 against 2 200 ± 445 µs/op, reading
+one chunk of 200 distinct block states. On one thread the intervals overlap and nothing is resolved
+in either direction, which is the expected result: the claim is about lock granularity, and with one
+reader there is no lock to contend for. At four and eight threads no factor can be quoted at all,
+because Minestom's half-width there exceeds its own mean. What those rows establish is qualitative
+and, for a server, the worse finding: under that load its read time stops being predictable, while
+Falco's stays at or below about a tenth of its mean at every thread count. Writing shows no
+resolvable difference anywhere.
+
+<sub>`RegionFileComparisonBenchmark.falcoRead` / `.minestomRead`, `distinctStates = 200`,
+`@State(Scope.Benchmark)` with a per-thread chunk slot, two threads (`-t 2`; JMH takes one `-t` per
+run, so each thread count is a run of its own), one fork, `-Xms1g -Xmx1g`, 3 warmup and 5
+measurement iterations, both annotated at 1 s; earlier documentation of this table said 2 s and no
+`-r` was recorded on any command line, so the run's iteration time is unrecorded and the annotation
+value stands here. JMH 1.37, one 16-core machine recorded as not idle, run commit and run date not
+recorded, no `results.json` committed. The conservative bounds on this row are 1.45× to 2.30×
+faster, the wider of the two relative half-widths being 20 %, which holds the factor to one decimal.
+One fork — the `±` covers variance between iterations of one JVM, not between JVM launches, defined
+once in [Rationale: Measurement](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement#the-interval-after-a-number).
+The full four-row read and write table is owned by
+[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status#the-region-file-against-the-one-minestom-ships-with).</sub>
+
+The two-thread figure did not reproduce, and that belongs next to it: an independent run of the same
+configuration put Minestom at 103 437 ± 856 306 µs/op there, which carries no factor at all. What
+survives both runs is the direction and the loss of predictability, not the 1.9×.
+
+<sub>An independent second run of the same configuration, and not an erratum for the run above.
+`RegionFileComparisonBenchmark.falcoRead` / `.minestomRead`, `distinctStates = 200`, two threads
+(`-t 2`, one thread count per run), one fork, `-Xms1g -Xmx1g`, recorded as `-wi 3 -i 5`, the class
+annotating 1 s for both and no `-r` appearing on the recorded command line, so the run's iteration
+time is unrecorded. JMH 1.37, one 16-core machine recorded as not idle, run commit and run date not
+recorded, no `results.json` committed. Minestom's half-width is 8.3 times its own mean here, which
+carries no factor at any precision; Falco reproduced at 1 174 ± 71 µs/op against the 1 181 ± 31 of
+the first run. One fork — the `±` covers variance between iterations of one JVM, not between JVM
+launches, defined once in
+[Rationale: Measurement](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement#the-interval-after-a-number).
+All four rows of this run are in
+[Anvil Chunk Loader](https://github.com/OneLiteFeatherNET/Falco/wiki/Anvil-Chunk-Loader#measured-concurrent-readers-of-one-region-file).</sub>
+
+**The light engine is 1.11× to 1.71× faster** over six scenarios, every pair of intervals disjoint,
+with byte-identical output asserted on every build.
+
+<sub>`LightEngineComparisonBenchmark.falco` / `.minestom`, one section, `emissionMix = UNIFORM`,
+`lightSources` 1, 8 and 64 against `occlusionPercent` 0 and 30 — the six scenarios — one thread,
+one fork, `-Xms512m -Xmx512m`, run as `-f 1 -wi 5 -i 10`, which overrides the class annotation of
+3 warmup and 5 measurement iterations; no `-r` was recorded and the class annotates 1 s per
+iteration. JMH 1.37, one 16-core machine recorded as not idle, measured at commit `69381af`, run
+date not recorded, no `results.json` committed. All six pairs of intervals are disjoint and the
+wider relative half-width of each pair is under 5 %, which is what admits two decimals; the
+conservative bounds are 1.07× to 1.16× faster on the narrowest row and 1.63× to 1.80× faster on the
+widest. One fork — the `±` covers variance between iterations of one JVM, not between JVM launches,
+defined once in
+[Rationale: Measurement](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement#the-interval-after-a-number).
+The six rows and their bounds are owned by
+[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status#against-the-engine-minestom-ships-with).</sub>
+
+The figure after a `±` is [the half-width of a confidence interval over the measurement iterations of
+one JVM launch](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement); where two
+intervals overlap, no factor is printed. The charts, the full tables, the methodology and the
+optimisations that did **not** pay off are in
+[Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) and
+[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status).
+
 ## Documentation
 
 Everything past the quick start lives in the
@@ -171,6 +214,9 @@ Everything past the quick start lives in the
   what each decision was weighed against, and where the argument is weaker than the figures suggest
 - [Research](https://github.com/OneLiteFeatherNET/Falco/wiki/Research) — the investigations run
   before writing any code, kept because each answers a question worth asking again
+- [Build Setup](https://github.com/OneLiteFeatherNET/Falco/wiki/Build-Setup) — how the Gradle build
+  is put together, and where the rest of it is documented: dependency management, publishing,
+  versioning and releases, tests and Javadoc, the benchmark and demo modules, the architecture rules
 
 ## Licence
 
