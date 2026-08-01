@@ -238,4 +238,28 @@ class FalcoAnvilLoaderBuilderTest {
             assertEquals(0, second.openRegionCount());
         }
     }
+
+    /**
+     * A slot returns a new builder and leaves the one it was called on alone.
+     * <p>
+     * All three builders of the project behave this way. A mixture would be a trap: the same line
+     * written against two of them would mean two different things, and the one that silently does
+     * nothing is the one nobody notices.
+     * </p>
+     */
+    @Test
+    void testASlotLeavesTheBuilderItWasCalledOnUnchanged() throws IOException {
+        AnvilDiagnostics mine = new AnvilDiagnostics();
+        FalcoAnvilLoader.Builder base = FalcoAnvilLoader.builder();
+        FalcoAnvilLoader.Builder derived = base.diagnostics(mine);
+
+        assertNotSame(base, derived, "a slot returns a new builder");
+
+        try (FalcoAnvilLoader fromBase = base.build(this.worldRoot, OVERWORLD);
+             FalcoAnvilLoader fromDerived = derived.build(this.worldRoot, OVERWORLD)) {
+
+            assertNotSame(mine, fromBase.diagnostics(), "the origin never learned about the value");
+            assertSame(mine, fromDerived.diagnostics());
+        }
+    }
 }

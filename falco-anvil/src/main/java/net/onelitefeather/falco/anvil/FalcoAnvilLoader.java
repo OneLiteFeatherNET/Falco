@@ -254,15 +254,18 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      */
     @Contract(value = "-> new", pure = true)
     public static Builder builder() {
-        return new Builder();
+        return new Builder(DEFAULT_OPEN_REGION_LIMIT, ChunkCompression.DEFAULT_LEVEL,
+                Math.max(Runtime.getRuntime().availableProcessors(), 2), MinecraftServer.DATA_VERSION,
+                null, null, null, null);
     }
 
     /**
      * Collects the values of a loader before it is built.
      * <p>
-     * <b>Not thread-safe.</b> A builder belongs to the thread that configures it; the loaders it
-     * produces are the thread-safe objects. Nothing here is published across threads, and nothing
-     * here needs to be.
+     * <b>Immutable.</b> Every slot returns a new builder and leaves the one it was called on
+     * untouched, the same shape the builders in {@code falco-light} and {@code falco-instance} have.
+     * A mixture would be a trap: the same line written against two of them would mean two different
+     * things, and the one that silently does nothing is the one nobody notices.
      * </p>
      * <p>
      * The builder can be reused. {@link #build(Path, Key)} may be called any number of times and
@@ -288,16 +291,27 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     @ApiStatus.Experimental
     public static final class Builder {
 
-        private int openRegionLimit = DEFAULT_OPEN_REGION_LIMIT;
-        private int compressionLevel = ChunkCompression.DEFAULT_LEVEL;
-        private int saveParallelism = Math.max(Runtime.getRuntime().availableProcessors(), 2);
-        private int dataVersion = MinecraftServer.DATA_VERSION;
-        private @Nullable AnvilDiagnostics diagnostics;
-        private @Nullable PaletteEntryResolver blockResolver;
-        private @Nullable PaletteEntryResolver biomeResolver;
-        private @Nullable Consumer<Throwable> exceptionHandler;
+        private final int openRegionLimit;
+        private final int compressionLevel;
+        private final int saveParallelism;
+        private final int dataVersion;
+        private final @Nullable AnvilDiagnostics diagnostics;
+        private final @Nullable PaletteEntryResolver blockResolver;
+        private final @Nullable PaletteEntryResolver biomeResolver;
+        private final @Nullable Consumer<Throwable> exceptionHandler;
 
-        private Builder() {
+        private Builder(int openRegionLimit, int compressionLevel, int saveParallelism, int dataVersion,
+                        @Nullable AnvilDiagnostics diagnostics, @Nullable PaletteEntryResolver blockResolver,
+                        @Nullable PaletteEntryResolver biomeResolver,
+                        @Nullable Consumer<Throwable> exceptionHandler) {
+            this.openRegionLimit = openRegionLimit;
+            this.compressionLevel = compressionLevel;
+            this.saveParallelism = saveParallelism;
+            this.dataVersion = dataVersion;
+            this.diagnostics = diagnostics;
+            this.blockResolver = blockResolver;
+            this.biomeResolver = biomeResolver;
+            this.exceptionHandler = exceptionHandler;
         }
 
         /**
@@ -308,16 +322,22 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * </p>
          *
          * @param openRegionLimit the amount of region files the loader keeps open
-         * @return this builder
+         * @return a new builder with this value
          * @throws IllegalArgumentException if the limit is not positive
          */
-        @Contract(value = "_ -> this", mutates = "this")
+        @Contract(value = "_ -> new", pure = true)
         public Builder openRegionLimit(int openRegionLimit) {
             if (openRegionLimit <= 0) {
                 throw new IllegalArgumentException("The amount of open region files must be positive but was " + openRegionLimit);
             }
-            this.openRegionLimit = openRegionLimit;
-            return this;
+            return new Builder(openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler);
         }
 
         /**
@@ -330,18 +350,24 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          *
          * @param compressionLevel the deflate level between {@link ChunkCompression#FASTEST_LEVEL}
          *                         and {@link ChunkCompression#SMALLEST_LEVEL}
-         * @return this builder
+         * @return a new builder with this value
          * @throws IllegalArgumentException if the level is outside the supported range
          */
-        @Contract(value = "_ -> this", mutates = "this")
+        @Contract(value = "_ -> new", pure = true)
         public Builder compressionLevel(int compressionLevel) {
             if (compressionLevel < ChunkCompression.FASTEST_LEVEL || compressionLevel > ChunkCompression.SMALLEST_LEVEL) {
                 throw new IllegalArgumentException("The compression level has to be between "
                         + ChunkCompression.FASTEST_LEVEL + " and " + ChunkCompression.SMALLEST_LEVEL
                         + " but was " + compressionLevel);
             }
-            this.compressionLevel = compressionLevel;
-            return this;
+            return new Builder(this.openRegionLimit,
+                    compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler);
         }
 
         /**
@@ -352,16 +378,22 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * </p>
          *
          * @param saveParallelism the amount of chunks saved concurrently by one loader
-         * @return this builder
+         * @return a new builder with this value
          * @throws IllegalArgumentException if the amount is smaller than one
          */
-        @Contract(value = "_ -> this", mutates = "this")
+        @Contract(value = "_ -> new", pure = true)
         public Builder saveParallelism(int saveParallelism) {
             if (saveParallelism < 1) {
                 throw new IllegalArgumentException("A loader has to be able to save at least one chunk at a time but the bound was " + saveParallelism);
             }
-            this.saveParallelism = saveParallelism;
-            return this;
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    saveParallelism,
+                    this.dataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler);
         }
 
         /**
@@ -373,12 +405,18 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * </p>
          *
          * @param dataVersion the data version written into every saved chunk
-         * @return this builder
+         * @return a new builder with this value
          */
-        @Contract(value = "_ -> this", mutates = "this")
+        @Contract(value = "_ -> new", pure = true)
         public Builder dataVersion(int dataVersion) {
-            this.dataVersion = dataVersion;
-            return this;
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    dataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler);
         }
 
         /**
@@ -395,12 +433,18 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * </p>
          *
          * @param diagnostics the diagnostics of the loader
-         * @return this builder
+         * @return a new builder with this value
          */
-        @Contract(value = "_ -> this", mutates = "this")
+        @Contract(value = "_ -> new", pure = true)
         public Builder diagnostics(AnvilDiagnostics diagnostics) {
-            this.diagnostics = diagnostics;
-            return this;
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler);
         }
 
         /**
@@ -414,12 +458,18 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * </p>
          *
          * @param blockResolver the resolver for block palette entries
-         * @return this builder
+         * @return a new builder with this value
          */
-        @Contract(value = "_ -> this", mutates = "this")
+        @Contract(value = "_ -> new", pure = true)
         public Builder blockResolver(PaletteEntryResolver blockResolver) {
-            this.blockResolver = blockResolver;
-            return this;
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.diagnostics,
+                    blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler);
         }
 
         /**
@@ -430,12 +480,18 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * </p>
          *
          * @param biomeResolver the resolver for biome palette entries
-         * @return this builder
+         * @return a new builder with this value
          */
-        @Contract(value = "_ -> this", mutates = "this")
+        @Contract(value = "_ -> new", pure = true)
         public Builder biomeResolver(PaletteEntryResolver biomeResolver) {
-            this.biomeResolver = biomeResolver;
-            return this;
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    biomeResolver,
+                    this.exceptionHandler);
         }
 
         /**
@@ -455,12 +511,18 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * </p>
          *
          * @param exceptionHandler the sink which receives every reported failure
-         * @return this builder
+         * @return a new builder with this value
          */
-        @Contract(value = "_ -> this", mutates = "this")
+        @Contract(value = "_ -> new", pure = true)
         public Builder exceptionHandler(Consumer<Throwable> exceptionHandler) {
-            this.exceptionHandler = exceptionHandler;
-            return this;
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    exceptionHandler);
         }
 
         /**
