@@ -29,10 +29,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * {@link SectionBlockStorage}, so that the implementation stage 2 adds can be held to the same
  * file without a line of it being rewritten for the new layout.
  * <p>
- * Everything here therefore goes through the interface and never through a section, with one
- * deliberate exception: the two tests that pin the height arithmetic and the unknown state read
+ * Everything here therefore goes through the interface and never through a section, with two
+ * deliberate exceptions. The tests that pin the height arithmetic and the unknown state read
  * through {@link BlockStorage#section(int)}, because those are precisely the properties an
- * assertion phrased in terms of {@code getBlock} alone cannot see.
+ * assertion phrased in terms of {@code getBlock} alone cannot see. The view tests read through
+ * {@link BlockStorage#view(int)} and {@link BlockStorage#views()} for the same reason: whether a
+ * view is the live section or a copy of it is invisible to {@code getBlock}, which would answer
+ * from the storage either way.
  * </p>
  *
  * <h2>Why the height tests name the section</h2>
@@ -59,7 +62,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * </p>
  *
  * @author TheMeinerLP
- * @version 2.0.0
+ * @version 2.1.0
  * @since 0.4.0
  */
 @DisplayName("The block storage of a chunk")
