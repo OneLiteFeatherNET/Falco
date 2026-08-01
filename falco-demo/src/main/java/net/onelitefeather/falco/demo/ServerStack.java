@@ -27,16 +27,19 @@ import java.util.stream.Collectors;
  * <p>
  * <b>Both stacks run on an {@code InstanceContainer}, and that is a decision rather than an
  * oversight.</b> {@link FalcoInstance} is the third published module of this repository and would be
- * the obvious third component of the Falco stack, but it cannot be combined with
- * {@link FalcoLightingChunk}: {@code FalcoInstance} refuses every chunk which is not a
- * {@code FalcoChunk}, because {@code Chunk#onLoad} and {@code Chunk#unload} are package private in
- * Minestom and it re-exposes them through that subclass. {@code FalcoLightingChunk} extends
- * {@code DynamicChunk} instead, so an instance handed the light supplier would throw on the first
- * chunk it loaded. One of the two has to go, and for this demo it is the instance: what
- * {@code FalcoInstance} buys — a clean unregister and a block write guarded per chunk instead of per
- * instance — is invisible to somebody flying through a world nobody edits, while the light is the
- * first thing they look at. Using the container on both sides has a second benefit that is worth as
- * much: the two servers then differ in the loader and the chunk type and in nothing else.
+ * the obvious third component of the Falco stack. It can now be combined with
+ * {@link FalcoLightingChunk} — {@code FalcoInstance#setChunkLifecycle} lets a caller who owns both
+ * types hand over the two {@code protected} hooks, which is what used to make the combination
+ * impossible — but the demo still does not use it, for a reason that has nothing to do with whether
+ * it works: this comparison is worth something only while the two servers differ in the loader and
+ * the chunk type and in nothing else. What {@code FalcoInstance} buys, a clean unregister and a
+ * block write guarded per chunk instead of per instance, is invisible to somebody flying through a
+ * world nobody edits, and adding it to one side only would make the two stacks differ in three
+ * things instead of one.
+ * </p>
+ * <p>
+ * The combination itself is covered by {@code FalcoStackIntegrationTest} in this module, which is
+ * the only place that may know all three modules at once.
  * </p>
  *
  * @author TheMeinerLP
@@ -203,8 +206,9 @@ public enum ServerStack {
             return "";
         }
 
-        return FalcoInstance.class.getName() + " is deliberately not part of this stack: it only manages "
-                + "FalcoChunk, so it cannot hold a FalcoLightingChunk, and its advantages do not show "
-                + "in a world nobody edits. See falco-demo/README.md.";
+        return FalcoInstance.class.getName() + " is deliberately not part of this stack: it can hold a "
+                + "FalcoLightingChunk now, but adding it to one side only would make the two servers "
+                + "differ in three things instead of one, and its advantages do not show in a world "
+                + "nobody edits. See falco-demo/README.md.";
     }
 }
