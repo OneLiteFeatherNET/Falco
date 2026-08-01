@@ -36,6 +36,7 @@ import net.minestom.server.network.packet.server.play.BlockEntityDataPacket;
 import net.minestom.server.network.packet.server.play.UnloadChunkPacket;
 import net.minestom.server.network.packet.server.play.WorldEventPacket;
 import net.minestom.server.registry.Registries;
+import net.minestom.server.timer.SchedulerManager;
 import net.minestom.server.registry.RegistryKey;
 import net.minestom.server.utils.PacketSendingUtils;
 import net.minestom.server.utils.block.BlockUtils;
@@ -262,6 +263,16 @@ public class FalcoInstance extends Instance {
     private volatile @Nullable Consumer<Chunk> chunkUnloaded;
 
     /**
+     * Whether {@link #shutdown(InstanceManager)} saves the chunks before it unregisters.
+     */
+    private volatile boolean saveOnShutdown = true;
+
+    /**
+     * Whether {@link #shutdown(InstanceManager)} closes the loader, if the loader can be closed.
+     */
+    private volatile boolean ownsLoader;
+
+    /**
      * Creates an instance in the overworld dimension without a chunk loader.
      *
      * @param uuid          the unique id of the instance
@@ -304,6 +315,67 @@ public class FalcoInstance extends Instance {
         this.chunkLoader = Objects.requireNonNullElseGet(loader, ChunkLoader::noop);
         this.chunkLoader.loadInstance(this);
         this.lastBlockChangeTime = System.nanoTime();
+    }
+
+    /**
+     * Returns a builder for an instance in the given dimension.
+     * <p>
+     * The dimension is the only required value and therefore stands here rather than in a slot.
+     * Every other value defaults to what the constructors use.
+     * </p>
+     *
+     * @param dimensionType the dimension of the instance
+     * @return a new builder with the defaults of the constructors
+     */
+    @Contract(value = "_ -> new", pure = true)
+    public static Builder builder(RegistryKey<DimensionType> dimensionType) {
+        return new Builder(dimensionType, null, null, null, null, null, null, null, true, false, true);
+    }
+
+    /**
+     * Saves this instance, takes it out of the server and closes what it owns.
+     * <p>
+     * <b>The order is the point of this method.</b> Saving happens first, and it has to:
+     * {@link #saveChunksToStorage()} takes a snapshot of the chunk map, while
+     * {@link #unregister(InstanceManager)} empties that map. A save after the unregister therefore
+     * writes nothing at all and reports success, which is the shape of data loss this method
+     * exists to make unreachable.
+     * </p>
+     * <p>
+     * A failed save stops the shutdown rather than carrying on. The chunks stay in memory and the
+     * instance stays registered, so a second call can still succeed — {@code unregister} is
+     * explicitly callable more than once. Carrying on would drop exactly the chunks whose saving
+     * just failed.
+     * </p>
+     * <p>
+     * The loader is closed last, and only if the instance was told it owns it. A loader shared
+     * between the overworld and the nether of the same world outlives either of them.
+     * </p>
+     *
+     * @param instanceManager the manager this instance is registered with
+     * @throws FalcoInstanceException if the chunks could not be saved or the loader not closed
+     */
+    public void shutdown(InstanceManager instanceManager) {
+        if (this.saveOnShutdown) {
+            try {
+                saveChunksToStorage().join();
+            } catch (Throwable throwable) {
+                throw new FalcoInstanceException("the chunks of the instance " + getUuid()
+                        + " could not be saved, so it was left registered and loaded", throwable);
+            }
+        }
+        unregister(instanceManager);
+
+        if (!this.ownsLoader) return;
+
+        if (this.chunkLoader instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception exception) {
+                throw new FalcoInstanceException("the loader of the instance " + getUuid()
+                        + " could not be closed", exception);
+            }
+        }
     }
 
     /**
@@ -884,6 +956,250 @@ public class FalcoInstance extends Instance {
     @Override
     public ChunkSupplier getChunkSupplier() {
         return this.chunkSupplier;
+    }
+
+    /**
+     * Collects the values of an instance before it is built.
+     * <p>
+     * <b>Immutable.</b> Every slot returns a new builder and leaves the one it was called on
+     * untouched, which is the same shape {@code ChunkLightScheduler.Builder} has, so the two read
+     * the same way. A builder can therefore be shared and derived from without anyone having to
+     * reason about who changes it.
+     * </p>
+     * <p>
+     * The terminal methods register the instance, because an instance that is not registered is not
+     * yet a world: the server does not tick it and no player can be there. Which of the two you use
+     * decides whether the shutdown is something you can still forget.
+     * </p>
+     * <p>
+     * This type is experimental, like everything else in this package.
+     * </p>
+     *
+     * @author TheMeinerLP
+     * @version 1.0.0
+     * @since 0.4.0
+     */
+    @ApiStatus.Experimental
+    public static final class Builder {
+
+        private final RegistryKey<DimensionType> dimensionType;
+        private final @Nullable UUID uuid;
+        private final @Nullable Registries registries;
+        private final @Nullable Key dimensionName;
+        private final @Nullable ChunkLoader chunkLoader;
+        private final @Nullable ChunkSupplier chunkSupplier;
+        private final @Nullable Consumer<Chunk> chunkLoaded;
+        private final @Nullable Consumer<Chunk> chunkUnloaded;
+        private final boolean autoChunkLoad;
+        private final boolean ownsLoader;
+        private final boolean saveOnShutdown;
+
+        private Builder(RegistryKey<DimensionType> dimensionType, @Nullable UUID uuid,
+                        @Nullable Registries registries, @Nullable Key dimensionName,
+                        @Nullable ChunkLoader chunkLoader, @Nullable ChunkSupplier chunkSupplier,
+                        @Nullable Consumer<Chunk> chunkLoaded, @Nullable Consumer<Chunk> chunkUnloaded,
+                        boolean autoChunkLoad, boolean ownsLoader, boolean saveOnShutdown) {
+            this.dimensionType = dimensionType;
+            this.uuid = uuid;
+            this.registries = registries;
+            this.dimensionName = dimensionName;
+            this.chunkLoader = chunkLoader;
+            this.chunkSupplier = chunkSupplier;
+            this.chunkLoaded = chunkLoaded;
+            this.chunkUnloaded = chunkUnloaded;
+            this.autoChunkLoad = autoChunkLoad;
+            this.ownsLoader = ownsLoader;
+            this.saveOnShutdown = saveOnShutdown;
+        }
+
+        /**
+         * Sets the unique id of the instance, which defaults to a random one.
+         *
+         * @param uuid the unique id of the instance
+         * @return a new builder with this id
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder uuid(UUID uuid) {
+            return new Builder(this.dimensionType, uuid, this.registries, this.dimensionName,
+                    this.chunkLoader, this.chunkSupplier, this.chunkLoaded, this.chunkUnloaded,
+                    this.autoChunkLoad, this.ownsLoader, this.saveOnShutdown);
+        }
+
+        /**
+         * Sets the registries the dimension is looked up in, which default to the running server.
+         *
+         * @param registries the registries of the instance
+         * @return a new builder with these registries
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder registries(Registries registries) {
+            return new Builder(this.dimensionType, this.uuid, registries, this.dimensionName,
+                    this.chunkLoader, this.chunkSupplier, this.chunkLoaded, this.chunkUnloaded,
+                    this.autoChunkLoad, this.ownsLoader, this.saveOnShutdown);
+        }
+
+        /**
+         * Sets the name the client is told the dimension has, which defaults to its key.
+         *
+         * @param dimensionName the name of the dimension
+         * @return a new builder with this name
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder dimensionName(Key dimensionName) {
+            return new Builder(this.dimensionType, this.uuid, this.registries, dimensionName,
+                    this.chunkLoader, this.chunkSupplier, this.chunkLoaded, this.chunkUnloaded,
+                    this.autoChunkLoad, this.ownsLoader, this.saveOnShutdown);
+        }
+
+        /**
+         * Sets the loader chunks are read from and written to.
+         * <p>
+         * Without one the instance reads and writes nothing, which is a world of air rather than a
+         * failure. A loader and a generator are independent: the generator runs for the chunks the
+         * loader has no entry for.
+         * </p>
+         *
+         * @param chunkLoader the loader of the instance
+         * @return a new builder with this loader
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder chunkLoader(ChunkLoader chunkLoader) {
+            return new Builder(this.dimensionType, this.uuid, this.registries, this.dimensionName,
+                    chunkLoader, this.chunkSupplier, this.chunkLoaded, this.chunkUnloaded,
+                    this.autoChunkLoad, this.ownsLoader, this.saveOnShutdown);
+        }
+
+        /**
+         * Sets what produces the chunk objects of the instance.
+         *
+         * @param chunkSupplier the supplier of chunk objects
+         * @return a new builder with this supplier
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder chunkSupplier(ChunkSupplier chunkSupplier) {
+            return new Builder(this.dimensionType, this.uuid, this.registries, this.dimensionName,
+                    this.chunkLoader, chunkSupplier, this.chunkLoaded, this.chunkUnloaded,
+                    this.autoChunkLoad, this.ownsLoader, this.saveOnShutdown);
+        }
+
+        /**
+         * Says how a chunk is told that it was loaded and that it left.
+         * <p>
+         * Needed for any chunk type this package did not define, because the two hooks are
+         * {@code protected}. See {@link FalcoInstance#setChunkLifecycle(Consumer, Consumer)} for
+         * what this buys and what it costs.
+         * </p>
+         *
+         * @param onLoaded   what tells a chunk that it is part of the instance
+         * @param onUnloaded what tells a chunk that it left the instance
+         * @return a new builder with this lifecycle
+         */
+        @Contract(value = "_, _ -> new", pure = true)
+        public Builder chunkLifecycle(Consumer<Chunk> onLoaded, Consumer<Chunk> onUnloaded) {
+            return new Builder(this.dimensionType, this.uuid, this.registries, this.dimensionName,
+                    this.chunkLoader, this.chunkSupplier, onLoaded, onUnloaded,
+                    this.autoChunkLoad, this.ownsLoader, this.saveOnShutdown);
+        }
+
+        /**
+         * Sets whether a block written outside a loaded chunk loads that chunk first.
+         *
+         * @param autoChunkLoad true to load chunks on demand
+         * @return a new builder with this setting
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder autoChunkLoad(boolean autoChunkLoad) {
+            return new Builder(this.dimensionType, this.uuid, this.registries, this.dimensionName,
+                    this.chunkLoader, this.chunkSupplier, this.chunkLoaded, this.chunkUnloaded,
+                    autoChunkLoad, this.ownsLoader, this.saveOnShutdown);
+        }
+
+        /**
+         * Sets whether the shutdown of the instance also closes its loader.
+         * <p>
+         * The default is false, because a loader is usually shared: the overworld and the nether of
+         * one world are two instances on one loader, and the first of them to shut down must not
+         * close it under the second.
+         * </p>
+         *
+         * @param ownsLoader true if the instance closes the loader when it shuts down
+         * @return a new builder with this setting
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder ownsLoader(boolean ownsLoader) {
+            return new Builder(this.dimensionType, this.uuid, this.registries, this.dimensionName,
+                    this.chunkLoader, this.chunkSupplier, this.chunkLoaded, this.chunkUnloaded,
+                    this.autoChunkLoad, ownsLoader, this.saveOnShutdown);
+        }
+
+        /**
+         * Sets whether the shutdown of the instance saves its chunks first.
+         * <p>
+         * The default is true, and the asymmetry is deliberate: saving a world nobody changed costs
+         * time, while not saving one that was changed costs the changes.
+         * </p>
+         *
+         * @param saveOnShutdown true if the shutdown saves before it unregisters
+         * @return a new builder with this setting
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder saveOnShutdown(boolean saveOnShutdown) {
+            return new Builder(this.dimensionType, this.uuid, this.registries, this.dimensionName,
+                    this.chunkLoader, this.chunkSupplier, this.chunkLoaded, this.chunkUnloaded,
+                    this.autoChunkLoad, this.ownsLoader, saveOnShutdown);
+        }
+
+        /**
+         * Builds the instance and registers it with the given manager.
+         * <p>
+         * The shutdown is left to the caller. Use
+         * {@link #registerAndShutdownWith(InstanceManager, SchedulerManager)} to make forgetting it
+         * impossible.
+         * </p>
+         *
+         * @param instanceManager the manager the instance registers with
+         * @return the registered instance
+         */
+        public FalcoInstance register(InstanceManager instanceManager) {
+            FalcoInstance instance = new FalcoInstance(
+                    this.registries == null ? MinecraftServer.process() : this.registries,
+                    this.uuid == null ? UUID.randomUUID() : this.uuid,
+                    this.dimensionType,
+                    this.chunkLoader,
+                    this.dimensionName == null ? this.dimensionType.key() : this.dimensionName);
+
+            if (this.chunkSupplier != null) instance.setChunkSupplier(this.chunkSupplier);
+            if (this.chunkLoaded != null && this.chunkUnloaded != null) {
+                instance.setChunkLifecycle(this.chunkLoaded, this.chunkUnloaded);
+            }
+            instance.enableAutoChunkLoad(this.autoChunkLoad);
+            instance.saveOnShutdown = this.saveOnShutdown;
+            instance.ownsLoader = this.ownsLoader;
+
+            instanceManager.registerInstance(instance);
+            return instance;
+        }
+
+        /**
+         * Builds the instance, registers it, and registers its shutdown as a shutdown task.
+         * <p>
+         * This is the reason the builder exists in the shape it has. Setting a world up takes
+         * several statements, and exactly one of them — the one that saves and tears down — is the
+         * one whose absence shows up days later, as a world that quietly lost its changes. Here it
+         * is not a statement a caller writes but part of the expression in which the instance first
+         * becomes reachable.
+         * </p>
+         *
+         * @param instanceManager  the manager the instance registers with
+         * @param schedulerManager the scheduler the shutdown task is registered with
+         * @return the registered instance
+         */
+        public FalcoInstance registerAndShutdownWith(InstanceManager instanceManager,
+                                                     SchedulerManager schedulerManager) {
+            FalcoInstance instance = register(instanceManager);
+            schedulerManager.buildShutdownTask(() -> instance.shutdown(instanceManager));
+            return instance;
+        }
     }
 
     /**
