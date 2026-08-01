@@ -852,7 +852,13 @@ git commit -m "test(instance): run the bridge chunk inside a plain InstanceConta
 ./gradlew :falco-benchmarks:test --tests "*ChunkFootprintTest*" -i
 ```
 
-Expected: `DELTA B = 0` in every row. **A non-zero delta is a stage 1 failure, not a stage 2 result** — this storage holds the same objects the old chunk held, so any difference is an accident.
+Expected: **`DELTA B = 24` in every row, and exactly one object more** — the `SectionBlockStorage` itself.
+
+**Corrected after measuring.** This step first demanded `DELTA B = 0`, and that demand was wrong when it was written: an indirection is an object, so a chunk that *holds* its storage instead of *being* it must weigh one object more. Zero was never reachable while the storage is a separate type, and a separate type is the entire purpose of this stage. Measured on the pinned build: 192 → 193 objects, 6 848 → 6 872 B.
+
+The assertion is therefore **tightened, not relaxed**. It must require that the extra weight is exactly one object of class `SectionBlockStorage`; a second object, or 24 bytes belonging to any other class, still fails. That preserves what the equality check existed for — catching a field somebody adds behind the project's back. A tolerance such as "at most 64 bytes" would not, and is explicitly rejected.
+
+For scale: 24 B is 0.35 % of a fresh chunk and 0.01 % of a generated one, against the 2 911 B per chunk that stage 2 removes.
 
 - [ ] **Step 2: Run the comparison benchmark, scouting configuration**
 
@@ -891,10 +897,109 @@ git commit -m "docs(plan): record what stage 1 measured"
 - [ ] `FalcoChunk` extends `Chunk` and holds its storage instead of inheriting it
 - [ ] Equivalence against `DynamicChunk` is proven position by position over six state counts
 - [ ] The chunk loads, is written to, and unloads inside a plain `InstanceContainer`
-- [ ] `ChunkFootprintTest` still reports `DELTA B = 0`
+- [ ] `ChunkFootprintTest` reports `DELTA B = 24`, and its assertion requires that the extra object is a `SectionBlockStorage` rather than merely allowing 24 bytes from anywhere
 - [ ] `falco-instance`, `falco-light` and `falco-anvil` tests all pass
 - [ ] Every new public type carries `@ApiStatus.Experimental`, `@author`, `@version` and `@since 0.4.0`
 
 ## What stage 1 deliberately does not do
 
 Named here so that a reviewer does not read them as omissions: no flyweight for empty sections, no lazy heightmaps, no packed flags, no `optimize()` after generation, no facade split of `FalcoInstance`, no shared instance. Those are stages 2 to 4. Stage 1 buys the seam they all need, and pays for it with a measurement that proves the seam is free.
+
+---
+
+## Stage 1 result
+
+Measured on 2026-08-01, on the branch `feat/block-storage` at the commit that precedes this section,
+against Minestom as pinned by the build and JDK 25.0.3 (Temurin).
+
+### The footprint, which is citable
+
+`./gradlew :falco-benchmarks:test --tests "*ChunkFootprintTest*" -i`, all three tests pass. Legacy
+object headers of twelve bytes, eight byte alignment, sizes taken through the JOL instrumentation
+agent (`falco.compactHeaders=false`), so every figure below is a number under that mode and must not
+be quoted next to a number taken under `-XX:+UseCompactObjectHeaders`.
+
+| | objects | bytes |
+| --- | --- | --- |
+| `DynamicChunk`, fresh | 192 | 6 848 |
+| `FalcoChunk`, fresh | 193 | 6 872 |
+| difference | **+1** | **+24** |
+
+`DELTA B = 24` in all sixteen rows of the second table as well — every distinct state count from one
+to a thousand and twenty-four, in all three arrangements, from a chunk of 6 848 bytes to one of
+229 784. The delta does not grow with the chunk, because the seam is one object and not a per-section
+or per-block cost.
+
+The one extra object is the `SectionBlockStorage`. That is asserted rather than assumed: the
+comparison runs per class over the union of the classes either side retains and demands equality
+everywhere except `net.onelitefeather.falco.instance.SectionBlockStorage`, of which the Falco side has
+to hold exactly one and the Minestom side none, plus the requirement that the whole byte difference is
+the size of that one object. The chunk class itself and the lambda classes the JVM generates from it
+are compared as a single post, since `DynamicChunk` and `FalcoChunk` are different classes by
+construction and the generated names are not stable between runs; their object count and their bytes
+still have to match, which is what holds the shallow size of the chunk under assertion.
+
+Three injected defects were used to confirm the assertion still bites, each reverted afterwards:
+
+| injected into `FalcoChunk` | caught by |
+| --- | --- |
+| `private final Object probe = new Object();` | per class comparison, `1` object of `java.lang.Object` against `0` |
+| `private final BlockStorage probe = new SectionBlockStorage(0, 0);` | `FalcoChunk has to hold exactly one BlockStorage, not 2` |
+| `private final long probe = System.nanoTime();` | the chunk post weighing 104 bytes against 96 |
+
+The third is the interesting one: a primitive field adds no object at all, and the run showed that
+adding a reference field does not necessarily change the shallow size either, because the eighty byte
+`FalcoChunk` had padding to spare. The byte comparison of the chunk post is what catches that case,
+and it is the reason the assertion is not merely a count.
+
+### The tests
+
+`./gradlew :falco-instance:test :falco-light:test :falco-anvil:test --rerun-tasks`: 48, 189 and 193
+tests, no failure, no error, nothing skipped. `falco-light` matters because `FalcoLightingChunk` still
+extends `DynamicChunk` and was deliberately left alone by this stage.
+
+### The comparison benchmark, which is NOT citable
+
+`./gradlew :falco-benchmarks:jmh -Pjmh.quick -Pjmh.include="ChunkComparisonBenchmark"
+-Pjmh.params="distinctStates=1,64,1024;fillShape=RANDOM_RUNS"`, average time in microseconds per
+operation, ± the 99.9 % confidence interval.
+
+**The conditions disqualify every number here from being quoted.** The scouting configuration is one
+fork, two warmup iterations and three measurement iterations of one second — enough to see whether
+two curves lie on top of each other, far too little to state a difference. The machine was under
+other load throughout: sixteen hardware threads on an AMD Ryzen 7 5800X, load average 4.7 at the
+start of the run. These numbers answer "is there a regression large enough to see through the noise",
+and nothing else.
+
+| benchmark | states | Minestom | Falco |
+| --- | --- | --- | --- |
+| `getBlock` | 1 | 24,482 ± 6,267 | 24,779 ± 0,910 |
+| `getBlock` | 64 | 28,958 ± 9,285 | 29,688 ± 4,784 |
+| `getBlock` | 1024 | 34,794 ± 4,800 | 34,682 ± 11,410 |
+| `setBlock` | 1 | 68,489 ± 6,880 | 73,740 ± 9,023 |
+| `setBlock` | 64 | 101,137 ± 2,771 | 105,127 ± 8,939 |
+| `setBlock` | 1024 | 103,151 ± 34,972 | 103,009 ± 35,957 |
+| `heightmapRefresh` | 1 | 6,448 ± 0,525 | 6,819 ± 0,833 |
+| `heightmapRefresh` | 64 | 8,289 ± 0,697 | 8,101 ± 0,495 |
+| `heightmapRefresh` | 1024 | 7,437 ± 1,585 | **76,423 ± 2147,865** |
+| `copyIsolated` | 1 | 7,058 ± 3,348 | 6,607 ± 0,273 |
+| `copyIsolated` | 64 | 12,957 ± 3,059 | 12,895 ± 3,495 |
+| `copyIsolated` | 1024 | 20,520 ± 9,433 | 20,107 ± 6,239 |
+
+Every pair but one overlaps inside its error bars. `minestomCopy` and `falcoCopy` are omitted on
+purpose: they measure Minestom's viewer cache leak along with the copy and are not comparable to
+anything, which is why `copyIsolated` exists.
+
+The exception is `falcoHeightmapRefresh` at 1 024 states, and it is not a finding. Its three
+iterations were 212,367, 8,737 and 8,164 µs/op — the second and third sit next to Minestom's 7,437,
+the first is a stall of the loaded machine, and the resulting error bar of ± 2 147 µs is larger than
+the mean by a factor of twenty-eight, which is JMH stating that the trial measured nothing. The two
+warmup iterations of the same trial were 8,506 and 8,106. It has to be rerun on an idle machine
+before anyone treats it as either a regression or its absence.
+
+### What this stage bought and what it cost
+
+The seam costs one object of 24 bytes per chunk: 0,35 % of a fresh chunk of 6 848 bytes, 0,01 % of a
+generated one of roughly two hundred kibibytes, against the 2 911 bytes per chunk stage 2 is planned
+to remove. Nothing in the time measurements survives its own error bars as a difference. The stage is
+accepted with the delta stated rather than rounded to zero.
