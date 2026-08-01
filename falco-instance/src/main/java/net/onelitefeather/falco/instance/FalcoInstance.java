@@ -208,9 +208,29 @@ public class FalcoInstance extends Instance {
      */
     private final Map<BlockVec, Block> currentlyChangingBlocks = new ConcurrentHashMap<>();
 
-    private ChunkSupplier chunkSupplier = FalcoChunk::new;
+    /**
+     * The factory every chunk of this instance is created by.
+     * <p>
+     * Volatile because the setter is public and unsynchronized while the load path reads the field
+     * from a chunk task on another thread. Without it the reader may not only miss the change, it
+     * may see a half-constructed supplier: the value is an arbitrary object handed in by a caller,
+     * and only a volatile write publishes that object safely. Synchronizing the setter instead
+     * would put a lock on the monitor of a public object, which is exactly what callers must not be
+     * able to hold against this instance.
+     * </p>
+     */
+    private volatile ChunkSupplier chunkSupplier = FalcoChunk::new;
 
-    private ChunkLoader chunkLoader;
+    /**
+     * The loader chunks of this instance are read from and written to, a no-op loader when the
+     * instance was built without one.
+     * <p>
+     * Volatile for the same reason as {@link #chunkSupplier}: written by a public unsynchronized
+     * setter, read on the load path from another thread, and the value is a caller object whose
+     * construction has to be visible to that reader.
+     * </p>
+     */
+    private volatile ChunkLoader chunkLoader;
 
     private volatile boolean autoChunkLoad = true;
 

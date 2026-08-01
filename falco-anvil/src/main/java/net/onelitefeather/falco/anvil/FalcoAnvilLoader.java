@@ -39,6 +39,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Stream;
 
 /**
@@ -115,6 +116,16 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     private final Semaphore saveLimit;
     private final int dataVersion;
 
+    /**
+     * The lock which serialises the shutdown of the loader.
+     * <p>
+     * A private lock rather than the monitor of the loader itself, in the shape the region file
+     * already uses. The monitor of a public object is held by whoever holds a reference to it, so a
+     * caller writing {@code synchronized (loader)} could keep the shutdown from ever running.
+     * </p>
+     */
+    private final ReentrantLock closeLock;
+
     private volatile boolean closed;
 
     /**
@@ -159,6 +170,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         this.trackedChunks = new ConcurrentHashMap<>();
         this.saveLimit = new Semaphore(Math.max(Runtime.getRuntime().availableProcessors(), 2));
         this.dataVersion = MinecraftServer.DATA_VERSION;
+        this.closeLock = new ReentrantLock();
 
         // Which directory was chosen, and how many region files are in it, is the first thing
         // somebody needs when a loader returns no chunks. Without this line the choice between the
@@ -345,6 +357,17 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
 
     /**
      * {@inheritDoc}
+     * <p>
+     * The call blocks, and on one path it blocks for a length worth knowing before it is placed in
+     * a tick task. A chunk whose payload no longer fits into the region file is moved into a file
+     * of its own, and a file system which denies a rename while another handle still holds the name
+     * — Windows does, POSIX does not — makes that move repeat. The repetition is bounded by
+     * {@code EXTERNAL_ATTEMPTS * EXTERNAL_RETRY_DELAY} in the region file, which is 100 attempts one
+     * millisecond apart and therefore <strong>100 ms</strong> of waiting per rename, on top of the
+     * write itself. That is longer than a tick. A caller which cannot afford it has to move this
+     * call off the tick thread; {@link #saveChunks(Collection)} does not help, because it waits for
+     * its tasks.
+     * </p>
      *
      * @throws IllegalStateException if the loader was already closed or is closed while the call
      *                               is looking for the region file
@@ -611,46 +634,58 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * handle survives the shutdown. Every later call is rejected, which is what stops a task from
      * opening a file that nobody would close again.
      * </p>
+     * <p>
+     * Two threads calling this at the same time are serialised by a lock the loader keeps to
+     * itself, not by the monitor of the loader. The distinction matters because the loader is
+     * handed to the server and therefore to arbitrary code: a caller holding
+     * {@code synchronized (loader)} must not be able to stop a shutdown.
+     * </p>
      *
      * @throws IOException if a region file cannot be closed
      */
     @Override
-    public synchronized void close() throws IOException {
-        if (this.closed) {
-            return;
-        }
-        // The flag is raised before the cache is emptied. A thread which publishes a handle reads
-        // the flag after publishing it, so either that thread sees the flag or the loop below sees
-        // the handle, and the file is closed in both cases.
-        this.closed = true;
-        IOException failure = null;
+    public void close() throws IOException {
+        this.closeLock.lock();
 
-        for (Long index : List.copyOf(this.regions.keySet())) {
-            RegionHandle handle = this.regions.remove(index);
-
-            if (handle == null) {
-                continue;
+        try {
+            if (this.closed) {
+                return;
             }
-            if (!handle.retire()) {
-                LOGGER.debug("Leaving the region file region={} dim={} to the task which is still using it",
-                        handle.file().path(), this.dimensionLabel);
-                continue;
-            }
+            // The flag is raised before the cache is emptied. A thread which publishes a handle reads
+            // the flag after publishing it, so either that thread sees the flag or the loop below sees
+            // the handle, and the file is closed in both cases.
+            this.closed = true;
+            IOException failure = null;
 
-            try {
-                handle.file().flush();
-                handle.file().close();
-            } catch (IOException exception) {
-                failure = exception;
-                LOGGER.error("Failed to close the region file region={} dim={}", handle.file().path(), this.dimensionLabel, exception);
-            }
-        }
-        this.regions.clear();
-        this.trackedChunks.clear();
-        logSummary();
+            for (Long index : List.copyOf(this.regions.keySet())) {
+                RegionHandle handle = this.regions.remove(index);
 
-        if (failure != null) {
-            throw failure;
+                if (handle == null) {
+                    continue;
+                }
+                if (!handle.retire()) {
+                    LOGGER.debug("Leaving the region file region={} dim={} to the task which is still using it",
+                            handle.file().path(), this.dimensionLabel);
+                    continue;
+                }
+
+                try {
+                    handle.file().flush();
+                    handle.file().close();
+                } catch (IOException exception) {
+                    failure = exception;
+                    LOGGER.error("Failed to close the region file region={} dim={}", handle.file().path(), this.dimensionLabel, exception);
+                }
+            }
+            this.regions.clear();
+            this.trackedChunks.clear();
+            logSummary();
+
+            if (failure != null) {
+                throw failure;
+            }
+        } finally {
+            this.closeLock.unlock();
         }
     }
 
