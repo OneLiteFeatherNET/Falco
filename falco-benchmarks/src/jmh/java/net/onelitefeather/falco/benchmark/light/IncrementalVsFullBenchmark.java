@@ -98,7 +98,7 @@ public class IncrementalVsFullBenchmark {
     /**
      * A caller for whom nothing changed while the pass ran.
      */
-    private static final ToLongFunction<ChunkArea> SETTLED = position -> ChunkLightArea.CLEAN;
+    private static final ToLongFunction<ChunkArea> SETTLED = _ -> ChunkLightArea.CLEAN;
 
     /**
      * Whether the sky light is measured instead of the block light. A tick pays for both.

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.Arrays;
 import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -119,7 +120,7 @@ class LightNibblesTest {
     @Test
     void testAnArrayOfOnlyOneLevelIsRecognisedAsUniform() {
         byte[] source = new byte[LightNibbles.ARRAY_LENGTH];
-        java.util.Arrays.fill(source, (byte) 0x88);
+        Arrays.fill(source, (byte) 0x88);
 
         LightNibbles nibbles = LightNibbles.of(source);
 
@@ -230,7 +231,7 @@ class LightNibblesTest {
     @Test
     void testALevelArrayOfOneRepeatedLevelNeedsNoArray() {
         byte[] levels = new byte[LightNibbles.BLOCK_COUNT];
-        java.util.Arrays.fill(levels, (byte) 7);
+        Arrays.fill(levels, (byte) 7);
 
         LightNibbles nibbles = LightNibbles.ofLevels(levels, 0);
 
@@ -243,7 +244,7 @@ class LightNibblesTest {
         // A whole chunk column keeps the levels of all of its sections in one array, so a section
         // has to be packed out of the middle of it.
         byte[] levels = new byte[LightNibbles.BLOCK_COUNT * 3];
-        java.util.Arrays.fill(levels, LightNibbles.BLOCK_COUNT, LightNibbles.BLOCK_COUNT * 2, (byte) 4);
+        Arrays.fill(levels, LightNibbles.BLOCK_COUNT, LightNibbles.BLOCK_COUNT * 2, (byte) 4);
 
         LightNibbles second = LightNibbles.ofLevels(levels, LightNibbles.BLOCK_COUNT);
 

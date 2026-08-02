@@ -5,6 +5,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.Arrays;
 import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -72,7 +73,7 @@ class BitPackerTest {
     @Test
     void testPackLeavesThePaddingBitsOfEachLongEmpty() {
         int[] values = new int[64];
-        java.util.Arrays.fill(values, 0b11111);
+        Arrays.fill(values, 0b11111);
 
         long[] packed = BitPacker.pack(values, 5);
 

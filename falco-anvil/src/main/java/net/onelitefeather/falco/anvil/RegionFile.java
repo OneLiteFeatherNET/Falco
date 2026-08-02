@@ -143,9 +143,10 @@ public final class RegionFile implements AutoCloseable {
      *
      * @param path the path of the region file
      * @return the opened region file
-     * @throws IOException if the file cannot be opened or holds a broken header
+     * @throws IOException           if the file cannot be opened
+     * @throws RegionFormatException if the header does not describe a usable region file
      */
-    public static RegionFile open(Path path) throws IOException {
+    public static RegionFile open(Path path) throws IOException, RegionFormatException {
         Path parent = path.getParent();
 
         if (parent != null) {
@@ -158,7 +159,10 @@ public final class RegionFile implements AutoCloseable {
 
         try {
             return readHeader(path, channel);
-        } catch (IOException | RuntimeException exception) {
+        } catch (IOException | RuntimeException | RegionFormatException exception) {
+            // RegionFormatException belongs in this list for the same reason the other two do, and
+            // it is easy to miss: it is not an IOException, so leaving it out would return from a
+            // broken header with the channel still open.
             channel.close();
             throw exception;
         }
@@ -172,7 +176,7 @@ public final class RegionFile implements AutoCloseable {
      * @return the region file which is described by the header
      * @throws IOException if the header is incomplete or describes an invalid layout
      */
-    private static RegionFile readHeader(Path path, FileChannel channel) throws IOException {
+    private static RegionFile readHeader(Path path, FileChannel channel) throws IOException, RegionFormatException {
         long size = channel.size();
         int[] locations = new int[RegionConstants.ENTRY_COUNT];
         int[] timestamps = new int[RegionConstants.ENTRY_COUNT];
@@ -183,7 +187,8 @@ public final class RegionFile implements AutoCloseable {
         }
 
         if (size < RegionConstants.HEADER_SIZE) {
-            throw new IOException(
+            throw new RegionFormatException(
+                    RegionFormatException.Reason.HEADER_TOO_SHORT,
                     "The region file " + path + " holds " + size + " bytes which is less than the header size of "
                             + RegionConstants.HEADER_SIZE + " bytes"
             );
@@ -232,9 +237,10 @@ public final class RegionFile implements AutoCloseable {
      * @param chunkX the absolute chunk x coordinate
      * @param chunkZ the absolute chunk z coordinate
      * @return the raw chunk or null if the region file does not hold the chunk
-     * @throws IOException if the chunk cannot be read or holds an invalid header
+     * @throws IOException           if the chunk cannot be read
+     * @throws RegionFormatException if the stored bytes do not describe a usable chunk entry
      */
-    public @Nullable RawChunk readRaw(int chunkX, int chunkZ) throws IOException {
+    public @Nullable RawChunk readRaw(int chunkX, int chunkZ) throws IOException, RegionFormatException {
         ensureOpen();
         int index = RegionConstants.index(chunkX, chunkZ);
 
@@ -254,7 +260,13 @@ public final class RegionFile implements AutoCloseable {
                 if (this.versions.get(index) == version) {
                     return chunk;
                 }
-            } catch (IOException exception) {
+            } catch (IOException | RegionFormatException exception) {
+                // A format fault is caught here as well, and that is load bearing rather than
+                // tidy. A reader whose entry changed under it can read a length or a compression
+                // id that never existed as a whole, which now surfaces as a RegionFormatException
+                // instead of an IOException. Both mean the same thing at this point: if the version
+                // moved, the bytes were torn and the attempt is retried; only an unchanged version
+                // makes it a real failure of the stored data.
                 if (this.versions.get(index) == version) {
                     throw exception;
                 }
@@ -282,9 +294,10 @@ public final class RegionFile implements AutoCloseable {
      * @param chunkX the absolute chunk x coordinate
      * @param chunkZ the absolute chunk z coordinate
      * @return the raw chunk or null if the region file does not hold the chunk
-     * @throws IOException if the chunk cannot be read or holds an invalid header
+     * @throws IOException           if the chunk cannot be read
+     * @throws RegionFormatException if the stored bytes do not describe a usable chunk entry
      */
-    private @Nullable RawChunk readEntry(int index, int chunkX, int chunkZ) throws IOException {
+    private @Nullable RawChunk readEntry(int index, int chunkX, int chunkZ) throws IOException, RegionFormatException {
         int location = this.locations.get(index);
 
         if (location == 0) {
@@ -301,7 +314,8 @@ public final class RegionFile implements AutoCloseable {
         int scheme = head.get() & 0xFF;
 
         if (length <= 0 || length > available) {
-            throw new IOException(
+            throw new RegionFormatException(
+                    RegionFormatException.Reason.CHUNK_LENGTH_OUT_OF_RANGE,
                     "The chunk " + chunkX + "/" + chunkZ + " in " + this.path + " declares a length of " + length
                             + " bytes which does not fit into its " + sectorCount + " sectors"
             );
@@ -591,7 +605,7 @@ public final class RegionFile implements AutoCloseable {
 
                 try {
                     Thread.sleep(EXTERNAL_RETRY_DELAY);
-                } catch (InterruptedException interruption) {
+                } catch (InterruptedException _) {
                     Thread.currentThread().interrupt();
                     throw exception;
                 }
@@ -636,7 +650,7 @@ public final class RegionFile implements AutoCloseable {
      * @return a buffer which holds the requested bytes and is ready to be read
      * @throws IOException if the file ends before the requested amount of bytes was read
      */
-    private static ByteBuffer readFully(FileChannel channel, long position, int length, Path path) throws IOException {
+    private static ByteBuffer readFully(FileChannel channel, long position, int length, Path path) throws IOException, RegionFormatException {
         ByteBuffer buffer = ByteBuffer.allocate(length);
         long offset = position;
 
@@ -644,7 +658,8 @@ public final class RegionFile implements AutoCloseable {
             int read = channel.read(buffer, offset);
 
             if (read < 0) {
-                throw new IOException(
+                throw new RegionFormatException(
+                        RegionFormatException.Reason.TRUNCATED_FILE,
                         "The file " + path + " ended after " + buffer.position() + " of " + length + " expected bytes"
                 );
             }
@@ -672,13 +687,25 @@ public final class RegionFile implements AutoCloseable {
     /**
      * The {@link RawChunk} record holds the untouched payload of a chunk together with the
      * compression scheme which is required to decode it.
+     * <p>
+     * The payload array is not copied, neither on the way in nor on the way out. A record which
+     * copied it would double the cost of every chunk read for a guarantee the load path does not
+     * need, because the array is handed straight from the read to the decompressor and no caller
+     * keeps it. Whoever holds a raw chunk owns the array and must not hand it to a second reader
+     * that writes into it.
+     * </p>
+     * <p>
+     * This type is experimental. The Anvil loader is new and its API may still change while it is
+     * being validated against real worlds.
+     * </p>
      *
      * @param compression the compression scheme of the payload
-     * @param payload     the payload as it is stored on disk
+     * @param payload     the payload as it is stored on disk, not copied
      * @author TheMeinerLP
      * @version 1.0.0
      * @since 0.1.0
      */
+    @ApiStatus.Experimental
     public record RawChunk(ChunkCompression compression, byte[] payload) {
 
         /**

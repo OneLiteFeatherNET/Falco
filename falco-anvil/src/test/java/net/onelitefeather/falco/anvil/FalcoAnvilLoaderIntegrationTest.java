@@ -1,20 +1,30 @@
 package net.onelitefeather.falco.anvil;
 
 import net.kyori.adventure.key.Key;
+import net.kyori.adventure.nbt.BinaryTagIO;
+import net.kyori.adventure.nbt.BinaryTagTypes;
+import net.kyori.adventure.nbt.CompoundBinaryTag;
+import net.kyori.adventure.nbt.ListBinaryTag;
+import net.minestom.server.MinecraftServer;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.block.Block;
+import net.minestom.server.instance.block.BlockHandler;
 import net.minestom.testing.Env;
 import net.minestom.testing.extension.MicrotusExtension;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -53,7 +63,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testLoadingAnAbsentChunkReturnsNull(Env env) throws IOException {
+    void testLoadingAnAbsentChunkReturnsNull(Env env) throws Exception {
         try (FalcoAnvilLoader loader = loader()) {
             Instance instance = env.createEmptyInstance(loader);
 
@@ -62,7 +72,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testTheLoaderReportsParallelSupport() throws IOException {
+    void testTheLoaderReportsParallelSupport() throws Exception {
         try (FalcoAnvilLoader loader = loader()) {
             assertTrue(loader.supportsParallelLoading());
             assertTrue(loader.supportsParallelSaving());
@@ -70,7 +80,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testASavedChunkKeepsItsBlocks(Env env) throws IOException {
+    void testASavedChunkKeepsItsBlocks(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(2, 3).join();
         place(chunk, 0, 40, 0, Block.STONE);
@@ -93,7 +103,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testTheRegionFileIsCreatedInTheDimensionDirectory(Env env) throws IOException {
+    void testTheRegionFileIsCreatedInTheDimensionDirectory(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(0, 0).join();
         place(chunk, 0, 40, 0, Block.STONE);
@@ -107,10 +117,10 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testABlockWithNbtSurvivesTheRoundTrip(Env env) throws IOException {
+    void testABlockWithNbtSurvivesTheRoundTrip(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(0, 0).join();
-        Block sign = Block.OAK_SIGN.withNbt(net.kyori.adventure.nbt.CompoundBinaryTag.builder()
+        Block sign = Block.OAK_SIGN.withNbt(CompoundBinaryTag.builder()
                 .putString("falco_marker", "kept")
                 .build());
         place(chunk, 3, 45, 3, sign);
@@ -130,13 +140,13 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testBlockEntitiesAreStoredWithAbsoluteCoordinates(Env env) throws IOException {
+    void testBlockEntitiesAreStoredWithAbsoluteCoordinates(Env env) throws Exception {
         // The format stores the position of a block entity in world coordinates. Writing chunk
         // local ones still round trips through this loader, but the file would not be readable
         // by the game or by any other tool.
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(2, 3).join();
-        Block sign = Block.OAK_SIGN.withNbt(net.kyori.adventure.nbt.CompoundBinaryTag.builder()
+        Block sign = Block.OAK_SIGN.withNbt(CompoundBinaryTag.builder()
                 .putString("falco_marker", "kept")
                 .build());
         place(chunk, 5, 45, 7, sign);
@@ -145,22 +155,22 @@ class FalcoAnvilLoaderIntegrationTest {
             writer.saveChunk(chunk);
         }
 
-        net.kyori.adventure.nbt.CompoundBinaryTag data = readStoredChunk(2, 3);
-        net.kyori.adventure.nbt.ListBinaryTag entities =
-                data.getList("block_entities", net.kyori.adventure.nbt.BinaryTagTypes.COMPOUND);
+        CompoundBinaryTag data = readStoredChunk(2, 3);
+        ListBinaryTag entities =
+                data.getList("block_entities", BinaryTagTypes.COMPOUND);
 
         assertEquals(1, entities.size());
-        net.kyori.adventure.nbt.CompoundBinaryTag entity = entities.getCompound(0);
+        CompoundBinaryTag entity = entities.getCompound(0);
         assertEquals(2 * 16 + 5, entity.getInt("x"));
         assertEquals(45, entity.getInt("y"));
         assertEquals(3 * 16 + 7, entity.getInt("z"));
     }
 
     @Test
-    void testABlockEntityInAFarChunkIsRestoredAtItsPosition(Env env) throws IOException {
+    void testABlockEntityInAFarChunkIsRestoredAtItsPosition(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(5, 9).join();
-        Block sign = Block.OAK_SIGN.withNbt(net.kyori.adventure.nbt.CompoundBinaryTag.builder()
+        Block sign = Block.OAK_SIGN.withNbt(CompoundBinaryTag.builder()
                 .putString("falco_marker", "far")
                 .build());
         place(chunk, 1, 44, 2, sign);
@@ -185,22 +195,22 @@ class FalcoAnvilLoaderIntegrationTest {
      * @return the stored chunk data
      * @throws IOException if the chunk cannot be read
      */
-    private net.kyori.adventure.nbt.CompoundBinaryTag readStoredChunk(int chunkX, int chunkZ) throws IOException {
+    private CompoundBinaryTag readStoredChunk(int chunkX, int chunkZ) throws Exception {
         Path region = this.worldRoot.resolve("dimensions/minecraft/overworld/region")
                 .resolve("r." + (chunkX >> 5) + "." + (chunkZ >> 5) + ".mca");
 
         try (RegionFile file = RegionFile.open(region)) {
             RegionFile.RawChunk raw = file.readRaw(chunkX, chunkZ);
             assertNotNull(raw);
-            return net.kyori.adventure.nbt.BinaryTagIO.unlimitedReader().read(
-                    new java.io.ByteArrayInputStream(raw.decompress()),
-                    net.kyori.adventure.nbt.BinaryTagIO.Compression.NONE
+            return BinaryTagIO.unlimitedReader().read(
+                    new ByteArrayInputStream(raw.decompress()),
+                    BinaryTagIO.Compression.NONE
             );
         }
     }
 
     @Test
-    void testBlocksWithPropertiesKeepThem(Env env) throws IOException {
+    void testBlocksWithPropertiesKeepThem(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(1, 1).join();
         Block slab = Block.OAK_SLAB.withProperty("type", "top");
@@ -219,7 +229,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testSavingManyChunksInParallelKeepsEveryOne(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testSavingManyChunksInParallelKeepsEveryOne(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         Instance instance = env.createEmptyInstance(loader());
         List<Chunk> chunks = new ArrayList<>();
 
@@ -247,7 +257,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testLoadingInParallelReturnsEveryChunk(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testLoadingInParallelReturnsEveryChunk(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         Instance instance = env.createEmptyInstance(loader());
         List<Chunk> chunks = new ArrayList<>();
 
@@ -276,7 +286,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testTheDiagnosticsCountTheProcessedChunks(Env env) throws IOException {
+    void testTheDiagnosticsCountTheProcessedChunks(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(0, 0).join();
         place(chunk, 0, 40, 0, Block.STONE);
@@ -292,7 +302,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testACorruptedChunkFailsInsteadOfLookingAbsent(Env env) throws IOException {
+    void testACorruptedChunkFailsInsteadOfLookingAbsent(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(0, 0).join();
         place(chunk, 0, 40, 0, Block.STONE);
@@ -305,7 +315,7 @@ class FalcoAnvilLoaderIntegrationTest {
         // as an absent chunk would make the server regenerate it and overwrite the real data.
         Path region = this.worldRoot.resolve("dimensions/minecraft/overworld/region/r.0.0.mca");
         byte[] bytes = Files.readAllBytes(region);
-        java.util.Arrays.fill(bytes, RegionConstants.HEADER_SIZE + 5, bytes.length, (byte) 0x7F);
+        Arrays.fill(bytes, RegionConstants.HEADER_SIZE + 5, bytes.length, (byte) 0x7F);
         Files.write(region, bytes);
 
         try (FalcoAnvilLoader reader = loader()) {
@@ -320,11 +330,11 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testABlockHandlerSurvivesTheRoundTrip(Env env) throws IOException {
+    void testABlockHandlerSurvivesTheRoundTrip(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(0, 0).join();
-        net.minestom.server.instance.block.BlockHandler handler =
-                net.minestom.server.MinecraftServer.getBlockManager().getHandlerOrDummy("minecraft:sign");
+        BlockHandler handler =
+                MinecraftServer.getBlockManager().getHandlerOrDummy("minecraft:sign");
         place(chunk, 6, 46, 6, Block.OAK_SIGN.withHandler(handler));
 
         try (FalcoAnvilLoader writer = loader()) {
@@ -342,11 +352,11 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testTheHandlerIdIsNotKeptAsBlockNbt(Env env) throws IOException {
+    void testTheHandlerIdIsNotKeptAsBlockNbt(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(0, 0).join();
-        net.minestom.server.instance.block.BlockHandler handler =
-                net.minestom.server.MinecraftServer.getBlockManager().getHandlerOrDummy("minecraft:sign");
+        BlockHandler handler =
+                MinecraftServer.getBlockManager().getHandlerOrDummy("minecraft:sign");
         place(chunk, 7, 46, 7, Block.OAK_SIGN.withHandler(handler));
 
         try (FalcoAnvilLoader writer = loader()) {
@@ -363,7 +373,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testUnloadingEveryChunkOfARegionClosesItsFile(Env env) throws IOException {
+    void testUnloadingEveryChunkOfARegionClosesItsFile(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
 
         try (FalcoAnvilLoader loader = loader()) {
@@ -389,7 +399,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testAnUnloadedChunkCanBeLoadedAgain(Env env) throws IOException {
+    void testAnUnloadedChunkCanBeLoadedAgain(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
 
         try (FalcoAnvilLoader loader = loader()) {
@@ -409,7 +419,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testTheAmountOfOpenRegionFilesStaysBounded(Env env) throws IOException {
+    void testTheAmountOfOpenRegionFilesStaysBounded(Env env) throws Exception {
         // Chunks are unloaded without telling the loader which of its region files became unused,
         // so the loader has to bound the amount of open files itself instead of counting users.
         Instance instance = env.createEmptyInstance(loader());
@@ -426,7 +436,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testAChunkStaysReadableAfterItsRegionFileWasEvicted(Env env) throws IOException {
+    void testAChunkStaysReadableAfterItsRegionFileWasEvicted(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
 
         try (FalcoAnvilLoader loader = new FalcoAnvilLoader(this.worldRoot, OVERWORLD, 1)) {
@@ -447,7 +457,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testAChunkWithoutARegionFileIsCountedAsSkipped(Env env) throws IOException {
+    void testAChunkWithoutARegionFileIsCountedAsSkipped(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
 
         try (FalcoAnvilLoader loader = loader()) {
@@ -460,7 +470,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testAChunkWithoutAnEntryInItsRegionFileIsCountedAsSkipped(Env env) throws IOException {
+    void testAChunkWithoutAnEntryInItsRegionFileIsCountedAsSkipped(Env env) throws Exception {
         // The region file exists because a neighbour of the chunk was written into it, so the two
         // reasons "no file at all" and "no entry in the file" can only be told apart by the counter.
         Instance instance = env.createEmptyInstance(loader());
@@ -481,17 +491,17 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testAPartiallyGeneratedChunkIsCountedUnderItsStatus(Env env) throws IOException {
+    void testAPartiallyGeneratedChunkIsCountedUnderItsStatus(Env env) throws Exception {
         // minecraft:features is what a chunk carries which the game generated but never finished,
         // and it is the value a user has to see instead of a bare "not fully generated".
         Instance instance = env.createEmptyInstance(loader());
-        writeRawChunk(0, 0, net.kyori.adventure.nbt.CompoundBinaryTag.builder()
+        writeRawChunk(0, 0, CompoundBinaryTag.builder()
                 .putString("Status", "minecraft:features")
                 .build());
-        writeRawChunk(1, 0, net.kyori.adventure.nbt.CompoundBinaryTag.builder()
+        writeRawChunk(1, 0, CompoundBinaryTag.builder()
                 .putString("Status", "minecraft:features")
                 .build());
-        writeRawChunk(2, 0, net.kyori.adventure.nbt.CompoundBinaryTag.builder()
+        writeRawChunk(2, 0, CompoundBinaryTag.builder()
                 .putString("status", "minecraft:noise")
                 .build());
 
@@ -502,7 +512,7 @@ class FalcoAnvilLoaderIntegrationTest {
 
             assertEquals(3, loader.diagnostics().chunksSkippedAsPartial());
             assertEquals(
-                    java.util.Map.of("minecraft:features", 2L, "minecraft:noise", 1L),
+                    Map.of("minecraft:features", 2L, "minecraft:noise", 1L),
                     loader.diagnostics().partialChunkStatuses()
             );
             assertEquals(0, loader.diagnostics().chunksSkippedWithoutRegionFile());
@@ -511,7 +521,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testTheResolvedRegionDirectoryIsTheDimensionOne() throws IOException {
+    void testTheResolvedRegionDirectoryIsTheDimensionOne() throws Exception {
         Files.createDirectories(this.worldRoot.resolve("dimensions/minecraft/overworld/region"));
 
         try (FalcoAnvilLoader loader = loader()) {
@@ -521,7 +531,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testTheResolvedRegionDirectoryFallsBackToTheOlderLayout() throws IOException {
+    void testTheResolvedRegionDirectoryFallsBackToTheOlderLayout() throws Exception {
         Files.createDirectories(this.worldRoot.resolve("region"));
 
         try (FalcoAnvilLoader loader = loader()) {
@@ -531,7 +541,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testAnEmptyDimensionDirectoryStillWinsOverAFilledOlderOne(Env env) throws IOException {
+    void testAnEmptyDimensionDirectoryStillWinsOverAFilledOlderOne(Env env) throws Exception {
         // This is the trap the diagnostics exist for, not a behaviour anybody decided on: an empty
         // dimension directory next to a filled 'region' one sends the loader looking into the empty
         // one while every tool which scans the world finds the chunks in the other. The test pins
@@ -560,12 +570,12 @@ class FalcoAnvilLoaderIntegrationTest {
      * @param data   the chunk data to store
      * @throws IOException if the chunk cannot be written
      */
-    private void writeRawChunk(int chunkX, int chunkZ, net.kyori.adventure.nbt.CompoundBinaryTag data) throws IOException {
+    private void writeRawChunk(int chunkX, int chunkZ, CompoundBinaryTag data) throws Exception {
         Path directory = this.worldRoot.resolve("dimensions/minecraft/overworld/region");
         Files.createDirectories(directory);
-        java.io.ByteArrayOutputStream target = new java.io.ByteArrayOutputStream();
-        net.kyori.adventure.nbt.BinaryTagIO.writer().writeNamed(
-                java.util.Map.entry("", data), target, net.kyori.adventure.nbt.BinaryTagIO.Compression.NONE
+        ByteArrayOutputStream target = new ByteArrayOutputStream();
+        BinaryTagIO.writer().writeNamed(
+                Map.entry("", data), target, BinaryTagIO.Compression.NONE
         );
 
         try (RegionFile file = RegionFile.open(directory.resolve("r." + (chunkX >> 5) + "." + (chunkZ >> 5) + ".mca"))) {
@@ -574,7 +584,7 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
-    void testUnloadingAForeignChunkIsIgnored(Env env) throws IOException {
+    void testUnloadingAForeignChunkIsIgnored(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(9, 9).join();
 

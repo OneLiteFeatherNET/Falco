@@ -95,7 +95,9 @@ class ServerStackTest {
         String note = ServerStack.FALCO.note();
 
         assertTrue(note.contains("FalcoInstance"), note);
-        assertTrue(note.contains("FalcoChunk"), note);
+        // The reason changed with setChunkLifecycle: the combination is possible now, and what keeps
+        // the instance out of the demo is that it would make the two servers differ in three things.
+        assertTrue(note.contains("FalcoLightingChunk"), note);
         assertEquals("", ServerStack.MINESTOM.note());
     }
 

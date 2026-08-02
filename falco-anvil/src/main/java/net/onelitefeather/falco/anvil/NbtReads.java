@@ -49,13 +49,29 @@ public final class NbtReads {
      * @param compound the compound which holds the array
      * @param key      the key of the array
      * @return the entries of the array
-     * @throws IOException if the key is missing or does not hold a long array
+     * @throws ChunkDataException if the key is missing or does not hold a long array
      */
-    public static long[] longArray(CompoundBinaryTag compound, String key) throws IOException {
+    public static long[] longArray(CompoundBinaryTag compound, String key) throws ChunkDataException {
         if (!(compound.get(key) instanceof LongArrayBinaryTag tag)) {
             throw missing(compound, key, "a long array");
         }
+        return longArray(tag);
+    }
 
+    /**
+     * Reads a long array and copies every entry of it.
+     * <p>
+     * This overload takes an array a caller has already resolved. A caller which tested the type
+     * itself, because it wants to describe the failure in its own words, would otherwise have to
+     * ask the compound for the key a second time, and nothing would tie that second answer to the
+     * tag the caller checked.
+     * </p>
+     *
+     * @param tag the array to read
+     * @return the entries of the array
+     */
+    @Contract(pure = true, value = "_ -> new")
+    static long[] longArray(LongArrayBinaryTag tag) {
         long[] values = new long[tag.size()];
 
         for (int index = 0; index < values.length; index++) {
@@ -70,9 +86,9 @@ public final class NbtReads {
      * @param compound the compound which holds the array
      * @param key      the key of the array
      * @return the entries of the array
-     * @throws IOException if the key is missing or does not hold an int array
+     * @throws ChunkDataException if the key is missing or does not hold an int array
      */
-    public static int[] intArray(CompoundBinaryTag compound, String key) throws IOException {
+    public static int[] intArray(CompoundBinaryTag compound, String key) throws ChunkDataException {
         if (!(compound.get(key) instanceof IntArrayBinaryTag tag)) {
             throw missing(compound, key, "an int array");
         }
@@ -91,9 +107,9 @@ public final class NbtReads {
      * @param compound the compound which holds the nested compound
      * @param key      the key of the nested compound
      * @return the nested compound
-     * @throws IOException if the key is missing or does not hold a compound
+     * @throws ChunkDataException if the key is missing or does not hold a compound
      */
-    public static CompoundBinaryTag compound(CompoundBinaryTag compound, String key) throws IOException {
+    public static CompoundBinaryTag compound(CompoundBinaryTag compound, String key) throws ChunkDataException {
         if (!(compound.get(key) instanceof CompoundBinaryTag tag)) {
             throw missing(compound, key, "a compound");
         }
@@ -121,14 +137,15 @@ public final class NbtReads {
      * @param key         the key of the list
      * @param elementType the type every element of the list has to use
      * @return the list
-     * @throws IOException if the key is missing, does not hold a list or holds other elements
+     * @throws ChunkDataException if the key is missing, does not hold a list or holds other elements
      */
-    public static ListBinaryTag list(CompoundBinaryTag compound, String key, BinaryTagType<? extends BinaryTag> elementType) throws IOException {
+    public static ListBinaryTag list(CompoundBinaryTag compound, String key, BinaryTagType<? extends BinaryTag> elementType) throws ChunkDataException {
         if (!(compound.get(key) instanceof ListBinaryTag tag)) {
             throw missing(compound, key, "a list");
         }
         if (tag.size() > 0 && tag.elementType() != elementType) {
-            throw new IOException("The key '" + key + "' holds a list of another element type than the expected one");
+            throw new ChunkDataException(ChunkDataException.Reason.UNEXPECTED_LIST_ELEMENT_TYPE,
+                    "The key '" + key + "' holds a list of another element type than the expected one");
         }
         return tag;
     }
@@ -155,9 +172,9 @@ public final class NbtReads {
      * @param compound the compound which holds the value
      * @param key      the key of the value
      * @return the value
-     * @throws IOException if the key is missing or does not hold a string
+     * @throws ChunkDataException if the key is missing or does not hold a string
      */
-    public static String string(CompoundBinaryTag compound, String key) throws IOException {
+    public static String string(CompoundBinaryTag compound, String key) throws ChunkDataException {
         if (!(compound.get(key) instanceof StringBinaryTag tag)) {
             throw missing(compound, key, "a string");
         }
@@ -183,9 +200,9 @@ public final class NbtReads {
      * @param compound the compound which holds the value
      * @param key      the key of the value
      * @return the value
-     * @throws IOException if the key is missing or does not hold a number
+     * @throws ChunkDataException if the key is missing or does not hold a number
      */
-    public static int integer(CompoundBinaryTag compound, String key) throws IOException {
+    public static int integer(CompoundBinaryTag compound, String key) throws ChunkDataException {
         if (!(compound.get(key) instanceof NumberBinaryTag tag)) {
             throw missing(compound, key, "a number");
         }
@@ -214,9 +231,10 @@ public final class NbtReads {
      * @return the error to report
      */
     @Contract(pure = true, value = "_, _, _ -> new")
-    private static IOException missing(CompoundBinaryTag compound, String key, String expected) {
+    private static ChunkDataException missing(CompoundBinaryTag compound, String key, String expected) {
         BinaryTag actual = compound.get(key);
         String description = actual == null ? "is absent" : "holds " + actual.type();
-        return new IOException("The key '" + key + "' " + description + " but " + expected + " was expected");
+        return new ChunkDataException(ChunkDataException.Reason.MISSING_OR_MISTYPED_KEY,
+                "The key '" + key + "' " + description + " but " + expected + " was expected");
     }
 }

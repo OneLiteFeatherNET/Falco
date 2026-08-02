@@ -101,14 +101,15 @@ public enum ChunkCompression {
      *
      * @param id the identifier to resolve
      * @return the matching compression scheme
-     * @throws IOException if no supported scheme uses the given identifier
+     * @throws RegionFormatException if no supported scheme uses the given identifier
      */
-    public static ChunkCompression fromId(int id) throws IOException {
+    public static ChunkCompression fromId(int id) throws RegionFormatException {
         return switch (id & ~EXTERNAL_FLAG) {
             case 1 -> GZIP;
             case 2 -> ZLIB;
             case 3 -> NONE;
-            default -> throw new IOException(
+            default -> throw new RegionFormatException(
+                    RegionFormatException.Reason.UNSUPPORTED_COMPRESSION,
                     "The compression scheme " + id + " is not supported. Only gzip (1), zlib (2) and none (3) can be read"
             );
         };
@@ -185,13 +186,12 @@ public enum ChunkCompression {
             return target.toByteArray();
         }
 
-        Deflater deflater = new Deflater(level);
-
-        try (OutputStream stream = new DeflaterOutputStream(target, deflater)) {
+        // A deflater holds native memory which the stream does not release on its own. Closing it
+        // ends it, and the stream is closed before it because it still needs a live deflater to
+        // write out the last block.
+        try (Deflater deflater = new Deflater(level);
+             OutputStream stream = new DeflaterOutputStream(target, deflater)) {
             stream.write(payload);
-        } finally {
-            // A deflater holds native memory which the stream does not release on its own.
-            deflater.end();
         }
         return target.toByteArray();
     }

@@ -18,6 +18,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * The {@link ChunkLightScheduler} class turns "a block changed somewhere" into "the light of that
@@ -107,6 +109,22 @@ public final class ChunkLightScheduler {
     private final ChunkLightArea area;
     private final Executor executor;
     private final int maxAreaSize;
+    private final SkyLight skyLight;
+
+    /**
+     * Where failures are reported, or null for the exception manager of the running server.
+     * <p>
+     * Null rather than a captured default, for the same reason the anvil loader resolves its sink
+     * per failure: {@code MinecraftServer.getExceptionManager()} needs a server process, and a
+     * scheduler built before one exists would die in its own error path.
+     * </p>
+     */
+    private final @Nullable Consumer<Throwable> failureSink;
+
+    /**
+     * What is told about a finished area, given the claimed chunks and the written ones.
+     */
+    private final BiConsumer<List<ChunkArea>, List<ChunkArea>> areaCompleted;
 
     private final Map<ChunkArea, Long> dirty = new ConcurrentHashMap<>();
     private final Set<ChunkArea> inFlight = ConcurrentHashMap.newKeySet();
@@ -133,12 +151,21 @@ public final class ChunkLightScheduler {
      *                                  amount of kept chunks is negative
      */
     public ChunkLightScheduler(ChunkLightService service, Executor executor, int maxAreaSize, int maxCachedChunks) {
-        if (maxAreaSize < 1) {
-            throw new IllegalArgumentException("An area has to be able to hold at least one chunk but the cap was " + maxAreaSize);
-        }
-        this.area = new ChunkLightArea(service, maxCachedChunks);
-        this.executor = executor;
-        this.maxAreaSize = maxAreaSize;
+        this(builder(service).executor(executor).maxAreaSize(maxAreaSize).maxCachedChunks(maxCachedChunks));
+    }
+
+    /**
+     * Creates a scheduler from the values collected by a builder.
+     *
+     * @param settings the builder which holds the configured values
+     */
+    private ChunkLightScheduler(Builder settings) {
+        this.area = new ChunkLightArea(settings.service, settings.maxCachedChunks);
+        this.executor = settings.executor == null ? defaultExecutor() : settings.executor;
+        this.maxAreaSize = settings.maxAreaSize;
+        this.skyLight = settings.skyLight;
+        this.failureSink = settings.failureSink;
+        this.areaCompleted = settings.areaCompleted;
     }
 
     /**
@@ -163,9 +190,23 @@ public final class ChunkLightScheduler {
      * that chunk is being ticked by the server.
      * </p>
      *
+     * <p>
+     * This is public so the threading policy and the area size stay independent of one another. The
+     * three and four parameter constructors take both, so a caller who only wants a different area
+     * size would otherwise have to invent an executor and would silently replace this policy:
+     * </p>
+     * <pre>{@code
+     * new ChunkLightScheduler(service, ChunkLightScheduler.defaultExecutor(), 8);
+     * }</pre>
+     * <p>
+     * Every call builds a new executor with its own bound. Two schedulers built from two calls do
+     * not share a limit; pass one instance to both if that is what you want.
+     * </p>
+     *
      * @return an executor which runs areas on virtual threads, bounded by the processor count
      */
-    private static Executor defaultExecutor() {
+    @Contract(pure = true)
+    public static Executor defaultExecutor() {
         Semaphore limit = new Semaphore(Math.max(Runtime.getRuntime().availableProcessors(), 2));
 
         return task -> Thread.startVirtualThread(() -> {
@@ -176,6 +217,240 @@ public final class ChunkLightScheduler {
                 limit.release();
             }
         });
+    }
+
+    /**
+     * Returns a builder for a scheduler whose defaults are those of the constructors.
+     * <p>
+     * The service is the only required value and therefore stands here rather than in a slot. The
+     * builder reaches what the constructors cannot: the kept-chunk count without also naming an
+     * executor and an area size, the sky light policy, the failure sink and the completion observer.
+     * </p>
+     *
+     * @param service the service which computes and writes the light
+     * @return a new builder with the defaults of the constructors
+     */
+    @Contract(value = "_ -> new", pure = true)
+    public static Builder builder(ChunkLightService service) {
+        return new Builder(service, null, DEFAULT_MAX_AREA_SIZE, ChunkLightArea.DEFAULT_MAX_CACHED_CHUNKS,
+                SkyLight.FROM_DIMENSION, null, (group, written) -> {
+        });
+    }
+
+    /**
+     * Decides whether a pass computes sky light.
+     * <p>
+     * The two passes are not symmetrical, which is why this is a three-state and not a flag per
+     * kind of light: only the block light pass yields the chunks that were written, and entries
+     * leave the dirty set through those. A scheduler without a block light pass would never clear
+     * its dirty set, so that configuration is deliberately not representable.
+     * </p>
+     *
+     * @author TheMeinerLP
+     * @version 1.0.0
+     * @since 0.4.0
+     */
+    @ApiStatus.Experimental
+    public enum SkyLight {
+
+        /**
+         * Asks the dimension on every pass, which is what the scheduler has always done.
+         */
+        FROM_DIMENSION,
+
+        /**
+         * Never computes sky light, even in a dimension which carries it.
+         * <p>
+         * The case this exists for is a lobby under a closed roof on an overworld dimension: the
+         * sky pass reads every block state a second time and writes a result nobody can see.
+         * </p>
+         */
+        DISABLED,
+
+        /**
+         * Always computes sky light, even in a dimension which carries none.
+         */
+        ENABLED;
+
+        /**
+         * Decides whether the sky pass runs for the given instance.
+         *
+         * @param instance the instance whose chunks are lit
+         * @return true if the pass runs, otherwise false
+         */
+        boolean appliesTo(Instance instance) {
+            return switch (this) {
+                case FROM_DIMENSION -> instance.getCachedDimensionType().hasSkylight();
+                case DISABLED -> false;
+                case ENABLED -> true;
+            };
+        }
+    }
+
+    /**
+     * Collects the values of a scheduler before it is built.
+     * <p>
+     * <b>Immutable.</b> Every slot returns a new builder and leaves the one it was called on
+     * untouched, so a half configured builder can be shared, stored and derived from without anyone
+     * having to reason about who changes it. That is also what an architecture rule requires here:
+     * a class which declares a field from {@code java.util.concurrent} — the {@code Executor} — has
+     * to publish every field safely, and final fields do.
+     * </p>
+     * <p>
+     * The executor is the one value not resolved until {@link #build()}, so a builder which is
+     * never built does not start a thread pool it does not need, and two schedulers from one builder
+     * each get their own bound.
+     * </p>
+     * <p>
+     * This type is experimental, like everything else in this package.
+     * </p>
+     *
+     * @author TheMeinerLP
+     * @version 1.0.0
+     * @since 0.4.0
+     */
+    @ApiStatus.Experimental
+    public static final class Builder {
+
+        private final ChunkLightService service;
+        private final @Nullable Executor executor;
+        private final int maxAreaSize;
+        private final int maxCachedChunks;
+        private final SkyLight skyLight;
+        private final @Nullable Consumer<Throwable> failureSink;
+        private final BiConsumer<List<ChunkArea>, List<ChunkArea>> areaCompleted;
+
+        private Builder(ChunkLightService service, @Nullable Executor executor, int maxAreaSize,
+                        int maxCachedChunks, SkyLight skyLight, @Nullable Consumer<Throwable> failureSink,
+                        BiConsumer<List<ChunkArea>, List<ChunkArea>> areaCompleted) {
+            this.service = service;
+            this.executor = executor;
+            this.maxAreaSize = maxAreaSize;
+            this.maxCachedChunks = maxCachedChunks;
+            this.skyLight = skyLight;
+            this.failureSink = failureSink;
+            this.areaCompleted = areaCompleted;
+        }
+
+        /**
+         * Sets the executor which runs one area per task.
+         * <p>
+         * The default is {@link ChunkLightScheduler#defaultExecutor()}, resolved when the scheduler
+         * is built. A caller who only wants a different area size or cache size no longer has to
+         * name one, which is what this builder exists for.
+         * </p>
+         *
+         * @param executor the executor which runs one area per task
+         * @return a new builder with this executor
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder executor(Executor executor) {
+            return new Builder(this.service, executor, this.maxAreaSize, this.maxCachedChunks,
+                    this.skyLight, this.failureSink, this.areaCompleted);
+        }
+
+        /**
+         * Sets the largest amount of chunks a single area may hold.
+         *
+         * @param maxAreaSize the largest amount of chunks a single area may hold
+         * @return a new builder with this area size
+         * @throws IllegalArgumentException if the size is smaller than one
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder maxAreaSize(int maxAreaSize) {
+            if (maxAreaSize < 1) {
+                throw new IllegalArgumentException("An area has to be able to hold at least one chunk but the cap was " + maxAreaSize);
+            }
+            return new Builder(this.service, this.executor, maxAreaSize, this.maxCachedChunks,
+                    this.skyLight, this.failureSink, this.areaCompleted);
+        }
+
+        /**
+         * Sets how many chunks keep their light between two passes.
+         * <p>
+         * Zero keeps none and recalculates every chunk of every pass. This is the value that was
+         * reachable only through the four parameter constructor, and therefore only together with
+         * an executor and an area size.
+         * </p>
+         *
+         * @param maxCachedChunks the amount of chunks whose light is kept between two passes
+         * @return a new builder with this cache size
+         * @throws IllegalArgumentException if the amount is negative
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder maxCachedChunks(int maxCachedChunks) {
+            if (maxCachedChunks < 0) {
+                throw new IllegalArgumentException("A negative amount of kept chunks makes no sense but " + maxCachedChunks + " was given");
+            }
+            return new Builder(this.service, this.executor, this.maxAreaSize, maxCachedChunks,
+                    this.skyLight, this.failureSink, this.areaCompleted);
+        }
+
+        /**
+         * Sets whether a pass computes sky light.
+         *
+         * @param skyLight the sky light policy of the scheduler
+         * @return a new builder with this policy
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder skyLight(SkyLight skyLight) {
+            return new Builder(this.service, this.executor, this.maxAreaSize, this.maxCachedChunks,
+                    skyLight, this.failureSink, this.areaCompleted);
+        }
+
+        /**
+         * Sets where the scheduler reports the failure of an area.
+         * <p>
+         * This moves the sink, not the control flow: the chunks of a failed area stay dirty and are
+         * computed again on the next tick, because a half written light result would be worse than
+         * a late one.
+         * </p>
+         *
+         * @param failureSink the sink which receives the failure of an area
+         * @return a new builder with this sink
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder onFailure(Consumer<Throwable> failureSink) {
+            return new Builder(this.service, this.executor, this.maxAreaSize, this.maxCachedChunks,
+                    this.skyLight, failureSink, this.areaCompleted);
+        }
+
+        /**
+         * Sets what is told about every finished area.
+         * <p>
+         * The observer receives the chunks the pass claimed and the chunks it actually wrote; the
+         * difference between the two is the chunks that changed while the area was being computed
+         * and therefore stayed dirty. It carries no duration: whoever supplies the executor wraps
+         * the task and measures the same span without a further type.
+         * </p>
+         * <p>
+         * The call happens on the thread of the executor, inside the guarded body of the pass — an
+         * observer which throws is reported through {@link #onFailure(Consumer)} like any other
+         * failure of the area.
+         * </p>
+         *
+         * @param areaCompleted the observer of claimed and written chunks
+         * @return a new builder with this observer
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder onAreaCompleted(BiConsumer<List<ChunkArea>, List<ChunkArea>> areaCompleted) {
+            return new Builder(this.service, this.executor, this.maxAreaSize, this.maxCachedChunks,
+                    this.skyLight, this.failureSink, areaCompleted);
+        }
+
+        /**
+         * Builds a scheduler for one instance.
+         * <p>
+         * Every call returns an independent scheduler. Bind each of them to exactly one instance,
+         * as the class comment requires.
+         * </p>
+         *
+         * @return a new scheduler with the configured values
+         */
+        @Contract(value = "-> new", pure = true)
+        public ChunkLightScheduler build() {
+            return new ChunkLightScheduler(this);
+        }
     }
 
     /**
@@ -401,6 +676,19 @@ public final class ChunkLightScheduler {
      * result would be far worse than a late one. Clearing the in flight marks happens in every
      * case, because a mark that survives a failure freezes its chunks forever.
      * </p>
+     * <p>
+     * A chunk which is no longer part of the instance is dropped rather than computed. Only a
+     * completed computation used to clear an entry, and a chunk that is not loaded is never
+     * computed, so its entry survived every following pass: claimed again on every tick, released
+     * again, never clean. The dirty set grew for the lifetime of the server, by one entry per chunk
+     * that was ever edited and then unloaded. The kept light of those chunks needs no handling here,
+     * because {@code ChunkLightArea#computeIncrementally} already drops it when it finds no chunk.
+     * </p>
+     * <p>
+     * Both removals are conditional on the recorded revision for the same reason: a change which
+     * arrived while the area was being computed must survive the pass, whether the chunk is still
+     * loaded or not.
+     * </p>
      *
      * @param instance the instance whose chunks are lit
      * @param group    the chunks of the area
@@ -415,7 +703,7 @@ public final class ChunkLightScheduler {
 
             List<ChunkArea> written = this.area.computeIncrementally(instance, group, false, this::revisionOf);
 
-            if (instance.getCachedDimensionType().hasSkylight()) {
+            if (this.skyLight.appliesTo(instance)) {
                 this.area.computeIncrementally(instance, group, true, this::revisionOf);
             }
 
@@ -423,6 +711,14 @@ public final class ChunkLightScheduler {
                 this.dirty.remove(position, recorded.get(position));
                 deliver(instance, position);
             }
+
+            for (ChunkArea position : group) {
+                if (instance.getChunk(position.x(), position.z()) == null) {
+                    this.dirty.remove(position, recorded.get(position));
+                }
+            }
+
+            this.areaCompleted.accept(group, written);
         } catch (Throwable throwable) {
             report(throwable);
         } finally {
@@ -466,12 +762,21 @@ public final class ChunkLightScheduler {
     }
 
     /**
-     * Reports a failure of one area to the exception manager of the server.
+     * Reports a failure of one area to the configured sink, or to the exception manager.
+     * <p>
+     * The default is resolved here rather than when the scheduler is built, so a scheduler created
+     * before {@code MinecraftServer.init()} does not fail with a null pointer instead of the failure
+     * it was asked to report.
+     * </p>
      *
      * @param throwable the failure to report
      */
-    private static void report(Throwable throwable) {
-        MinecraftServer.getExceptionManager().handleException(throwable);
+    private void report(Throwable throwable) {
+        if (this.failureSink == null) {
+            MinecraftServer.getExceptionManager().handleException(throwable);
+            return;
+        }
+        this.failureSink.accept(throwable);
     }
 
     /**

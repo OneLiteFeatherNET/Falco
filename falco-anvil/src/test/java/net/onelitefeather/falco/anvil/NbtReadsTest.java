@@ -34,7 +34,7 @@ class NbtReadsTest {
         LongArrayBinaryTag tag = LongArrayBinaryTag.longArrayBinaryTag(1L, 2L, 3L, 4L);
         int visited = 0;
 
-        for (long ignored : tag) {
+        for (long _ : tag) {
             visited++;
         }
 
@@ -43,7 +43,7 @@ class NbtReadsTest {
     }
 
     @Test
-    void testLongArrayReadsEveryEntry() throws IOException {
+    void testLongArrayReadsEveryEntry() throws Exception {
         CompoundBinaryTag compound = CompoundBinaryTag.builder()
                 .put("data", LongArrayBinaryTag.longArrayBinaryTag(1L, 2L, 3L, 4L))
                 .build();
@@ -55,7 +55,7 @@ class NbtReadsTest {
     void testLongArrayFailsForAMissingKey() {
         CompoundBinaryTag compound = CompoundBinaryTag.empty();
 
-        IOException exception = assertThrows(IOException.class, () -> NbtReads.longArray(compound, "data"));
+        ChunkDataException exception = assertThrows(ChunkDataException.class, () -> NbtReads.longArray(compound, "data"));
 
         assertTrue(exception.getMessage().contains("data"));
     }
@@ -64,11 +64,11 @@ class NbtReadsTest {
     void testLongArrayFailsForAWrongType() {
         CompoundBinaryTag compound = CompoundBinaryTag.builder().put("data", StringBinaryTag.stringBinaryTag("nope")).build();
 
-        assertThrows(IOException.class, () -> NbtReads.longArray(compound, "data"));
+        assertThrows(ChunkDataException.class, () -> NbtReads.longArray(compound, "data"));
     }
 
     @Test
-    void testCompoundReturnsTheNestedCompound() throws IOException {
+    void testCompoundReturnsTheNestedCompound() throws Exception {
         CompoundBinaryTag nested = CompoundBinaryTag.builder().putInt("value", 7).build();
         CompoundBinaryTag compound = CompoundBinaryTag.builder().put("nested", nested).build();
 
@@ -77,7 +77,7 @@ class NbtReadsTest {
 
     @Test
     void testCompoundFailsForAMissingKey() {
-        assertThrows(IOException.class, () -> NbtReads.compound(CompoundBinaryTag.empty(), "nested"));
+        assertThrows(ChunkDataException.class, () -> NbtReads.compound(CompoundBinaryTag.empty(), "nested"));
     }
 
     @Test
@@ -86,7 +86,7 @@ class NbtReadsTest {
     }
 
     @Test
-    void testListReturnsTheTypedList() throws IOException {
+    void testListReturnsTheTypedList() throws Exception {
         ListBinaryTag list = ListBinaryTag.builder(BinaryTagTypes.COMPOUND)
                 .add(CompoundBinaryTag.empty())
                 .build();
@@ -100,7 +100,7 @@ class NbtReadsTest {
         ListBinaryTag list = ListBinaryTag.builder(BinaryTagTypes.INT).add(IntBinaryTag.intBinaryTag(1)).build();
         CompoundBinaryTag compound = CompoundBinaryTag.builder().put("sections", list).build();
 
-        assertThrows(IOException.class, () -> NbtReads.list(compound, "sections", BinaryTagTypes.COMPOUND));
+        assertThrows(ChunkDataException.class, () -> NbtReads.list(compound, "sections", BinaryTagTypes.COMPOUND));
     }
 
     @Test
@@ -109,7 +109,7 @@ class NbtReadsTest {
     }
 
     @Test
-    void testStringReturnsTheValue() throws IOException {
+    void testStringReturnsTheValue() throws Exception {
         CompoundBinaryTag compound = CompoundBinaryTag.builder().putString("Name", "minecraft:stone").build();
 
         assertEquals("minecraft:stone", NbtReads.string(compound, "Name"));
@@ -119,18 +119,18 @@ class NbtReadsTest {
     void testStringFailsForANumericValue() {
         CompoundBinaryTag compound = CompoundBinaryTag.builder().putInt("Name", 3).build();
 
-        assertThrows(IOException.class, () -> NbtReads.string(compound, "Name"));
+        assertThrows(ChunkDataException.class, () -> NbtReads.string(compound, "Name"));
     }
 
     @Test
-    void testIntReturnsTheValue() throws IOException {
+    void testIntReturnsTheValue() throws Exception {
         CompoundBinaryTag compound = CompoundBinaryTag.builder().putInt("DataVersion", 4790).build();
 
         assertEquals(4790, NbtReads.integer(compound, "DataVersion"));
     }
 
     @Test
-    void testIntAcceptsANarrowerNumericType() throws IOException {
+    void testIntAcceptsANarrowerNumericType() throws Exception {
         CompoundBinaryTag compound = CompoundBinaryTag.builder().putByte("Y", (byte) -4).build();
 
         assertEquals(-4, NbtReads.integer(compound, "Y"));
@@ -138,6 +138,6 @@ class NbtReadsTest {
 
     @Test
     void testIntFailsForAMissingKey() {
-        assertThrows(IOException.class, () -> NbtReads.integer(CompoundBinaryTag.empty(), "DataVersion"));
+        assertThrows(ChunkDataException.class, () -> NbtReads.integer(CompoundBinaryTag.empty(), "DataVersion"));
     }
 }

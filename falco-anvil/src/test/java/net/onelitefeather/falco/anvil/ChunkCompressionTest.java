@@ -7,6 +7,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,7 +29,7 @@ class ChunkCompressionTest {
 
     @ParameterizedTest
     @EnumSource(ChunkCompression.class)
-    void testCompressAndDecompressAreInverse(ChunkCompression compression) throws IOException {
+    void testCompressAndDecompressAreInverse(ChunkCompression compression) throws Exception {
         byte[] compressed = compression.compress(PAYLOAD);
 
         assertArrayEquals(PAYLOAD, compression.decompress(compressed));
@@ -35,29 +37,29 @@ class ChunkCompressionTest {
 
     @ParameterizedTest
     @EnumSource(ChunkCompression.class)
-    void testEveryCompressionExposesItsFormatIdentifier(ChunkCompression compression) throws IOException {
+    void testEveryCompressionExposesItsFormatIdentifier(ChunkCompression compression) throws Exception {
         assertEquals(compression, ChunkCompression.fromId(compression.id()));
     }
 
     @Test
-    void testGzipIsIdentifiedByOne() throws IOException {
+    void testGzipIsIdentifiedByOne() throws Exception {
         assertEquals(ChunkCompression.GZIP, ChunkCompression.fromId(1));
     }
 
     @Test
-    void testZlibIsIdentifiedByTwo() throws IOException {
+    void testZlibIsIdentifiedByTwo() throws Exception {
         assertEquals(ChunkCompression.ZLIB, ChunkCompression.fromId(2));
     }
 
     @Test
-    void testNoneIsIdentifiedByThree() throws IOException {
+    void testNoneIsIdentifiedByThree() throws Exception {
         assertEquals(ChunkCompression.NONE, ChunkCompression.fromId(3));
     }
 
     @ParameterizedTest
     @ValueSource(ints = {0, 4, 5, 127})
     void testUnsupportedSchemesAreRejectedWithTheirIdentifier(int id) {
-        IOException exception = assertThrows(IOException.class, () -> ChunkCompression.fromId(id));
+        RegionFormatException exception = assertThrows(RegionFormatException.class, () -> ChunkCompression.fromId(id));
 
         assertTrue(exception.getMessage().contains(String.valueOf(id)));
     }
@@ -69,28 +71,28 @@ class ChunkCompressionTest {
     }
 
     @Test
-    void testTheExternalFlagIsStrippedBeforeResolving() throws IOException {
+    void testTheExternalFlagIsStrippedBeforeResolving() throws Exception {
         assertEquals(ChunkCompression.ZLIB, ChunkCompression.fromId(2 | ChunkCompression.EXTERNAL_FLAG));
     }
 
     @Test
-    void testNoneKeepsThePayloadUntouched() throws IOException {
+    void testNoneKeepsThePayloadUntouched() throws Exception {
         assertArrayEquals(PAYLOAD, ChunkCompression.NONE.compress(PAYLOAD));
     }
 
     @Test
-    void testZlibActuallyShrinksARepetitivePayload() throws IOException {
+    void testZlibActuallyShrinksARepetitivePayload() throws Exception {
         byte[] repetitive = new byte[4096];
 
         assertTrue(ChunkCompression.ZLIB.compress(repetitive).length < repetitive.length);
     }
 
     @Test
-    void testTheCompressionLevelCanBeChosen() throws IOException {
+    void testTheCompressionLevelCanBeChosen() throws Exception {
         byte[] payload = new byte[64 * 1024];
-        new java.util.Random(7).nextBytes(payload);
+        new Random(7).nextBytes(payload);
         // Half the array is compressible so the level actually has an effect.
-        java.util.Arrays.fill(payload, 0, payload.length / 2, (byte) 7);
+        Arrays.fill(payload, 0, payload.length / 2, (byte) 7);
 
         byte[] fast = ChunkCompression.ZLIB.compress(payload, ChunkCompression.FASTEST_LEVEL);
         byte[] balanced = ChunkCompression.ZLIB.compress(payload, ChunkCompression.DEFAULT_LEVEL);
@@ -101,7 +103,7 @@ class ChunkCompressionTest {
     }
 
     @Test
-    void testEveryLevelRoundTrips() throws IOException {
+    void testEveryLevelRoundTrips() throws Exception {
         for (int level = ChunkCompression.FASTEST_LEVEL; level <= ChunkCompression.SMALLEST_LEVEL; level++) {
             assertArrayEquals(PAYLOAD, ChunkCompression.ZLIB.decompress(ChunkCompression.ZLIB.compress(PAYLOAD, level)),
                     "level " + level + " has to round trip");
@@ -115,7 +117,7 @@ class ChunkCompressionTest {
     }
 
     @Test
-    void testTheLevelIsIgnoredWithoutCompression() throws IOException {
+    void testTheLevelIsIgnoredWithoutCompression() throws Exception {
         assertArrayEquals(PAYLOAD, ChunkCompression.NONE.compress(PAYLOAD, ChunkCompression.SMALLEST_LEVEL));
     }
 }

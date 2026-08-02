@@ -35,7 +35,7 @@ class SectionCodecTest {
      */
     private static final class FakeResolver implements PaletteEntryResolver {
 
-        private final List<String> known = new ArrayList<>(List.of("minecraft:air", "minecraft:stone", "minecraft:dirt"));
+        private final List<String> known = List.of("minecraft:air", "minecraft:stone", "minecraft:dirt");
         private final List<String> unresolved = new ArrayList<>();
 
         @Override
@@ -78,7 +78,7 @@ class SectionCodecTest {
     }
 
     @Test
-    void testDecodingASingleEntryContainerYieldsASingleValue() throws IOException {
+    void testDecodingASingleEntryContainerYieldsASingleValue() throws Exception {
         CompoundBinaryTag container = container(List.of("minecraft:stone"), null);
 
         PaletteData data = SectionCodec.decode(container, new FakeResolver(), BLOCK_ENTRIES, BLOCK_MIN_BITS);
@@ -88,7 +88,7 @@ class SectionCodecTest {
     }
 
     @Test
-    void testDecodingResolvesEveryPaletteEntry() throws IOException {
+    void testDecodingResolvesEveryPaletteEntry() throws Exception {
         int[] indices = new int[BLOCK_ENTRIES];
         indices[0] = 1;
         indices[1] = 2;
@@ -105,7 +105,7 @@ class SectionCodecTest {
     }
 
     @Test
-    void testDecodingPassesThePropertiesToTheResolver() throws IOException {
+    void testDecodingPassesThePropertiesToTheResolver() throws Exception {
         CompoundBinaryTag entry = CompoundBinaryTag.builder()
                 .putString("Name", "minecraft:stone")
                 .put("Properties", CompoundBinaryTag.builder().putString("axis", "y").build())
@@ -123,7 +123,7 @@ class SectionCodecTest {
     void testDecodingFailsForAMissingPalette() {
         CompoundBinaryTag container = CompoundBinaryTag.empty();
 
-        assertThrows(IOException.class, () -> SectionCodec.decode(container, new FakeResolver(), BLOCK_ENTRIES, BLOCK_MIN_BITS));
+        assertThrows(ChunkDataException.class, () -> SectionCodec.decode(container, new FakeResolver(), BLOCK_ENTRIES, BLOCK_MIN_BITS));
     }
 
     @Test
@@ -132,11 +132,11 @@ class SectionCodecTest {
                 .put("palette", ListBinaryTag.builder(BinaryTagTypes.COMPOUND).add(CompoundBinaryTag.empty()).build())
                 .build();
 
-        assertThrows(IOException.class, () -> SectionCodec.decode(container, new FakeResolver(), BLOCK_ENTRIES, BLOCK_MIN_BITS));
+        assertThrows(ChunkDataException.class, () -> SectionCodec.decode(container, new FakeResolver(), BLOCK_ENTRIES, BLOCK_MIN_BITS));
     }
 
     @Test
-    void testAnUnknownNameFallsBackInsteadOfFailing() throws IOException {
+    void testAnUnknownNameFallsBackInsteadOfFailing() throws Exception {
         FakeResolver resolver = new FakeResolver();
         CompoundBinaryTag container = container(List.of("minecraft:mystery"), null);
 
@@ -167,7 +167,7 @@ class SectionCodecTest {
     }
 
     @Test
-    void testDecodingBiomesReadsAPaletteOfPlainStrings() throws IOException {
+    void testDecodingBiomesReadsAPaletteOfPlainStrings() throws Exception {
         // Unlike blocks, the format stores the biome palette as a list of names without properties.
         ListBinaryTag palette = ListBinaryTag.builder(BinaryTagTypes.STRING)
                 .add(StringBinaryTag.stringBinaryTag("minecraft:air"))
@@ -187,7 +187,7 @@ class SectionCodecTest {
     }
 
     @Test
-    void testDecodingASingleBiomeNeedsNoData() throws IOException {
+    void testDecodingASingleBiomeNeedsNoData() throws Exception {
         CompoundBinaryTag container = CompoundBinaryTag.builder()
                 .put("palette", ListBinaryTag.builder(BinaryTagTypes.STRING)
                         .add(StringBinaryTag.stringBinaryTag("minecraft:dirt"))
@@ -209,7 +209,7 @@ class SectionCodecTest {
     }
 
     @Test
-    void testBiomesSurviveARoundTrip() throws IOException {
+    void testBiomesSurviveARoundTrip() throws Exception {
         FakeResolver resolver = new FakeResolver();
         int[] values = new int[64];
 
@@ -224,7 +224,7 @@ class SectionCodecTest {
     }
 
     @Test
-    void testAContainerSurvivesARoundTrip() throws IOException {
+    void testAContainerSurvivesARoundTrip() throws Exception {
         FakeResolver resolver = new FakeResolver();
         int[] values = new int[BLOCK_ENTRIES];
 

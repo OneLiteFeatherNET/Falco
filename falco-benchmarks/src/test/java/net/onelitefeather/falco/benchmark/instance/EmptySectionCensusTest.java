@@ -9,6 +9,8 @@ import net.kyori.adventure.nbt.LongArrayBinaryTag;
 import net.kyori.adventure.nbt.StringBinaryTag;
 import net.minestom.server.instance.Section;
 import net.minestom.server.instance.palette.Palette;
+import net.onelitefeather.falco.anvil.AnvilFormatException;
+import net.onelitefeather.falco.anvil.ChunkDataException;
 import net.onelitefeather.falco.anvil.NbtReads;
 import net.onelitefeather.falco.anvil.PaletteData;
 import net.onelitefeather.falco.anvil.PaletteEntryResolver;
@@ -190,7 +192,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ResourceLock(Resources.GLOBAL)
@@ -370,10 +372,19 @@ class EmptySectionCensusTest {
      * them assumes what the world is made of.
      * </p>
      *
-     * @throws IOException if a region file cannot be read or holds a chunk that cannot be parsed
+     * <p>
+     * A chunk this run cannot read fails the test rather than being skipped. The reasoning is spelled
+     * out at {@link #count(Path, int, String)}: the number this test produces is a distribution, and a
+     * distribution counted over the subset of chunks that happened to parse is not the distribution of
+     * the world.
+     * </p>
+     *
+     * @throws IOException           if a region file cannot be read
+     * @throws AnvilFormatException  if a region file or one of its chunks does not hold what the
+     *                               format requires, which invalidates the count rather than one chunk
      */
     @Test
-    void testTheEmptySectionShareOfARealWorld() throws IOException {
+    void testTheEmptySectionShareOfARealWorld() throws IOException, AnvilFormatException {
         final Path regionDirectory = locateRegionDirectory();
 
         Assumptions.assumeTrue(regionDirectory != null, () -> "No Anvil world was found. The census needs a "
@@ -538,15 +549,45 @@ class EmptySectionCensusTest {
     /**
      * Counts the sections of every chunk the region directory holds, up to the given limit.
      *
+     * <h2>Why an unreadable chunk stops the count instead of being skipped</h2>
+     * <p>
+     * The format faults of {@code falco-anvil} are checked, so this method has to say what it does
+     * with one, and it lets every one of them through. Catching a {@link ChunkDataException} around
+     * the section loop and carrying on with the next chunk would compile, would keep the run green on
+     * any world, and would be the one wrong answer: this method does not produce a value that a
+     * missing chunk merely makes less precise, it produces a <em>distribution</em>. Skipping the
+     * chunks that fail to parse counts the distribution of the chunks that happened to parse, and
+     * those two are the same number only if the unreadable chunks are distributed like the readable
+     * ones — which is exactly what nobody can know about a file that could not be read.
+     * </p>
+     * <p>
+     * The direction of the error is not even unknown. A chunk that fails on its palette or its packed
+     * data is a chunk with content; a section of air alone is a single palette entry and no data array
+     * at all and has almost nothing left to fail on. Dropping the failures therefore drops non empty
+     * sections by preference and pushes the share of empty ones up — in favour of the very layout this
+     * census exists to price. A silent skip would bias the measurement towards the answer its author
+     * would like to hear, which is the failure mode the class documentation above already spends four
+     * paragraphs guarding against.
+     * </p>
+     * <p>
+     * A failure here is also worth more as a failure than as a smaller sample. This is a tool run by
+     * hand against somebody's real world, and a format fault it hits is either a bug in the loader
+     * this project ships or a genuinely broken world; both are findings, and both are lost the moment
+     * a counter swallows them. The missing world is the one case that is not a defect, and that one is
+     * already handled where it belongs, by an assumption in the test rather than by a catch here.
+     * </p>
+     *
      * @param regionDirectory the directory the region files sit in
      * @param chunkLimit      the amount of chunks to stop after
      * @param statusFilter    the generation status a chunk has to carry to be counted, or {@code null}
      *                        to count every chunk the region files hold
      * @return the counted census
-     * @throws IOException if a region file cannot be read or holds a chunk that cannot be parsed
+     * @throws IOException          if a region file cannot be read or a chunk cannot be decompressed
+     * @throws AnvilFormatException if a region file or one of its chunks contradicts the format, in
+     *                              which case the count is abandoned rather than continued without it
      */
     private static Census count(Path regionDirectory, int chunkLimit, @Nullable String statusFilter)
-            throws IOException {
+            throws IOException, AnvilFormatException {
         final List<Path> files = regionFiles(regionDirectory);
         final int[] totalByY = new int[Y_RANGE];
         final int[] emptyByY = new int[Y_RANGE];
@@ -643,9 +684,10 @@ class EmptySectionCensusTest {
      *
      * @param blockStates the block palette container of the section, or null if it holds none
      * @return the class of the section
-     * @throws IOException if the container holds a palette entry without a name
+     * @throws ChunkDataException if the container holds a palette entry without a name, which leaves
+     *                            the section unclassifiable rather than empty
      */
-    private static SectionClass classify(@Nullable CompoundBinaryTag blockStates) throws IOException {
+    private static SectionClass classify(@Nullable CompoundBinaryTag blockStates) throws ChunkDataException {
         if (blockStates == null) {
             return SectionClass.NO_BLOCK_STATES;
         }
@@ -673,9 +715,11 @@ class EmptySectionCensusTest {
      *
      * @param blockStates the block palette container of a section
      * @param names       the table the names are counted into
-     * @throws IOException if the container holds a palette entry without a name
+     * @throws ChunkDataException if the container holds a palette entry without a name, which would
+     *                            leave the evidence of a correct read incomplete
      */
-    private static void collectNames(CompoundBinaryTag blockStates, Map<String, Integer> names) throws IOException {
+    private static void collectNames(CompoundBinaryTag blockStates, Map<String, Integer> names)
+            throws ChunkDataException {
         final ListBinaryTag palette = NbtReads.optionalList(blockStates, PALETTE_KEY, BinaryTagTypes.COMPOUND);
 
         for (int index = 0; index < palette.size(); index++) {
@@ -951,9 +995,11 @@ class EmptySectionCensusTest {
          *
          * @param blockStates  the block palette container of the section
          * @param sectionClass the class the census sorted the section into
-         * @throws IOException if the container cannot be decoded
+         * @throws ChunkDataException if the container cannot be decoded, which is the strongest signal
+         *                            this class can give: the census sorted a section the loader of
+         *                            this project cannot read at all
          */
-        private void verify(CompoundBinaryTag blockStates, SectionClass sectionClass) throws IOException {
+        private void verify(CompoundBinaryTag blockStates, SectionClass sectionClass) throws ChunkDataException {
             if (sectionClass == SectionClass.NO_BLOCK_STATES) {
                 return;
             }

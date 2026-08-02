@@ -117,6 +117,16 @@ public final class ChunkLightArea {
     public static final long CLEAN = Long.MIN_VALUE;
 
     /**
+     * The four corner offsets a chunk of an area adds to the ring.
+     * <p>
+     * The cost is bounded and smaller than it looks: for a compact area it is the four corners of
+     * its bounding box regardless of size, so a 4×4 area reads 36 chunks instead of 32. A shape that
+     * runs diagonally pays more, up to half again, which is the price of not losing a light source.
+     * </p>
+     */
+    private static final int[][] DIAGONAL_OFFSETS = {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+
+    /**
      * The amount of chunks whose light is kept when no other value is given.
      * <p>
      * One chunk costs roughly 100 KB per kind of light, so this is about 25 MB of memory traded for
@@ -140,7 +150,7 @@ public final class ChunkLightArea {
     /**
      * A caller which wants every chunk of the area written back.
      */
-    private static final Predicate<ChunkArea> ALWAYS = area -> true;
+    private static final Predicate<ChunkArea> ALWAYS = _ -> true;
 
     private final ChunkLightService service;
     private final Map<ChunkArea, Kept> kept;
@@ -197,7 +207,7 @@ public final class ChunkLightArea {
                     "The position " + x + "/" + columnY + "/" + z + " is not inside a chunk column"
             );
         }
-        this.kept.computeIfAbsent(position, key -> new Kept()).changes().add((columnY << 8) | (z << 4) | x);
+        this.kept.computeIfAbsent(position, _ -> new Kept()).changes().add((columnY << 8) | (z << 4) | x);
     }
 
     /**
@@ -365,6 +375,14 @@ public final class ChunkLightArea {
         for (ChunkArea position : inside) {
             for (BlockFace face : HORIZONTAL_FACES) {
                 wanted.add(position.neighbour(face));
+            }
+            // The diagonals belong here for a reason that is easy to miss: a source in a chunk which
+            // touches the area only at a corner does reach it, but not through the ring. It arrives
+            // through the chunk between the two — and that chunk is scratch data whose state is
+            // computed from its own block states alone, so what it received from its diagonal
+            // neighbour is not in it. Without these four the source is simply absent from the result.
+            for (int[] offset : DIAGONAL_OFFSETS) {
+                wanted.add(new ChunkArea(position.x() + offset[0], position.z() + offset[1]));
             }
         }
 
@@ -565,7 +583,7 @@ public final class ChunkLightArea {
             forget(position);
             return;
         }
-        this.kept.computeIfAbsent(position, key -> new Kept()).store(solo, sky);
+        this.kept.computeIfAbsent(position, _ -> new Kept()).store(solo, sky);
     }
 
     /**

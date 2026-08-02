@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -46,16 +47,76 @@ class RegionFileTest extends FileTestBase {
         return this.tempDir.resolve("r.0.0.mca");
     }
 
+    /**
+     * A header that is too short leaves no file handle behind.
+     * <p>
+     * {@code open} closes the channel itself when the header cannot be read, and the catch which
+     * does that has to list every type {@code readHeader} can throw. A {@link RegionFormatException}
+     * is not an {@link IOException}, so leaving it out of that catch returns from a broken header
+     * with the channel still open. Measured before the fix: one descriptor on the file. After: none.
+     * </p>
+     * <p>
+     * The check counts open descriptors through {@code /proc/self/fd} where that exists, because the
+     * consequence is invisible otherwise — on Windows the leak shows up as a file that can no longer
+     * be moved, which is what the fallback exercises.
+     * </p>
+     *
+     * @throws Exception if the probe file cannot be written
+     */
     @Test
-    void testOpeningAMissingFileCreatesTheHeader() throws IOException {
-        try (RegionFile ignored = RegionFile.open(regionPath())) {
+    void testABrokenHeaderLeavesNoOpenHandle() throws Exception {
+        Files.write(regionPath(), new byte[RegionConstants.HEADER_SIZE - 1]);
+
+        assertThrows(RegionFormatException.class, () -> RegionFile.open(regionPath()));
+
+        Path descriptors = Path.of("/proc/self/fd");
+
+        if (Files.isDirectory(descriptors)) {
+            assertEquals(0, openDescriptorsOn(descriptors, regionPath()),
+                    "the failed open() left a channel on the file");
+            return;
+        }
+
+        Path moved = this.tempDir.resolve("moved.mca");
+        Files.move(regionPath(), moved);
+        Files.move(moved, regionPath());
+    }
+
+    /**
+     * Counts how many descriptors of this process point at the given file.
+     *
+     * @param descriptors the descriptor directory of this process
+     * @param target      the file to count descriptors for
+     * @return the amount of open descriptors on the file
+     * @throws IOException if the descriptor directory cannot be listed
+     */
+    private static int openDescriptorsOn(Path descriptors, Path target) throws IOException {
+        int open = 0;
+
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(descriptors)) {
+            for (Path entry : entries) {
+                try {
+                    if (Files.readSymbolicLink(entry).equals(target)) {
+                        open++;
+                    }
+                } catch (IOException ignored) {
+                    // A descriptor which disappeared while this loop ran is not one of ours.
+                }
+            }
+        }
+        return open;
+    }
+
+    @Test
+    void testOpeningAMissingFileCreatesTheHeader() throws Exception {
+        try (RegionFile _ = RegionFile.open(regionPath())) {
             assertTrue(Files.exists(regionPath()));
         }
         assertEquals(RegionConstants.HEADER_SIZE, Files.size(regionPath()));
     }
 
     @Test
-    void testReadReturnsNullForAnAbsentChunk() throws IOException {
+    void testReadReturnsNullForAnAbsentChunk() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             assertNull(region.readRaw(0, 0));
             assertFalse(region.hasChunk(0, 0));
@@ -63,7 +124,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testWrittenChunkCanBeReadBack() throws IOException {
+    void testWrittenChunkCanBeReadBack() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(3, 7, ChunkCompression.ZLIB, PAYLOAD);
 
@@ -77,7 +138,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testChunksSurviveAReopen() throws IOException {
+    void testChunksSurviveAReopen() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(1, 1, ChunkCompression.ZLIB, PAYLOAD);
         }
@@ -91,7 +152,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testDifferentChunksDoNotOverwriteEachOther() throws IOException {
+    void testDifferentChunksDoNotOverwriteEachOther() throws Exception {
         byte[] other = "a completely different payload".getBytes(StandardCharsets.UTF_8);
 
         try (RegionFile region = RegionFile.open(regionPath())) {
@@ -104,7 +165,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testRewritingAChunkWithALargerPayloadKeepsTheNeighbourIntact() throws IOException {
+    void testRewritingAChunkWithALargerPayloadKeepsTheNeighbourIntact() throws Exception {
         byte[] large = new byte[RegionConstants.SECTOR_SIZE * 3];
         RandomGenerator.getDefault().nextBytes(large);
         byte[] neighbour = "the neighbour must stay readable".getBytes(StandardCharsets.UTF_8);
@@ -120,7 +181,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testTheFileStaysAlignedToTheSectorSize() throws IOException {
+    void testTheFileStaysAlignedToTheSectorSize() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(0, 0, ChunkCompression.ZLIB, PAYLOAD);
             region.writeRaw(5, 5, ChunkCompression.ZLIB, new byte[RegionConstants.SECTOR_SIZE + 17]);
@@ -130,7 +191,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testTheLengthFieldFollowsTheSpecification() throws IOException {
+    void testTheLengthFieldFollowsTheSpecification() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(0, 0, ChunkCompression.ZLIB, PAYLOAD);
         }
@@ -141,7 +202,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testDeletingAChunkClearsItsEntry() throws IOException {
+    void testDeletingAChunkClearsItsEntry() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(2, 2, ChunkCompression.ZLIB, PAYLOAD);
             region.delete(2, 2);
@@ -152,7 +213,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testAnOversizedChunkIsStoredInAnExternalFile() throws IOException {
+    void testAnOversizedChunkIsStoredInAnExternalFile() throws Exception {
         byte[] oversized = new byte[RegionConstants.MAX_SECTORS_PER_CHUNK * RegionConstants.SECTOR_SIZE + 1];
         RandomGenerator.getDefault().nextBytes(oversized);
 
@@ -165,7 +226,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testShrinkingAnExternalChunkRemovesTheExternalFile() throws IOException {
+    void testShrinkingAnExternalChunkRemovesTheExternalFile() throws Exception {
         byte[] oversized = new byte[RegionConstants.MAX_SECTORS_PER_CHUNK * RegionConstants.SECTOR_SIZE + 1];
         RandomGenerator.getDefault().nextBytes(oversized);
 
@@ -179,22 +240,25 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testAFileWithATruncatedHeaderIsRejected() throws IOException {
+    void testAFileWithATruncatedHeaderIsRejected() throws Exception {
         Files.write(regionPath(), new byte[RegionConstants.SECTOR_SIZE]);
 
-        assertThrows(IOException.class, () -> RegionFile.open(regionPath()).close());
+        assertThrows(RegionFormatException.class, () -> RegionFile.open(regionPath()).close());
     }
 
     @Test
-    void testAUsageAfterCloseIsRejected() throws IOException {
+    void testAUsageAfterCloseIsRejected() throws Exception {
         RegionFile region = RegionFile.open(regionPath());
         region.close();
 
+        // Still an IOException, and deliberately so: "already closed" is a lifecycle failure of the
+        // caller, not something the stored bytes got wrong. Rule 4 of the design keeps real IO and
+        // lifecycle refusals on java.io.IOException.
         assertThrows(IOException.class, () -> region.readRaw(0, 0));
     }
 
     @Test
-    void testConcurrentWritesNeverCorruptEachOther() throws IOException, InterruptedException, ExecutionException {
+    void testConcurrentWritesNeverCorruptEachOther() throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         int chunkCount = 64;
         List<byte[]> payloads = new ArrayList<>(chunkCount);
 
@@ -231,7 +295,7 @@ class RegionFileTest extends FileTestBase {
      * @return the value of the length field
      * @throws IOException if the region file cannot be read
      */
-    private int readChunkLengthField() throws IOException {
+    private int readChunkLengthField() throws Exception {
         try (FileChannel channel = FileChannel.open(regionPath(), StandardOpenOption.READ)) {
             ByteBuffer buffer = ByteBuffer.allocate(Integer.BYTES);
             channel.read(buffer, RegionConstants.HEADER_SIZE);

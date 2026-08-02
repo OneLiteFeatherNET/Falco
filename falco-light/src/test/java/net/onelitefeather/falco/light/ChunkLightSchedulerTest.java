@@ -8,13 +8,17 @@ import net.minestom.testing.extension.MicrotusExtension;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -246,6 +250,49 @@ class ChunkLightSchedulerTest {
         return reported;
     }
 
+    /**
+     * A chunk whose area is still being computed is not submitted a second time.
+     * <p>
+     * This is what the class javadoc of {@code ChunkLightService} points at when it says the
+     * scheduler keeps neighbourhoods disjoint. The service is safe for two threads only while their
+     * neighbourhoods do not overlap; the mark that survives a submission is what keeps a second
+     * thread off the same chunks, and until now that promise had no test.
+     * </p>
+     */
+    @Test
+    void testAChunkUnderComputationIsNotSubmittedASecondTime(Env env) {
+        Instance instance = env.createEmptyInstance();
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        place(chunk, 8, 40, 8, Block.GLOWSTONE);
+
+        List<Runnable> pending = new ArrayList<>();
+        AtomicInteger submissions = new AtomicInteger();
+        // Holds every area instead of running it, so the first one is still in flight when the
+        // second tick arrives — which is exactly the window a direct caller of the service has to
+        // stay out of by itself.
+        Executor deferring = task -> {
+            submissions.incrementAndGet();
+            pending.add(task);
+        };
+
+        ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService(), deferring, 16);
+        scheduler.markDirty(instance, 0, 0);
+        scheduler.onTick(instance, 1L);
+
+        assertEquals(1, submissions.get(), "the first tick submits the marked chunk");
+
+        scheduler.markDirty(instance, 0, 0);
+        scheduler.onTick(instance, 2L);
+
+        assertEquals(1, submissions.get(), "a chunk under computation is not submitted again");
+
+        pending.forEach(Runnable::run);
+        scheduler.markDirty(instance, 0, 0);
+        scheduler.onTick(instance, 3L);
+
+        assertEquals(2, submissions.get(), "and is submitted again once its area finished");
+    }
+
     @Test
     void testASchedulerRefusesASecondInstance(Env env) {
         Instance first = env.createEmptyInstance();
@@ -293,6 +340,109 @@ class ChunkLightSchedulerTest {
         scheduler.onTick(instance, 1L);
 
         assertEquals(2, runs.get(), "four connected chunks capped at two form two areas");
+    }
+
+    /**
+     * A coordinate that carries no chunk is dropped by the pass instead of being kept forever.
+     * <p>
+     * Nothing but a completed computation used to clear the dirty set, and a chunk which is not
+     * loaded is never computed. The entry therefore survived every following pass, was claimed
+     * again on every tick and never became clean again.
+     * </p>
+     */
+    @Test
+    void testAMarkedCoordinateWithoutAChunkStopsBeingDirty(Env env) {
+        Instance instance = env.createEmptyInstance();
+
+        ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService(), DIRECT, 16);
+        scheduler.markDirty(instance, 5, 5);
+        scheduler.onTick(instance, 1L);
+
+        assertFalse(scheduler.isDirty(5, 5), "a coordinate without a chunk cannot stay dirty forever");
+    }
+
+    /**
+     * A chunk which is unloaded between the mark and the pass is dropped as well.
+     * <p>
+     * This is the shape the defect takes in a running server: the chunk exists when the block
+     * changes and is gone by the time the tick arrives.
+     * </p>
+     */
+    @Test
+    void testAChunkUnloadedBeforeThePassStopsBeingDirty(Env env) {
+        Instance instance = env.createEmptyInstance();
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        place(chunk, 8, 40, 8, Block.GLOWSTONE);
+
+        ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService(), DIRECT, 16);
+        scheduler.markDirty(instance, 0, 0);
+        instance.unloadChunk(chunk);
+        scheduler.onTick(instance, 1L);
+
+        assertFalse(scheduler.isDirty(0, 0), "a chunk that left the instance cannot stay dirty forever");
+    }
+
+    /**
+     * A chunk which is still loaded keeps the existing behaviour: it is computed, then clean.
+     * <p>
+     * The guard for the two tests above — without it they would also pass if the pass simply
+     * cleared everything it claimed.
+     * </p>
+     */
+    @Test
+    void testALoadedChunkIsStillComputedRatherThanDropped(Env env) {
+        Instance instance = env.createEmptyInstance();
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        place(chunk, 8, 40, 8, Block.GLOWSTONE);
+
+        ChunkLightService service = new ChunkLightService();
+        ChunkLightScheduler scheduler = new ChunkLightScheduler(service, DIRECT, 16);
+        scheduler.markDirty(instance, 0, 0);
+        scheduler.onTick(instance, 1L);
+
+        assertFalse(scheduler.isDirty(0, 0));
+        assertEquals(15, service.blockLightAt(chunk, 8, 40, 8), "the chunk was lit, not discarded");
+    }
+
+    /**
+     * The default executor is reachable by name, so a caller can pass it back in.
+     * <p>
+     * Without it the three and four parameter constructors cannot be used without replacing the
+     * threading policy: a caller who only wants a different area size has to invent an executor.
+     * </p>
+     */
+    @Test
+    void testTheDefaultExecutorCanBeNamedByACaller(Env env) {
+        Instance instance = env.createEmptyInstance();
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        place(chunk, 8, 40, 8, Block.GLOWSTONE);
+
+        ChunkLightService service = new ChunkLightService();
+        ChunkLightScheduler scheduler =
+                new ChunkLightScheduler(service, ChunkLightScheduler.defaultExecutor(), 16);
+        scheduler.markDirty(instance, 0, 0);
+        scheduler.onTick(instance, 1L);
+
+        assertTrue(await(() -> service.blockLightAt(chunk, 8, 40, 8) == 15),
+                "the default executor runs the pass on a virtual thread");
+    }
+
+    /**
+     * Waits for a condition the default executor fulfils on another thread.
+     *
+     * @param condition the condition to wait for
+     * @return true if the condition held within the timeout, false if it timed out
+     */
+    private static boolean await(BooleanSupplier condition) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+
+        while (System.nanoTime() < deadline) {
+            if (condition.getAsBoolean()) {
+                return true;
+            }
+            Thread.onSpinWait();
+        }
+        return false;
     }
 
     /**

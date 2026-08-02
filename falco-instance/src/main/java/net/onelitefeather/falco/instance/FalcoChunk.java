@@ -149,7 +149,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 3.4.1
+ * @version 3.5.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -166,8 +166,25 @@ public class FalcoChunk extends Chunk {
      * block entity would lose that part of itself on the way in. These are the ones that are kept
      * whole, and {@link #getBlock(int, int, int, Condition)} looks here before it asks the storage.
      * </p>
+     * <p>
+     * Private, where {@code DynamicChunk} has it {@code protected}. That modifier was inherited along
+     * with everything else this class copied while it still extended {@code DynamicChunk}, and it
+     * stopped meaning anything the moment the superclass went: no type in this project extends
+     * {@link FalcoChunk}, and the seam a subclass is meant to use is {@link BlockStorage}, which is a
+     * constructor argument rather than a field to reach into.
+     * </p>
+     * <p>
+     * What {@code protected} would still cost is real. {@code final} on a map protects the reference
+     * and nothing behind it, so a visible field hands anyone who subclasses this chunk — from any
+     * package, since the class has to stay open for {@code FalcoLightingChunk} — a writable map that
+     * the write lock does not cover and that {@link #tickableCount} is counted against. A foreign
+     * {@code entries.remove} would leave the counter above zero with nothing left to tick, which is
+     * exactly the drift the counter was introduced to make impossible. A subclass that needs the
+     * block objects asks {@link #getBlock(int, int, int, Condition)} with {@link Condition#CACHED},
+     * which answers the same question without handing out the map.
+     * </p>
      */
-    protected final Int2ObjectOpenHashMap<Block> entries = new Int2ObjectOpenHashMap<>(0);
+    private final Int2ObjectOpenHashMap<Block> entries = new Int2ObjectOpenHashMap<>(0);
 
     /**
      * How many of {@link #entries} carry a handler which asked to be ticked.
@@ -186,8 +203,27 @@ public class FalcoChunk extends Chunk {
      * tickable and non-tickable block entities now walks all of them once per tick instead of only the
      * tickable ones.
      * </p>
+     * <p>
+     * Volatile because the one read that matters happens without the chunk lock. Every write is under
+     * the write lock — {@link #setBlock} and {@link #reset} both open with {@code assertWriteLock()},
+     * and {@link #copy} writes only into a chunk it just created — so the writers are serialised and
+     * the non-atomic {@code +=} below cannot lose an update. The reader is the other side:
+     * {@link #tick(long)} takes no lock at all, and it cannot, because Minestom calls it from a
+     * {@code TickThread} that holds its own {@code ReentrantLock} and never the
+     * {@link Chunk#lockReadLock() read lock} of the chunk — {@code Chunk#tick} says as much in its own
+     * Javadoc, that it "doesn't necessary have to be thread-safe". A chunk is written from wherever a
+     * placement, a generator or a loader happens to run, so writer and ticker are routinely different
+     * threads with no happens-before between them.
+     * </p>
+     * <p>
+     * Without the modifier the tick thread may keep reading a cached zero after a block entity was
+     * placed, and a chunk that silently stops ticking is the kind of defect that surfaces as a
+     * complaint about furnaces months later rather than as a failing test. Four bytes were already the
+     * price of this field; the barrier is paid on a read that a chunk performs once per tick and on
+     * writes that already stop to take a lock.
+     * </p>
      */
-    private int tickableCount;
+    private volatile int tickableCount;
 
     private volatile boolean needsCompleteHeightmapRefresh = true;
 

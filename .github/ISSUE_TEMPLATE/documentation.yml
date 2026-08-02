@@ -18,10 +18,12 @@ body:
       label: "Which document?"
       options:
         - "README.md"
-        - "STATUS.md"
-        - "docs/anvil-chunk-loader.md"
-        - "docs/light-engine.md"
-        - "docs/benchmarks.md"
+        - "Wiki: Project Status"
+        - "Wiki: Anvil Chunk Loader"
+        - "Wiki: Light Engine"
+        - "Wiki: Benchmarking"
+        - "Wiki: Rationale"
+        - "Wiki: Research"
         - "Javadoc"
         - "Something else"
     validations:
@@ -31,7 +33,7 @@ body:
     attributes:
       label: "Where exactly?"
       description: "A heading, a permalink to the line, or the fully qualified name of the type or method."
-      placeholder: "e.g. STATUS.md § Measured → Scaling by world height, or net.onelitefeather.falco.anvil.RegionFile#readRaw"
+      placeholder: "e.g. Project Status § Measured → Scaling by world height, or net.onelitefeather.falco.anvil.RegionFile#readRaw"
     validations:
       required: true
   - type: dropdown

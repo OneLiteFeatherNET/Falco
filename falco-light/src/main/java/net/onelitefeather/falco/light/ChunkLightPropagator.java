@@ -3,6 +3,7 @@ package net.onelitefeather.falco.light;
 import org.jetbrains.annotations.ApiStatus;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -90,7 +91,7 @@ public final class ChunkLightPropagator {
 
         int height = sections.size() * LightNibbles.DIMENSION;
         ensureCapacity(height * LightNibbles.DIMENSION * LightNibbles.DIMENSION);
-        java.util.Arrays.fill(this.levels, 0, height * LightNibbles.DIMENSION * LightNibbles.DIMENSION, (byte) 0);
+        Arrays.fill(this.levels, 0, height * LightNibbles.DIMENSION * LightNibbles.DIMENSION, (byte) 0);
         return height;
     }
 
@@ -156,7 +157,7 @@ public final class ChunkLightPropagator {
      */
     private void ensureRoom(int tail) {
         if (tail == this.queue.length) {
-            this.queue = java.util.Arrays.copyOf(this.queue, this.queue.length * 2);
+            this.queue = Arrays.copyOf(this.queue, this.queue.length * 2);
         }
     }
 

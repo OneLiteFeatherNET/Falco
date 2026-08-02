@@ -5,6 +5,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -41,7 +42,7 @@ class PaletteDataTest {
     @Test
     void testEncodingAHomogeneousSectionCollapsesToASingleValue() {
         int[] values = new int[BLOCK_ENTRIES];
-        java.util.Arrays.fill(values, 42);
+        Arrays.fill(values, 42);
 
         PaletteData data = PaletteData.encode(values, BLOCK_MIN_BITS);
 
@@ -50,7 +51,7 @@ class PaletteDataTest {
     }
 
     @Test
-    void testEncodingKeepsEveryDistinctValue() throws IOException {
+    void testEncodingKeepsEveryDistinctValue() throws Exception {
         int[] values = new int[BLOCK_ENTRIES];
 
         for (int i = 0; i < values.length; i++) {
@@ -86,7 +87,7 @@ class PaletteDataTest {
 
     @ParameterizedTest
     @ValueSource(ints = {2, 3, 16, 17, 200, 4096})
-    void testEncodeAndUnpackAreInverseForRandomData(int distinctValues) throws IOException {
+    void testEncodeAndUnpackAreInverseForRandomData(int distinctValues) throws Exception {
         RandomGenerator random = RandomGenerator.getDefault();
         int[] values = new int[BLOCK_ENTRIES];
 
@@ -103,7 +104,7 @@ class PaletteDataTest {
     }
 
     @Test
-    void testReadingAcceptsDataWhichMatchesTheExpectedBitCount() throws IOException {
+    void testReadingAcceptsDataWhichMatchesTheExpectedBitCount() throws Exception {
         int[] palette = {10, 20, 30};
         long[] packed = BitPacker.pack(new int[BLOCK_ENTRIES], BLOCK_MIN_BITS);
 
@@ -114,7 +115,7 @@ class PaletteDataTest {
     }
 
     @Test
-    void testReadingRecoversABitCountWhichIsLargerThanTheMinimum() throws IOException {
+    void testReadingRecoversABitCountWhichIsLargerThanTheMinimum() throws Exception {
         // A foreign writer may use more bits than the palette size requires. Minestom derives the
         // bit count from the palette length alone and would decode this data incorrectly.
         int[] palette = {10, 20, 30};
@@ -130,11 +131,11 @@ class PaletteDataTest {
         int[] palette = {10, 20};
         long[] packed = new long[7];
 
-        assertThrows(IOException.class, () -> PaletteData.read(palette, packed, BLOCK_ENTRIES, BLOCK_MIN_BITS));
+        assertThrows(ChunkDataException.class, () -> PaletteData.read(palette, packed, BLOCK_ENTRIES, BLOCK_MIN_BITS));
     }
 
     @Test
-    void testReadingASinglePaletteEntryWithoutDataYieldsASingleValue() throws IOException {
+    void testReadingASinglePaletteEntryWithoutDataYieldsASingleValue() throws Exception {
         PaletteData data = PaletteData.read(new int[]{99}, null, BLOCK_ENTRIES, BLOCK_MIN_BITS);
 
         assertTrue(data.isSingleValue());
@@ -143,11 +144,11 @@ class PaletteDataTest {
 
     @Test
     void testReadingRejectsAnEmptyPalette() {
-        assertThrows(IOException.class, () -> PaletteData.read(new int[0], null, BLOCK_ENTRIES, BLOCK_MIN_BITS));
+        assertThrows(ChunkDataException.class, () -> PaletteData.read(new int[0], null, BLOCK_ENTRIES, BLOCK_MIN_BITS));
     }
 
     @Test
-    void testUnpackResolvesEveryEntryThroughThePalette() throws IOException {
+    void testUnpackResolvesEveryEntryThroughThePalette() throws Exception {
         int[] palette = {100, 200, 300, 400};
         int[] indices = new int[BLOCK_ENTRIES];
         indices[0] = 3;
@@ -163,7 +164,7 @@ class PaletteDataTest {
     }
 
     @Test
-    void testUnpackOfASingleValueFillsEveryEntry() throws IOException {
+    void testUnpackOfASingleValueFillsEveryEntry() throws Exception {
         int[] values = PaletteData.single(5, 64).unpack();
 
         assertEquals(64, values.length);
@@ -171,13 +172,13 @@ class PaletteDataTest {
     }
 
     @Test
-    void testReadingRejectsAPaletteIndexOutsideOfThePalette() throws IOException {
+    void testReadingRejectsAPaletteIndexOutsideOfThePalette() throws Exception {
         int[] indices = new int[BLOCK_ENTRIES];
         indices[5] = 3;
         long[] packed = BitPacker.pack(indices, BLOCK_MIN_BITS);
         PaletteData data = PaletteData.read(new int[]{1, 2}, packed, BLOCK_ENTRIES, BLOCK_MIN_BITS);
 
-        assertThrows(IOException.class, data::unpack);
+        assertThrows(ChunkDataException.class, data::unpack);
     }
 
     /**
@@ -202,7 +203,7 @@ class PaletteDataTest {
         // sections of a world. Building a palette map over 4096 identical entries to then collapse
         // it again is pure waste, so the uniform case has to be recognised before that happens.
         int[] values = new int[BLOCK_ENTRIES];
-        java.util.Arrays.fill(values, 77);
+        Arrays.fill(values, 77);
 
         PaletteData data = PaletteData.encode(values, BLOCK_MIN_BITS);
 
@@ -216,7 +217,7 @@ class PaletteDataTest {
     void testEncodingStillHandlesASingleDifferingEntry() {
         // The shortcut must not swallow a section that is uniform except for one block.
         int[] values = new int[BLOCK_ENTRIES];
-        java.util.Arrays.fill(values, 5);
+        Arrays.fill(values, 5);
         values[BLOCK_ENTRIES - 1] = 6;
 
         PaletteData data = PaletteData.encode(values, BLOCK_MIN_BITS);

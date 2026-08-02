@@ -12,6 +12,7 @@ import net.minestom.server.event.GlobalEventHandler;
 import net.minestom.server.event.player.AsyncPlayerConfigurationEvent;
 import net.minestom.server.event.player.PlayerSpawnEvent;
 import net.minestom.server.event.server.ServerTickMonitorEvent;
+import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.registry.RegistryKey;
 import net.minestom.server.timer.TaskSchedule;
@@ -156,18 +157,19 @@ public final class DemoServer {
                 .createInstanceContainer(dimensionType(options), loader);
         instance.setChunkSupplier(options.stack().chunkSupplier());
 
-        Pos spawn = new Pos(0, 65, 0);
+        Pos spawn = spawn(instance, spawnChunk);
 
         registerEvents(instance, spawn, options, metrics);
         AtomicReference<LiveMetrics.Snapshot> latest = scheduleReporting(instance, options, metrics);
-        registerCommand(instance, options, latest);
+        registerCommands(instance, options, latest);
 
         describe(options, world, spawn);
         server.start(BIND_ADDRESS, options.port());
 
         LOGGER.info("listening on {}:{} — connect with a Minecraft {} client (protocol {}) to localhost:{}",
                 BIND_ADDRESS, options.port(), MinecraftServer.VERSION_NAME, MinecraftServer.PROTOCOL_VERSION, options.port());
-        LOGGER.info("the figures appear in your action bar once a second; /falco prints them in full");
+        LOGGER.info("the figures appear in your action bar once a second; /falco prints them in full, "
+                + "and /{} <{}> puts the sun where you want to judge the light from", TimeCommand.NAME, DayTime.names());
     }
 
     /**
@@ -202,7 +204,7 @@ public final class DemoServer {
      * @param spawnChunk the chunk the player is put into
      * @return the position the player spawns at
      */
-    private static Pos spawn(InstanceContainer instance, ChunkPosition spawnChunk) {
+    static Pos spawn(Instance instance, ChunkPosition spawnChunk) {
         instance.loadChunk(spawnChunk.x(), spawnChunk.z()).join();
 
         int x = spawnChunk.x() * 16 + 8;
@@ -272,6 +274,11 @@ public final class DemoServer {
                 "The three numbers above your hotbar are p50/p95/max in milliseconds. Fly in a "
                         + "straight line for a while and watch the maximum; that is the stutter. "
                         + "/falco prints everything in full.", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text(
+                "/" + TimeCommand.NAME + " <" + DayTime.names() + "> moves the sun, and /"
+                        + TimeCommand.NAME + " " + TimeCommand.HOLD + " holds it there — the light "
+                        + "is what you came to look at, and it should be the same light on both "
+                        + "servers.", NamedTextColor.YELLOW));
     }
 
     /**
@@ -320,20 +327,21 @@ public final class DemoServer {
     }
 
     /**
-     * Registers the command which prints the figures in full.
+     * Registers the commands a session offers: the figures in full, and the sky they were taken
+     * under.
      *
-     * @param instance the instance whose chunks are counted
+     * @param instance the instance whose chunks are counted and whose clock is set
      * @param options  the options of the run
      * @param latest   the most recent snapshot the reporting task took
      */
-    private static void registerCommand(
+    private static void registerCommands(
             InstanceContainer instance,
             ServerOptions options,
             AtomicReference<LiveMetrics.Snapshot> latest
     ) {
         Command command = new Command("falco", "demo");
 
-        command.setDefaultExecutor((sender, context) -> {
+        command.setDefaultExecutor((sender, _) -> {
             List<String> lines = LiveStatusLine.details(
                     options.stack(),
                     latest.get(),
@@ -348,6 +356,11 @@ public final class DemoServer {
         });
 
         MinecraftServer.getCommandManager().register(command);
+
+        // The light of a world is a different thing at noon than at midnight, and the light is the
+        // first thing anybody looks at here. Without this the sky is whatever the clock happens to
+        // show, and two stacks looked at a few minutes apart are compared under two of them.
+        MinecraftServer.getCommandManager().register(new TimeCommand(instance));
     }
 
     /**
@@ -391,7 +404,10 @@ public final class DemoServer {
      * @return the colour of that stack
      */
     private static NamedTextColor colour(ServerStack stack) {
-        return stack == ServerStack.FALCO ? NamedTextColor.AQUA : NamedTextColor.GOLD;
+        return switch (stack) {
+            case FALCO -> NamedTextColor.AQUA;
+            case MINESTOM -> NamedTextColor.GOLD;
+        };
     }
 
     /**

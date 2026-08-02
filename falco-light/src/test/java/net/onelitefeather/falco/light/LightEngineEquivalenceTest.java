@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -84,7 +85,7 @@ class LightEngineEquivalenceTest {
                 // so every scenario which holds a source has to carry light to be worth anything.
                 if (lightSources > 0) {
                     assertFalse(
-                            java.util.Arrays.equals(new byte[LIGHT_LENGTH], actual),
+                            Arrays.equals(new byte[LIGHT_LENGTH], actual),
                             "a section with " + lightSources + " sources and " + occlusionPercent
                                     + " percent solid blocks stayed dark, so it compares nothing"
                     );

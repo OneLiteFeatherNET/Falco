@@ -67,7 +67,7 @@ class FalcoAnvilLoaderLifecycleTest {
      * @return the written chunk
      * @throws IOException if the chunk cannot be written
      */
-    private Chunk storeChunk(Instance instance) throws IOException {
+    private Chunk storeChunk(Instance instance) throws Exception {
         Chunk chunk = instance.loadChunk(0, 0).join();
         place(chunk, 0, 40, 0, Block.STONE);
 
@@ -78,7 +78,7 @@ class FalcoAnvilLoaderLifecycleTest {
     }
 
     @Test
-    void testLoadingAfterCloseIsRejected(Env env) throws IOException {
+    void testLoadingAfterCloseIsRejected(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         storeChunk(instance);
 
@@ -91,7 +91,7 @@ class FalcoAnvilLoaderLifecycleTest {
     }
 
     @Test
-    void testLoadingAfterCloseOpensNoRegionFile(Env env) throws IOException {
+    void testLoadingAfterCloseOpensNoRegionFile(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         storeChunk(instance);
 
@@ -106,7 +106,7 @@ class FalcoAnvilLoaderLifecycleTest {
     }
 
     @Test
-    void testSavingAfterCloseIsRejected(Env env) throws IOException {
+    void testSavingAfterCloseIsRejected(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = storeChunk(instance);
 
@@ -120,7 +120,7 @@ class FalcoAnvilLoaderLifecycleTest {
     }
 
     @Test
-    void testAClosedLoaderCanBeClosedAgain(Env env) throws IOException {
+    void testAClosedLoaderCanBeClosedAgain(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         storeChunk(instance);
 
@@ -135,7 +135,7 @@ class FalcoAnvilLoaderLifecycleTest {
     }
 
     @Test
-    void testClosingWhileLoadsAreRunningLeavesNoOpenRegionFile(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testClosingWhileLoadsAreRunningLeavesNoOpenRegionFile(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // A loader is closed while its tasks are still running, because the loader reports parallel
         // loading as supported and therefore receives one task per chunk. A task which reaches the
         // region cache after the close would open a file which nothing closes again, and it would
@@ -161,7 +161,7 @@ class FalcoAnvilLoaderLifecycleTest {
         CountDownLatch running = new CountDownLatch(regionCount);
         FalcoAnvilLoader loader = loader();
         ExceptionHandler previous = MinecraftServer.getExceptionManager().getExceptionHandler();
-        MinecraftServer.getExceptionManager().setExceptionHandler(ignored -> {
+        MinecraftServer.getExceptionManager().setExceptionHandler(_ -> {
         });
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {

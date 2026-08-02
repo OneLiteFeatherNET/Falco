@@ -88,7 +88,7 @@ class ChunkLightSchedulerConcurrencyTest {
         scheduler.markDirty(instance, 0, 0);
 
         // Every worker reports the same tick, which is what the chunks of one instance do.
-        runInParallel(THREAD_COUNT, worker -> scheduler.onTick(instance, 7L));
+        runInParallel(THREAD_COUNT, _ -> scheduler.onTick(instance, 7L));
 
         assertEquals(1, runs.get(), "a contended tick gate must let exactly one pass through");
     }

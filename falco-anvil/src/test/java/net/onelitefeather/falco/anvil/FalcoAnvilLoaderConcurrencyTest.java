@@ -23,6 +23,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -53,6 +54,17 @@ class FalcoAnvilLoaderConcurrencyTest {
     private static final long AWAIT_SECONDS = 60L;
 
     /**
+     * The time {@code close()} is given to return while another thread holds the monitor of the
+     * loader.
+     * <p>
+     * Deliberately far shorter than {@link #AWAIT_SECONDS}: this latch is only reached in the
+     * failing case, and a regression should report itself in seconds rather than stall the build
+     * for a minute.
+     * </p>
+     */
+    private static final long CLOSE_SECONDS = 5L;
+
+    /**
      * The amount of region files the chunks of the first test are spread over.
      */
     private static final int REGION_COUNT = 4;
@@ -75,7 +87,7 @@ class FalcoAnvilLoaderConcurrencyTest {
     }
 
     @Test
-    void testConcurrentSavesAndLoadsOverSeveralRegionsLoseNoChunk(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testConcurrentSavesAndLoadsOverSeveralRegionsLoseNoChunk(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Half of the chunks are already on disk and are only read while the other half is written.
         // Reading and writing therefore meet inside the same region files, which is the situation a
         // server produces while it streams chunks in and out. A region file which mixed the two
@@ -151,7 +163,7 @@ class FalcoAnvilLoaderConcurrencyTest {
     }
 
     @Test
-    void testTheOpenRegionLimitHoldsWhileManyThreadsOpenRegions(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testTheOpenRegionLimitHoldsWhileManyThreadsOpenRegions(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Every thread works in a region file of its own, so every one of them opens a new file and
         // forces the loader to evict another one. A limit which is only respected by a single thread
         // would let the amount of open files grow with the amount of threads, which is exactly the
@@ -208,7 +220,7 @@ class FalcoAnvilLoaderConcurrencyTest {
     }
 
     @Test
-    void testLoadingSurvivesTheEvictionOfItsRegionFile(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testLoadingSurvivesTheEvictionOfItsRegionFile(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Every thread reads from a region file of its own while the limit allows a single open
         // file, so every load evicts the file another thread is about to read from. The loader owns
         // that eviction, the file on disk is intact, and a read which fails here loses a chunk the
@@ -224,7 +236,7 @@ class FalcoAnvilLoaderConcurrencyTest {
         try (FalcoAnvilLoader loader = new FalcoAnvilLoader(this.worldRoot, OVERWORLD, 1)) {
             // A failed load reports to the exception manager, which the environment turns into a
             // failed test before the assertion below could describe what went wrong.
-            MinecraftServer.getExceptionManager().setExceptionHandler(ignored -> {
+            MinecraftServer.getExceptionManager().setExceptionHandler(_ -> {
             });
 
             try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -247,7 +259,7 @@ class FalcoAnvilLoaderConcurrencyTest {
     }
 
     @Test
-    void testLoadingSurvivesTheUnloadOfAnotherChunkOfTheSameRegion(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testLoadingSurvivesTheUnloadOfAnotherChunkOfTheSameRegion(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Every chunk of this test lives in the same region file. A thread which unloads the last
         // chunk the loader tracks closes that file, and the loader only starts tracking a chunk
         // after it has been read, so a reader which is still ahead of its own registration loses
@@ -272,7 +284,7 @@ class FalcoAnvilLoaderConcurrencyTest {
         ExceptionHandler previous = MinecraftServer.getExceptionManager().getExceptionHandler();
 
         try (FalcoAnvilLoader loader = loader()) {
-            MinecraftServer.getExceptionManager().setExceptionHandler(ignored -> {
+            MinecraftServer.getExceptionManager().setExceptionHandler(_ -> {
             });
 
             try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -295,6 +307,86 @@ class FalcoAnvilLoaderConcurrencyTest {
     }
 
     /**
+     * A caller who holds the monitor of the loader cannot stop it from closing.
+     * <p>
+     * The loader is handed to the server and from there to arbitrary code, so any of it may write
+     * {@code synchronized (loader)} — over a batch of saves, for instance. While {@code close()}
+     * carried the {@code synchronized} modifier it locked on that same monitor, and such a caller
+     * blocked the shutdown of a loader whose own Javadoc says it is closed while chunk tasks are
+     * still in flight. The lock is private now, and this test is what distinguishes the two: with
+     * the modifier back on {@code close()} it fails on the latch below rather than passing quietly.
+     * </p>
+     * <p>
+     * The threads are platform threads on purpose. What is under test is the monitor, and a
+     * platform thread parks on it with no scheduler in between.
+     * </p>
+     *
+     * @throws InterruptedException if the test thread is interrupted while waiting for a latch
+     */
+    @Test
+    void testCloseReturnsWhileAnotherThreadHoldsTheLoaderMonitor() throws InterruptedException {
+        FalcoAnvilLoader loader = loader();
+
+        CountDownLatch monitorHeld = new CountDownLatch(1);
+        CountDownLatch releaseMonitor = new CountDownLatch(1);
+        CountDownLatch closeReturned = new CountDownLatch(1);
+        AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+
+        Thread holder = new Thread(() -> {
+            synchronized (loader) {
+                monitorHeld.countDown();
+                awaitQuietly(releaseMonitor, AWAIT_SECONDS);
+            }
+        }, "loader-monitor-holder");
+
+        Thread closer = new Thread(() -> {
+            try {
+                loader.close();
+            } catch (Throwable throwable) {
+                closeFailure.set(throwable);
+            } finally {
+                closeReturned.countDown();
+            }
+        }, "loader-closer");
+
+        holder.start();
+        assertTrue(monitorHeld.await(AWAIT_SECONDS, TimeUnit.SECONDS),
+                "the holder thread never entered synchronized (loader)");
+
+        try {
+            closer.start();
+            assertTrue(closeReturned.await(CLOSE_SECONDS, TimeUnit.SECONDS),
+                    "close() did not return within " + CLOSE_SECONDS + " s while another thread held "
+                            + "synchronized (loader), so the loader is sharing its own monitor with "
+                            + "its callers");
+        } finally {
+            releaseMonitor.countDown();
+            closer.join(TimeUnit.SECONDS.toMillis(AWAIT_SECONDS));
+            holder.join(TimeUnit.SECONDS.toMillis(AWAIT_SECONDS));
+        }
+
+        Throwable failure = closeFailure.get();
+
+        if (failure != null) {
+            fail("close() failed instead of completing: " + failure);
+        }
+    }
+
+    /**
+     * Waits for the given latch and restores the interrupt flag instead of failing the thread.
+     *
+     * @param latch   the latch to wait for
+     * @param seconds the amount of seconds to wait at most
+     */
+    private static void awaitQuietly(CountDownLatch latch, long seconds) {
+        try {
+            latch.await(seconds, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
      * Writes a single chunk into every one of the given amount of region files.
      *
      * @param instance    the instance which owns the chunks
@@ -302,7 +394,7 @@ class FalcoAnvilLoaderConcurrencyTest {
      * @return the written chunks in the order of their region
      * @throws IOException if a chunk cannot be written
      */
-    private List<Chunk> storeChunkPerRegion(Instance instance, int regionCount) throws IOException {
+    private List<Chunk> storeChunkPerRegion(Instance instance, int regionCount) throws IOException, RegionFormatException {
         List<Chunk> chunks = new ArrayList<>(regionCount);
 
         for (int region = 0; region < regionCount; region++) {

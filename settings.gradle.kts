@@ -7,6 +7,7 @@ include("falco-instance")
 include("falco-benchmarks")
 include("falco-demo")
 include("falco-bom")
+include("falco-archunit")
 
 dependencyResolutionManagement {
     repositories {
@@ -34,10 +35,13 @@ dependencyResolutionManagement {
             version("annotations", "26.1.0")
             version("jmh", "1.37")
             version("jmhPlugin", "0.7.3")
+            version("japicmpPlugin", "0.4.6")
             version("adventureBom", "5.1.1")
+            version("archunit", "1.4.2")
             version("jol", "0.17")
 
             plugin("jmh", "me.champeau.jmh").versionRef("jmhPlugin")
+            plugin("japicmp", "me.champeau.gradle.japicmp").versionRef("japicmpPlugin")
 
             library("mycelium.bom", "net.onelitefeather", "mycelium-bom").versionRef("bom")
 
@@ -49,6 +53,7 @@ dependencyResolutionManagement {
             library("adventure.nbt", "net.kyori", "adventure-nbt").withoutVersion()
             library("adventure.bom", "net.kyori", "adventure-bom").versionRef("adventureBom")
             library("cyano", "net.onelitefeather", "cyano").withoutVersion()
+            library("archunit.junit5", "com.tngtech.archunit", "archunit-junit5").versionRef("archunit")
             library("junit-jupiter", "org.junit.jupiter", "junit-jupiter").withoutVersion()
             library("junit-jupiter-engine", "org.junit.jupiter", "junit-jupiter-engine").withoutVersion()
             library("junit.platform.launcher", "org.junit.platform", "junit-platform-launcher").withoutVersion()

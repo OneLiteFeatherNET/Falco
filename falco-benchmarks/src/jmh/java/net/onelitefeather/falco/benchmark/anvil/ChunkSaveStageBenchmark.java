@@ -7,6 +7,7 @@ import net.onelitefeather.falco.benchmark.support.ChunkPayloads;
 import net.onelitefeather.falco.benchmark.support.FakePaletteEntryResolver;
 import net.onelitefeather.falco.anvil.ChunkCompression;
 import net.onelitefeather.falco.anvil.RegionFile;
+import net.onelitefeather.falco.anvil.RegionFormatException;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -22,6 +23,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
@@ -98,7 +100,7 @@ public class ChunkSaveStageBenchmark {
      * @throws IOException if the region file or the payload cannot be prepared
      */
     @Setup(Level.Trial)
-    public void setUp() throws IOException {
+    public void setUp() throws IOException, RegionFormatException {
         this.column = ChunkColumn.of(BenchmarkConstants.OVERWORLD_SECTIONS, this.distinctStates);
         this.resolver = new FakePaletteEntryResolver();
         this.snapshot = this.column.copy();
@@ -117,7 +119,7 @@ public class ChunkSaveStageBenchmark {
      * @throws IOException if the temporary files cannot be removed
      */
     @TearDown(Level.Trial)
-    public void tearDown() throws IOException {
+    public void tearDown() throws IOException, RegionFormatException {
         this.region.close();
 
         try (Stream<Path> entries = Files.walk(this.directory)) {
@@ -125,7 +127,7 @@ public class ChunkSaveStageBenchmark {
                 try {
                     Files.deleteIfExists(path);
                 } catch (IOException exception) {
-                    throw new java.io.UncheckedIOException(exception);
+                    throw new UncheckedIOException(exception);
                 }
             });
         }
@@ -150,7 +152,7 @@ public class ChunkSaveStageBenchmark {
      * @throws IOException if the payload cannot be built
      */
     @Benchmark
-    public byte[] codec() throws IOException {
+    public byte[] codec() throws IOException, RegionFormatException {
         return ChunkCompression.ZLIB.compress(ChunkPayloads.serialize(this.snapshot, this.resolver, this.resolver));
     }
 
@@ -173,7 +175,7 @@ public class ChunkSaveStageBenchmark {
      * @throws IOException if the payload cannot be written
      */
     @Benchmark
-    public void transfer() throws IOException {
+    public void transfer() throws IOException, RegionFormatException {
         this.region.writeRaw(CHUNK_X, CHUNK_Z, ChunkCompression.ZLIB, this.compressed);
     }
 
@@ -183,7 +185,7 @@ public class ChunkSaveStageBenchmark {
      * @throws IOException if the chunk cannot be saved
      */
     @Benchmark
-    public void full() throws IOException {
+    public void full() throws IOException, RegionFormatException {
         ChunkColumn copy = this.column.copy();
         byte[] payload = ChunkCompression.ZLIB.compress(ChunkPayloads.serialize(copy, this.resolver, this.resolver));
         this.region.writeRaw(CHUNK_X, CHUNK_Z, ChunkCompression.ZLIB, payload);

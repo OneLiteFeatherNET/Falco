@@ -4,6 +4,7 @@ import net.kyori.adventure.key.Key;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -69,7 +70,7 @@ class DemoReportTest {
      * @return the rounds
      */
     private List<LoadMeasurement.Round> rounds(long[] millis) {
-        return java.util.Arrays.stream(millis)
+        return Arrays.stream(millis)
                 .mapToObj(value -> new LoadMeasurement.Round(value * 1_000_000L, 64))
                 .toList();
     }
@@ -116,7 +117,9 @@ class DemoReportTest {
         assertTrue(report.contains("Linux 6.1.0 (amd64)"), report);
         assertTrue(report.contains("4096 MiB"), report);
         assertTrue(report.contains("minecraft:overworld"), report);
-        assertTrue(report.contains("/worlds/survival"), report);
+        // Compared against the same Path#toString() the report itself calls, rather than a literal
+        // with "/", because Path renders with "\" on Windows and both are correct there.
+        assertTrue(report.contains(world().worldRoot().toString()), report);
     }
 
     @Test
@@ -279,22 +282,25 @@ class DemoReportTest {
     void testAnEmptyResultNamesTheDirectoryTheLoaderRead() {
         String report = DemoReport.emptyResult(options(4), world(), 64, diagnosis(64, 0, 0, Map.of()));
 
-        assertTrue(report.contains("/worlds/survival/dimensions/minecraft/overworld/region"), report);
+        // Compared against the same Path#toString() the report itself calls, rather than a literal
+        // with "/", because Path renders with "\" on Windows and both are correct there.
+        assertTrue(report.contains(world().regionDirectory().toString()), report);
     }
 
     @Test
     void testAnEmptyResultCallsOutADifferentDirectory() {
-        LoaderDiagnosis elsewhere = new LoaderDiagnosis(
-                Path.of("/worlds/survival/dimensions/minecraft/overworld/region"), 64, 0, 0, Map.of(), 0L
-        );
-        WorldSearchResult.Located legacy = new WorldSearchResult.Located(
-                Path.of("/worlds/survival"), Path.of("/worlds/survival/region"), OVERWORLD, true
-        );
+        Path elsewhereDirectory = Path.of("/worlds/survival/dimensions/minecraft/overworld/region");
+        Path legacyRoot = Path.of("/worlds/survival");
+        Path legacyRegionDirectory = Path.of("/worlds/survival/region");
+        LoaderDiagnosis elsewhere = new LoaderDiagnosis(elsewhereDirectory, 64, 0, 0, Map.of(), 0L);
+        WorldSearchResult.Located legacy = new WorldSearchResult.Located(legacyRoot, legacyRegionDirectory, OVERWORLD, true);
 
         String report = flat(DemoReport.emptyResult(options(4), legacy, 64, elsewhere));
 
-        assertTrue(report.contains("/worlds/survival/region"), report);
-        assertTrue(report.contains("/worlds/survival/dimensions/minecraft/overworld/region"), report);
+        // Compared against the same Path#toString() the report itself calls, rather than a literal
+        // with "/", because Path renders with "\" on Windows and both are correct there.
+        assertTrue(report.contains(legacyRegionDirectory.toString()), report);
+        assertTrue(report.contains(elsewhereDirectory.toString()), report);
         assertTrue(report.contains("different directory"), report);
     }
 
