@@ -4,11 +4,15 @@ import net.kyori.adventure.key.Key;
 import net.minestom.server.MinecraftServer;
 import net.minestom.server.coordinate.BlockVec;
 import net.minestom.server.coordinate.Pos;
+import net.minestom.server.coordinate.Vec;
+import net.minestom.server.entity.PlayerHand;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.block.Block;
 import net.minestom.server.instance.block.BlockFace;
 import net.minestom.server.instance.block.BlockHandler;
 import net.minestom.server.instance.block.rule.BlockPlacementRule;
+import net.minestom.server.item.ItemStack;
+import net.minestom.server.item.Material;
 import net.minestom.server.world.DimensionType;
 import net.minestom.testing.Env;
 import net.minestom.testing.extension.MicrotusExtension;
@@ -19,11 +23,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -37,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -77,6 +85,45 @@ class FalcoInstanceBlockWriteTest {
     }
 
     /**
+     * A placement rule which keeps the state it was asked about and answers with a fixed block.
+     * <p>
+     * The rule of the placed block is the one branch of a write that reshapes the block before it
+     * reaches the chunk, and it is the only caller of the state builder. Answering with a block that
+     * differs from the placed one makes the branch observable in the chunk; keeping the state makes
+     * observable what the builder put into it, which no assertion on the chunk could show.
+     * </p>
+     */
+    private static final class RecordingRule extends BlockPlacementRule {
+
+        /**
+         * The state of the last placement this rule was asked about, null until it was asked.
+         */
+        private final AtomicReference<PlacementState> lastState = new AtomicReference<>();
+
+        /**
+         * What every placement is answered with, null to cancel the placement.
+         */
+        private final @Nullable Block result;
+
+        /**
+         * Creates a rule for a block.
+         *
+         * @param block  the block this rule answers for
+         * @param result the block every placement is answered with, null to cancel it
+         */
+        private RecordingRule(Block block, @Nullable Block result) {
+            super(block);
+            this.result = result;
+        }
+
+        @Override
+        public @Nullable Block blockPlace(PlacementState state) {
+            this.lastState.set(state);
+            return this.result;
+        }
+    }
+
+    /**
      * Creates a registered instance in the environment of the test.
      *
      * @param env the environment which provides the server process
@@ -110,6 +157,92 @@ class FalcoInstanceBlockWriteTest {
                 instance, new BlockVec(1, Y, 1)), true);
 
         assertFalse(placed, "there is no chunk at that position, so nothing can be placed");
+    }
+
+    @Test
+    @DisplayName("writes what the placement rule of the placed block decided, not what was placed")
+    void testAPlacementRuleDecidesTheWrittenBlock(Env env) {
+        final FalcoInstance instance = registered(env);
+        instance.loadChunk(0, 0).join();
+        MinecraftServer.getBlockManager().registerBlockPlacementRule(
+                new RecordingRule(Block.SANDSTONE, Block.BRICKS));
+
+        final boolean placed = instance.placeBlock(new BlockHandler.Placement(Block.SANDSTONE, Block.AIR,
+                instance, new BlockVec(8, Y, 8)), true);
+
+        assertTrue(placed, "a loaded chunk accepts a placement");
+        assertEquals(Block.BRICKS, instance.getBlock(8, Y, 8),
+                "the block the rule answered with is the one that has to reach the chunk");
+    }
+
+    @Test
+    @DisplayName("leaves air behind when the placement rule cancels the placement")
+    void testACancellingPlacementRuleLeavesAir(Env env) {
+        final FalcoInstance instance = registered(env);
+        instance.loadChunk(0, 0).join();
+        MinecraftServer.getBlockManager().registerBlockPlacementRule(
+                new RecordingRule(Block.OAK_PLANKS, null));
+
+        final boolean placed = instance.placeBlock(new BlockHandler.Placement(Block.OAK_PLANKS, Block.AIR,
+                instance, new BlockVec(9, Y, 9)), true);
+
+        assertTrue(placed, "the placement was carried out, the rule only decided what it carried");
+        assertEquals(Block.AIR, instance.getBlock(9, Y, 9),
+                "a rule which answers null cancels the placement, which leaves air rather than the placed block");
+    }
+
+    @Test
+    @DisplayName("hands a rule the position and the block of a placement which had no player")
+    void testAPlacementWithoutAPlayerCarriesNoPlayerState(Env env) {
+        final FalcoInstance instance = registered(env);
+        instance.loadChunk(0, 0).join();
+        final RecordingRule rule = new RecordingRule(Block.COBBLESTONE, Block.COBBLESTONE);
+        MinecraftServer.getBlockManager().registerBlockPlacementRule(rule);
+        final BlockVec position = new BlockVec(10, Y, 10);
+
+        instance.placeBlock(new BlockHandler.Placement(Block.COBBLESTONE, Block.AIR, instance, position), true);
+
+        final BlockPlacementRule.PlacementState state = rule.lastState.get();
+        assertNotNull(state, "the rule of the placed block has to be asked before the block is written");
+        assertSame(instance, state.instance(), "the rule is asked about the instance the write goes to");
+        assertEquals(Block.COBBLESTONE, state.block());
+        assertEquals(position, state.placePosition());
+        assertNull(state.blockFace(), "a placement without a player clicked no face");
+        assertNull(state.cursorPosition(), "a placement without a player has no cursor");
+        assertNull(state.playerPosition(), "a placement without a player has no player position");
+        assertNull(state.usedItemStack(), "a placement without a player used no item");
+        assertFalse(state.isPlayerShifting(), "a placement without a player is not shifting");
+    }
+
+    @Test
+    @DisplayName("hands a rule the face, the cursor and the player of a placement which had one")
+    void testAPlayerPlacementCarriesThePlayerIntoTheRule(Env env) {
+        final FalcoInstance instance = registered(env);
+        instance.loadChunk(0, 0).join();
+        final RecordingRule rule = new RecordingRule(Block.MOSSY_COBBLESTONE, Block.SMOOTH_STONE);
+        MinecraftServer.getBlockManager().registerBlockPlacementRule(rule);
+        final var connection = env.createConnection();
+        final var player = connection.connect(instance, new Pos(0, Y, 0));
+        final ItemStack held = ItemStack.of(Material.DIAMOND);
+        player.setItemInMainHand(held);
+        player.setSneaking(true);
+        final BlockVec position = new BlockVec(11, Y, 11);
+
+        instance.placeBlock(new BlockHandler.PlayerPlacement(Block.MOSSY_COBBLESTONE, Block.AIR, instance, position,
+                player, PlayerHand.MAIN, BlockFace.WEST, 0.25F, 0.5F, 0.75F), true);
+
+        final BlockPlacementRule.PlacementState state = rule.lastState.get();
+        assertNotNull(state, "the rule of the placed block has to be asked before the block is written");
+        assertEquals(BlockFace.WEST, state.blockFace(), "the face the player clicked has to reach the rule");
+        assertEquals(new Vec(0.25, 0.5, 0.75), state.cursorPosition(),
+                "the cursor of the player has to reach the rule");
+        assertEquals(player.getPosition(), state.playerPosition(),
+                "the position of the player has to reach the rule");
+        assertEquals(held, state.usedItemStack(),
+                "the item in the hand the placement names has to reach the rule");
+        assertTrue(state.isPlayerShifting(), "a sneaking player has to reach the rule as shifting");
+        assertEquals(Block.SMOOTH_STONE, instance.getBlock(position),
+                "the block the rule answered with is the one that has to reach the chunk");
     }
 
     @Test
