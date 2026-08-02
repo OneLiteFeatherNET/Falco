@@ -80,6 +80,17 @@ import java.util.function.ToLongFunction;
  * blocks without saying so gets no light pass at all today, so this adds no new way to be wrong.
  * </p>
  * <p>
+ * <b>The opacity tables of a chunk are kept in the same entry, under the same bound and the same
+ * one property of the caller.</b> They are what reading a chunk produces before any light is
+ * computed, they describe the blocks of that chunk and nothing else, and both kinds of light use the
+ * same tables. The chunks this pays for are mostly the ones the pass never writes: a ring chunk is
+ * read by every area it borders, and the neighbours of an edit are marked because their light
+ * changed while their own blocks did not. What it costs is memory on top of the light, bounded by
+ * the same count of chunks but not by the same size per chunk — an entirely uniform section costs
+ * nothing at all and a fully mixed one costs 8 KB, so the figure is a property of the world rather
+ * than a constant. {@link #tableBuilds()} reports whether the reuse is happening.
+ * </p>
+ * <p>
  * A computation keeps no state <em>about the run</em>, so one instance may serve as many threads as
  * one likes. Two threads computing <em>overlapping</em> areas is a different matter and is not made
  * safe here; the scheduler is what keeps that from happening, and the kept light follows the same
@@ -155,6 +166,7 @@ public final class ChunkLightArea {
     private final ChunkLightService service;
     private final Map<ChunkArea, Kept> kept;
     private final AtomicLong fullPropagations = new AtomicLong();
+    private final AtomicLong tableBuilds = new AtomicLong();
 
     /**
      * Creates an area computation which reads and writes through the given service.
@@ -207,7 +219,11 @@ public final class ChunkLightArea {
                     "The position " + x + "/" + columnY + "/" + z + " is not inside a chunk column"
             );
         }
-        this.kept.computeIfAbsent(position, _ -> new Kept()).changes().add((columnY << 8) | (z << 4) | x);
+        // The opacity tables of the chunk are dropped rather than patched. A change of one block can
+        // change the occlusion of its section only, but rebuilding a single section needs the block
+        // states of that section, and reading those is most of what building the table costs. What
+        // is worth keeping here is the far larger set of chunks nothing was reported for at all.
+        this.kept.computeIfAbsent(position, _ -> new Kept()).blocksChanged().changes().add((columnY << 8) | (z << 4) | x);
     }
 
     /**
@@ -242,6 +258,29 @@ public final class ChunkLightArea {
     @Contract(pure = true)
     public long fullPropagations() {
         return this.fullPropagations.get();
+    }
+
+    /**
+     * Returns how many opacity tables this area has built since it was created, counted per chunk.
+     * <p>
+     * One is counted for every chunk whose block states had to be read and turned into tables, and
+     * none for a chunk whose tables were still valid from an earlier pass. A steady area therefore
+     * counts its chunks and its ring once and then stops counting, while a number that keeps rising
+     * at the rate of the passes means the tables are never reused — a bound that is too small, a
+     * caller reporting every chunk as changed, or the recalculating
+     * {@link #compute(Instance, List, boolean)} path, which keeps nothing by definition.
+     * </p>
+     * <p>
+     * This is a count and not a timing, which is what makes it worth having: it is exact, it is the
+     * same on every machine, and it answers whether the reuse happens at all separately from what
+     * the reuse is worth.
+     * </p>
+     *
+     * @return the amount of chunks whose opacity tables were built rather than reused
+     */
+    @Contract(pure = true)
+    public long tableBuilds() {
+        return this.tableBuilds.get();
     }
 
     /**
@@ -403,12 +442,63 @@ public final class ChunkLightArea {
                 continue;
             }
 
-            List<SectionOpacity> opacity = this.service.opacityOf(chunk);
+            List<SectionOpacity> opacity = opacityOf(position, chunk, revision != null);
             ChunkLightState solo = solo(entry, opacity, sky, member, stamp, taken, revision != null);
 
             entries.put(position, new Entry(chunk, opacity, solo.copy(), member ? solo : null, stamp));
         }
         return entries;
+    }
+
+    /**
+     * Builds the opacity tables of one chunk, or reuses the ones the last pass built.
+     * <p>
+     * A table describes the blocks of a section and nothing else, so it stays right for exactly as
+     * long as those blocks do not move — which is the same condition the kept light rests on, and it
+     * is reported through the same two methods. This therefore adds no requirement on the caller that
+     * {@link #recordChange(ChunkArea, int, int, int)} and {@link #forget(ChunkArea)} did not already
+     * carry. What it does add is memory, which is why the tables live in the bounded entry with the
+     * light rather than in a map of their own.
+     * </p>
+     * <p>
+     * <b>The version is read before the block states and stored with them.</b> A change which lands
+     * between the two moves the version on, the stored tables no longer match it, and the next pass
+     * builds them again. The failure direction of that race is a wasted rebuild, never a stale table.
+     * </p>
+     * <p>
+     * The ring is the reason this exists. A ring chunk is read on every pass of every area it borders
+     * and written by none of them, and the neighbours of an edit are marked precisely because their
+     * light changed while <em>their own blocks did not</em> — see
+     * {@link ChunkLightScheduler#markChanged(Instance, int, int, int, int, int)}, which says so and
+     * then rebuilt the tables anyway.
+     * </p>
+     *
+     * @param position the chunk the tables belong to
+     * @param chunk    the chunk to read
+     * @param caching  whether the caller offered revisions, and with them the change reports the
+     *                 reuse depends on
+     * @return the light properties of every section of the chunk
+     */
+    private List<SectionOpacity> opacityOf(ChunkArea position, Chunk chunk, boolean caching) {
+        if (!caching) {
+            this.tableBuilds.incrementAndGet();
+            return this.service.opacityOf(chunk);
+        }
+        Kept entry = this.kept.computeIfAbsent(position, _ -> new Kept());
+        long version = entry.blockVersion();
+        @Nullable List<SectionOpacity> cached = entry.tablesAt(version);
+
+        if (cached != null) {
+            return cached;
+        }
+        this.tableBuilds.incrementAndGet();
+
+        // Copied into an immutable list before it is shared. Two things follow from that and both
+        // are wanted: the list is safely published to whichever thread reads it next, and a caller
+        // which tried to write through it fails loudly instead of corrupting the next pass.
+        List<SectionOpacity> built = List.copyOf(this.service.opacityOf(chunk));
+        entry.storeTables(built, version);
+        return built;
     }
 
     /**
@@ -618,9 +708,11 @@ public final class ChunkLightArea {
     private static final class Kept {
 
         private final Changes changes = new Changes();
+        private final AtomicLong blockVersion = new AtomicLong();
 
         private volatile @Nullable ChunkLightState block;
         private volatile @Nullable ChunkLightState sky;
+        private volatile @Nullable Tables tables;
 
         /**
          * Returns the positions which changed since the light of this chunk was computed.
@@ -630,6 +722,56 @@ public final class ChunkLightArea {
         @Contract(pure = true)
         private Changes changes() {
             return this.changes;
+        }
+
+        /**
+         * Returns which generation of block states the chunk is at.
+         * <p>
+         * The number carries no meaning beyond changing whenever the blocks of the chunk are
+         * reported to have moved. It exists because the opacity tables have to be tied to the blocks
+         * they were built from, and the reported positions cannot serve for that: they are consumed
+         * by whichever pass takes them, and there are two kinds of light taking from them
+         * independently.
+         * </p>
+         *
+         * @return the current generation of the block states of this chunk
+         */
+        @Contract(pure = true)
+        private long blockVersion() {
+            return this.blockVersion.get();
+        }
+
+        /**
+         * Reports that the blocks of this chunk moved, so its opacity tables no longer describe it.
+         *
+         * @return this entry, so a caller can go on to record what changed
+         */
+        private Kept blocksChanged() {
+            this.blockVersion.incrementAndGet();
+            this.tables = null;
+            return this;
+        }
+
+        /**
+         * Returns the kept opacity tables if they still describe the given generation of blocks.
+         *
+         * @param version the generation the caller is about to read the chunk at
+         * @return the kept tables, or null if none are kept or they describe older blocks
+         */
+        @Contract(pure = true)
+        private @Nullable List<SectionOpacity> tablesAt(long version) {
+            @Nullable Tables held = this.tables;
+            return held != null && held.version() == version ? held.opacity() : null;
+        }
+
+        /**
+         * Keeps the opacity tables of this chunk for the next pass.
+         *
+         * @param opacity the light properties of every section of the chunk
+         * @param version the generation of the block states they were built from
+         */
+        private void storeTables(List<SectionOpacity> opacity, long version) {
+            this.tables = new Tables(opacity, version);
         }
 
         /**
@@ -663,8 +805,24 @@ public final class ChunkLightArea {
         private void drop() {
             this.block = null;
             this.sky = null;
+            this.tables = null;
+            this.blockVersion.incrementAndGet();
             this.changes.unknown();
         }
+    }
+
+    /**
+     * The {@link Tables} record ties the opacity tables of a chunk to the blocks they describe.
+     * <p>
+     * The two are held in one reference rather than in two fields so that a reader cannot see the
+     * tables of one generation next to the version of another. Reading a single volatile reference
+     * is what makes the check in {@link Kept#tablesAt(long)} a comparison rather than a protocol.
+     * </p>
+     *
+     * @param opacity the light properties of every section of the chunk
+     * @param version the generation of the block states the tables were built from
+     */
+    private record Tables(List<SectionOpacity> opacity, long version) {
     }
 
     /**
