@@ -1,0 +1,172 @@
+name: Benchmark
+
+# Runs a JMH benchmark on demand and uploads its run record.
+#
+# The point of this workflow is provenance, not precision. A shared runner measures worse than a
+# workstation, but it records what a workstation run keeps forgetting: the exact command line, the
+# commit, the date, the machine, and results.json. Several open items in the wiki are of the form
+# "no run record was kept" rather than "the number is wrong", and those close with a run from here
+# even when the numbers themselves are noisier.
+#
+# Absolute microseconds from a shared runner do not belong in a published table. Ratios measured
+# within one run are far more robust, because both sides pay the same noise — which is also what the
+# wiki concludes from its five cross-run repeats: ratios reproduce, third digits do not.
+#
+# Every input reaches the shell through env: and none is interpolated into a command. This job holds
+# the Maven credentials, so a filter string that reached `eval` would be a credential leak.
+
+on:
+  workflow_dispatch:
+    inputs:
+      include:
+        description: 'JMH filter, e.g. LightEngineComparisonBenchmark or ChunkSaveComparisonBenchmark.compress'
+        required: true
+        type: string
+      forks:
+        description: 'Forks. Two or more make the interval cover JVM launches; one does not.'
+        required: false
+        default: '2'
+        type: string
+      arguments:
+        description: 'Further JMH arguments, e.g. -p lightSources=64 -wi 5 -i 10'
+        required: false
+        default: ''
+        type: string
+      runner:
+        description: 'Runner. A shared one is noisy; a dedicated one is the only place absolute numbers mean anything.'
+        required: false
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - self-hosted
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Rejected before anything is built, so a bad filter costs seconds rather than a Gradle run.
+      # The filter is a JMH regex over class and method names; anything outside that alphabet is a
+      # sign of an attempt at something else, and this job can read the Maven credentials.
+      - name: Validate the inputs
+        env:
+          INCLUDE: ${{ inputs.include }}
+          FORKS: ${{ inputs.forks }}
+          ARGUMENTS: ${{ inputs.arguments }}
+        run: |
+          case "$INCLUDE" in
+            *[!A-Za-z0-9._*\|\(\)\[\]-]*) echo "::error::filter holds characters a JMH pattern does not use"; exit 1 ;;
+          esac
+          case "$FORKS" in
+            ''|*[!0-9]*) echo "::error::forks must be a whole number"; exit 1 ;;
+          esac
+          case "$ARGUMENTS" in
+            *[!A-Za-z0-9=,._[:space:]-]*) echo "::error::arguments hold characters a JMH option does not use"; exit 1 ;;
+          esac
+          if [ "$FORKS" -lt 2 ]; then
+            echo "::warning::One fork measures dispersion inside a single JVM only. A single-fork run has already once shown an ordering here that two forks did not confirm."
+          fi
+
+      # Read before the run rather than after, so the recorded state is the one the JVM warmed up in.
+      - name: Record the machine
+        id: machine
+        run: |
+          {
+            echo "cores=$(nproc)"
+            echo "model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"
+            echo "load_before=$(cut -d' ' -f1 /proc/loadavg)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build the JMH jar
+        env:
+          ONELITEFEATHER_MAVEN_USERNAME: ${{ secrets.ONELITEFEATHER_MAVEN_USERNAME }}
+          ONELITEFEATHER_MAVEN_PASSWORD: ${{ secrets.ONELITEFEATHER_MAVEN_PASSWORD }}
+        run: ./gradlew :falco-benchmarks:jmhJar --no-daemon
+
+      # The jar is invoked directly rather than through the jmh task, because the task accepts only
+      # the jmh.include property and this job needs -f and the parameter overrides as well.
+      # Arguments are split on whitespace into an array; nothing is passed through a shell.
+      - name: Run
+        id: run
+        env:
+          INCLUDE: ${{ inputs.include }}
+          FORKS: ${{ inputs.forks }}
+          ARGUMENTS: ${{ inputs.arguments }}
+        run: |
+          JAR=$(ls falco-benchmarks/build/libs/*-jmh.jar)
+          read -ra EXTRA <<< "$ARGUMENTS"
+          printf '%q ' java -jar "$JAR" "$INCLUDE" -f "$FORKS" "${EXTRA[@]}" -rf json -rff results.json > command-line.txt
+          java -jar "$JAR" "$INCLUDE" -f "$FORKS" "${EXTRA[@]}" -rf json -rff results.json 2>&1 | tee human.txt
+          echo "load_after=$(cut -d' ' -f1 /proc/loadavg)" >> "$GITHUB_OUTPUT"
+
+      # Emits the fields section 4 of the documentation standard requires, so a table can be
+      # published without anyone reconstructing the conditions afterwards. What the run cannot
+      # establish is written as such: a wrong value is worse than a missing one.
+      - name: Write the provenance line
+        if: always()
+        env:
+          INCLUDE: ${{ inputs.include }}
+          FORKS: ${{ inputs.forks }}
+          ARGUMENTS: ${{ inputs.arguments }}
+          RUNNER_KIND: ${{ inputs.runner }}
+          CORES: ${{ steps.machine.outputs.cores }}
+          MODEL: ${{ steps.machine.outputs.model }}
+          LOAD_BEFORE: ${{ steps.machine.outputs.load_before }}
+          LOAD_AFTER: ${{ steps.run.outputs.load_after }}
+        run: |
+          JMH_VERSION=$(grep -m1 -oP 'JMH version: \K.*' human.txt || echo 'not captured')
+          JVM_VERSION=$(java -version 2>&1 | head -1 | grep -oP '"\K[^"]+' || echo 'not captured')
+          IDLE=$(awk -v l="${LOAD_BEFORE:-0}" 'BEGIN { print (l < 0.5) ? "recorded as idle" : "recorded as **not idle**" }')
+          {
+            echo "Paste beneath the table, then check every field against the run:"
+            echo
+            echo '```'
+            echo "<sub>\`$INCLUDE\`, $FORKS fork(s), arguments \`${ARGUMENTS:-none}\`, JMH $JMH_VERSION,"
+            echo "JVM $JVM_VERSION, one $CORES-core $RUNNER_KIND runner ($MODEL), load average"
+            echo "$LOAD_BEFORE before the run and ${LOAD_AFTER:-not captured} after — $IDLE, commit"
+            echo "\`$(git rev-parse --short HEAD)\`, run on $(date -u +%Y-%m-%d), \`results.json\` attached to this"
+            echo "workflow run. Warmup and measurement iterations are the class annotations unless the"
+            echo "arguments above override them — copy the values from the class, do not generalise.</sub>"
+            echo '```'
+            echo
+            if [ "$RUNNER_KIND" = "ubuntu-latest" ]; then
+              echo "**This ran on a shared runner.** Absolute microseconds from it do not belong in a"
+              echo "published table. A ratio measured inside this one run is far more defensible, because"
+              echo "both sides paid the same noise. If these numbers are to stand beside existing tables,"
+              echo "they need their own table and their own provenance line — never a merge with figures"
+              echo "measured elsewhere."
+              echo
+            fi
+            if [ "$FORKS" = "1" ]; then
+              echo "**One fork.** The interval covers variance between iterations of a single JVM, not"
+              echo "between launches, and is therefore narrower than the true uncertainty."
+              echo
+            fi
+          } > provenance.md
+          cat provenance.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jmh-${{ github.run_number }}
+          path: |
+            results.json
+            human.txt
+            command-line.txt
+            provenance.md
+          if-no-files-found: warn
+          retention-days: 90
