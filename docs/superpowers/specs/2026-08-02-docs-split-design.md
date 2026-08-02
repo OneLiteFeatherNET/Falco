@@ -118,6 +118,9 @@ Not a summary of intentions — this is what was executed and what it returned.
 - **A scope error about cross-run repeats.** `Benchmarking` and `Measured-Results` agree on four and
   enumerate them; `Light-Engine` says "the two genuine cross-run repeats this project has", meaning
   the two that concern lighting. The count is not in dispute, the scope of the sentence is.
-- **Whether `<details>` renders inside `_Sidebar.md`.** Still unverified. It renders in the page body
-  — seven on `Benchmarking` — but the sidebar carries none, so only a live test answers it.
+- ~~**Whether `<details>` renders inside `_Sidebar.md`.**~~ **Answered on 2026-08-02: it does.**
+  Tested against the live wiki, not assumed — GitHub emits a real `<details>` element in the sidebar,
+  nothing escaped. Rationale, Research and Build Setup now carry their subpages in collapsed blocks,
+  so all thirty pages are one click away at fourteen rendered lines. The folding rule this document
+  and the standard both describe as a constraint is therefore a choice; both have been corrected.
 - **Where `Falco-docs-standard` should live.** It is now a git repository with no remote.
