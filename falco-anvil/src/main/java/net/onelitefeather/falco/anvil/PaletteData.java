@@ -80,11 +80,12 @@ public record PaletteData(int[] palette, long @Nullable [] packed, int bitsPerEn
      * @param entryCount   the amount of entries the section holds
      * @param minBitsPerEntry the smallest amount of bits the palette type allows
      * @return the created representation
-     * @throws IOException if the palette is empty or the packed data has an unusable length
+     * @throws ChunkDataException if the palette is empty or the packed data has an unusable length
      */
-    public static PaletteData read(int[] palette, long @Nullable [] packed, int entryCount, int minBitsPerEntry) throws IOException {
+    public static PaletteData read(int[] palette, long @Nullable [] packed, int entryCount, int minBitsPerEntry) throws ChunkDataException {
         if (palette.length == 0) {
-            throw new IOException("The palette of a section must hold at least one entry");
+            throw new ChunkDataException(ChunkDataException.Reason.EMPTY_PALETTE,
+                    "The palette of a section must hold at least one entry");
         }
         if (packed == null || packed.length == 0) {
             return single(palette[0], entryCount);
@@ -94,7 +95,8 @@ public record PaletteData(int[] palette, long @Nullable [] packed, int bitsPerEn
         int resolved = BitPacker.resolveBitsPerEntry(packed.length, entryCount, expected);
 
         if (resolved == 0) {
-            throw new IOException(
+            throw new ChunkDataException(
+                    ChunkDataException.Reason.PACKED_LENGTH_MISMATCH,
                     "The packed data of a section holds " + packed.length + " longs which does not match any bit count for "
                             + entryCount + " entries"
             );
@@ -192,9 +194,9 @@ public record PaletteData(int[] palette, long @Nullable [] packed, int bitsPerEn
      * Resolves the value of every entry of the section through the palette.
      *
      * @return the value of every entry
-     * @throws IOException if a packed index does not address an entry of the palette
+     * @throws ChunkDataException if a packed index does not address an entry of the palette
      */
-    public int[] unpack() throws IOException {
+    public int[] unpack() throws ChunkDataException {
         int[] values = new int[this.entryCount];
 
         if (isSingleValue()) {
@@ -208,7 +210,8 @@ public record PaletteData(int[] palette, long @Nullable [] packed, int bitsPerEn
             int index = indices[i];
 
             if (index < 0 || index >= this.palette.length) {
-                throw new IOException(
+                throw new ChunkDataException(
+                        ChunkDataException.Reason.PALETTE_INDEX_OUT_OF_RANGE,
                         "The packed index " + index + " does not address one of the " + this.palette.length + " palette entries"
                 );
             }
