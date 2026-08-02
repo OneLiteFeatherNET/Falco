@@ -4,11 +4,16 @@ import net.minestom.server.MinecraftServer;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.block.Block;
+import net.minestom.server.instance.generator.Generator;
+import net.minestom.server.instance.palette.Palette;
 import net.minestom.server.network.ConnectionState;
 import net.minestom.server.network.packet.server.SendablePacket;
+import net.minestom.server.world.DimensionType;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -43,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @DisplayName("What a caller of a Falco chunk makes it allocate")
@@ -69,6 +74,15 @@ class SectionMaterialisationTest {
         return chunk.storage().materialisedSections();
     }
 
+    private static Block read(FalcoChunk chunk, int x, int y, int z) {
+        chunk.lockReadLock();
+        try {
+            return chunk.getBlock(x, y, z);
+        } finally {
+            chunk.unlockReadLock();
+        }
+    }
+
     private static void write(FalcoChunk chunk, int y, Block block) {
         chunk.lockWriteLock();
         try {
@@ -91,6 +105,30 @@ class SectionMaterialisationTest {
      */
     private static void serialise(FalcoChunk chunk) {
         SendablePacket.extractServerPacket(ConnectionState.PLAY, chunk.getFullDataPacket());
+    }
+
+    /**
+     * Generates the chunk at the origin of a fresh instance and hands it over.
+     * <p>
+     * The generator cases need an instance rather than the shared container of this class, because
+     * {@code FalcoInstance#applyGenerator} is the subject and only a {@link FalcoInstance} runs it. The
+     * instance is unregistered again before the chunk is handed back: it exists for one chunk, and a
+     * registered instance which nobody unregisters keeps its tick partition for the rest of the run.
+     * </p>
+     *
+     * @param generator the generator to run over the chunk
+     * @return the generated chunk at {@code 0:0}
+     */
+    private static FalcoChunk generated(Generator generator) {
+        final FalcoInstance instance = new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD);
+
+        instance.setGenerator(generator);
+        MinecraftServer.getInstanceManager().registerInstance(instance);
+        try {
+            return (FalcoChunk) instance.loadChunk(0, 0).join();
+        } finally {
+            MinecraftServer.getInstanceManager().unregisterInstance(instance);
+        }
     }
 
     @Test
@@ -265,5 +303,47 @@ class SectionMaterialisationTest {
         serialise(eager);
 
         assertEquals(SECTIONS, owned(eager));
+    }
+
+    @Test
+    @DisplayName("a generator owns only the sections it filled")
+    void testAGeneratorOwnsOnlyWhatItFilled() {
+        final FalcoChunk chunk = generated(unit -> unit.modifier().fillHeight(-64, 0, Block.STONE));
+
+        assertEquals(4, owned(chunk),
+                "stone from y=-64 to y=0 fills exactly four sections; the other twenty hold nothing "
+                        + "and must stay shared. This is the number the whole stage is for: a chunk "
+                        + "which is generated and then owns all twenty-four sections has paid the full "
+                        + "price of the eager layout before the first block of terrain was written");
+        assertEquals(Block.STONE, read(chunk, 0, -64, 0));
+        assertEquals(Block.AIR, read(chunk, 0, 0, 0));
+
+        for (int index = 0; index < 4; index++) {
+            assertEquals(0, chunk.storage().view(index).blockPalette().bitsPerEntry(),
+                    "a section a generator filled with one state ends in the single value mode. "
+                            + "UnitModifier#fillHeight covering a whole section routes through "
+                            + "SectionModifierImpl#fill to Palette#fill, so this width is what the "
+                            + "generator produced and not what the commit reclaimed");
+        }
+    }
+
+    @Test
+    @DisplayName("the commit packs the palette a generator left at the direct width")
+    void testTheCommitPacksWhatTheGeneratorLeftWide() {
+        final FalcoChunk chunk = generated(unit -> unit.subdivide().get(8).modifier()
+                .setAllRelative((x, y, z) -> (x + y + z) % 2 == 0 ? Block.STONE : Block.DIRT));
+
+        assertEquals(1, owned(chunk),
+                "one section was written and twenty-three were not");
+        assertEquals(Block.STONE, read(chunk, 0, 64, 0));
+        assertEquals(Block.DIRT, read(chunk, 1, 64, 0));
+
+        assertEquals(Palette.BLOCK_PALETTE_MIN_BITS, chunk.storage().view(8).blockPalette().bitsPerEntry(),
+                "two distinct states need four bits, the minimum an indirect block palette has. "
+                        + "PaletteImpl#setAll calls makeDirect() whenever the supplier answered more "
+                        + "than one value, so the generator handed the commit a palette fifteen bits "
+                        + "wide holding two states - 8192 bytes for content that fits in 2048. Without "
+                        + "the optimisation in the commit this section stays at fifteen bits, because "
+                        + "nothing in Minestom ever narrows a palette again");
     }
 }

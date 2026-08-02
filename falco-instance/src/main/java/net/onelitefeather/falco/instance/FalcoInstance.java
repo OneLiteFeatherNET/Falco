@@ -113,7 +113,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -911,6 +911,15 @@ public class FalcoInstance extends Instance {
      * value mode and holds no array at all, so the clone is a few bytes.
      * </p>
      * <p>
+     * Those copies are taken from the <em>views</em> of the storage and not from its sections. That is
+     * the difference between a lazy chunk which survives its own generator and one which does not:
+     * {@code Chunk#getSections()} materialises every section it hands out, so staging a generation
+     * through it would create all twenty-four sections of a chunk before the generator has written a
+     * single block, and the section a generator decides not to fill would already exist by the time
+     * that decision is made. {@link BlockStorage#view(int)} promises the opposite and is read-only,
+     * which is all the staging needs: the palettes handed to the generator are clones either way.
+     * </p>
+     * <p>
      * The write lock of the chunk is held for the commit only. Minestom holds it across the whole
      * generator instead, which stops every read and every write of that chunk for as long as the
      * generator runs.
@@ -920,12 +929,12 @@ public class FalcoInstance extends Instance {
      * @param generator the generator to run over the chunk
      */
     private void applyGenerator(Chunk chunk, Generator generator) {
-        final List<Section> sections = chunk.getSections();
-        final int sectionCount = sections.size();
+        final BlockStorage storage = storageOf(chunk);
+        final int sectionCount = storage.sectionCount();
         final GeneratorImpl.GenSection[] staged = new GeneratorImpl.GenSection[sectionCount];
         Arrays.setAll(staged, index -> {
-            final Section section = sections.get(index);
-            return new GeneratorImpl.GenSection(section.blockPalette().clone(), section.biomePalette().clone());
+            final Section view = storage.view(index);
+            return new GeneratorImpl.GenSection(view.blockPalette().clone(), view.biomePalette().clone());
         });
         final GeneratorImpl.UnitImpl unit = GeneratorImpl.chunk(this.registries.biome(), staged,
                 chunk.getChunkX(), chunk.getMinSection(), chunk.getChunkZ());
@@ -935,12 +944,7 @@ public class FalcoInstance extends Instance {
         chunk.lockWriteLock();
         try {
             for (int index = 0; index < sectionCount; index++) {
-                final Section section = sections.get(index);
-                final GeneratorImpl.GenSection generated = staged[index];
-                section.blockPalette().copyFrom(generated.blocks());
-                section.biomePalette().copyFrom(generated.biomes());
-                writeSpecialBlocks(chunk, generated.specials(),
-                        (chunk.getMinSection() + index) * Chunk.CHUNK_SECTION_SIZE);
+                commitSection(chunk, storage, index, staged[index]);
             }
             chunk.invalidate();
         } finally {
@@ -950,6 +954,78 @@ public class FalcoInstance extends Instance {
         applyForks(chunk, unit);
         applyPendingForks(chunk);
         refreshLastBlockChangeTime();
+    }
+
+    /**
+     * Writes one generated section back into the chunk, or leaves the chunk alone if it produced
+     * nothing.
+     * <p>
+     * The skip is what makes a lazy layout survive its own generator. A generator normally fills the
+     * lower third of a chunk and leaves everything above the terrain untouched — the census of a real
+     * overworld puts that untouched share at {@code 62,24 %} of the sections of a finished chunk — and
+     * committing an empty palette into an empty section would create twenty-four sections to write
+     * nothing into twenty of them. The condition is the one {@code InstanceContainer} already applies
+     * to fork sections at {@code InstanceContainer.java:434}, extended by the biomes and by the special
+     * blocks, since either of those can be the only thing a generator produced for a section.
+     * </p>
+     * <p>
+     * A section that is still shared and received nothing needs no write at all, and that is exactly
+     * what the condition tests. A section the chunk already owns is committed unconditionally: it
+     * holds content from a loader or an earlier write, and an empty generated palette is a statement
+     * about what the generator produced and not about what the chunk should end up holding.
+     * </p>
+     * <p>
+     * The optimisation afterwards is US-2.03. A generator writes through {@code GenSection} palettes
+     * which grow to fifteen bits per entry and never shrink again, because nothing in the main source
+     * tree of Minestom ever calls {@code Palette#optimize} — a generated chunk retains
+     * {@code 203 840} bytes where the same content packed to its minimum width retains {@code 84 800}.
+     * What that costs in time is measured by {@code GeneratorCommitBenchmark} and stated in the plan
+     * of this stage; it is not assumed to be free.
+     * </p>
+     *
+     * @param chunk     the chunk which receives the section
+     * @param storage   the storage of the chunk
+     * @param index     the index of the section, counted from the bottom one
+     * @param generated the section the generator produced
+     */
+    private void commitSection(Chunk chunk, BlockStorage storage, int index,
+                               GeneratorImpl.GenSection generated) {
+        final boolean producedNothing = generated.blocks().count() == 0
+                && generated.biomes().count() == 0
+                && generated.specials().isEmpty();
+
+        if (producedNothing && storage.shared(index)) {
+            return;
+        }
+        final Section section = storage.section(index);
+
+        section.blockPalette().copyFrom(generated.blocks());
+        section.biomePalette().copyFrom(generated.biomes());
+        section.blockPalette().optimize(Palette.Optimization.SIZE);
+        section.biomePalette().optimize(Palette.Optimization.SIZE);
+        writeSpecialBlocks(chunk, generated.specials(),
+                (chunk.getMinSection() + index) * Chunk.CHUNK_SECTION_SIZE);
+    }
+
+    /**
+     * Hands out the storage of a chunk, whatever kind of chunk it is.
+     * <p>
+     * A chunk supplier is a setting of the instance and a caller is free to install one which does not
+     * produce a {@link FalcoChunk}. Rather than carrying two generation paths, a foreign chunk is
+     * wrapped in a {@link SectionBlockStorage} over its own live sections: that storage shares nothing
+     * and materialises nothing, so every decision below it collapses into the behaviour Minestom has,
+     * and the writes go straight into the sections of the chunk because the list holds the same
+     * {@code Section} references.
+     * </p>
+     *
+     * @param chunk the chunk to reach the sections of
+     * @return the storage of the chunk
+     */
+    private static BlockStorage storageOf(Chunk chunk) {
+        if (chunk instanceof FalcoChunk falcoChunk) {
+            return falcoChunk.storage();
+        }
+        return new SectionBlockStorage(chunk.getMinSection(), chunk.getSections());
     }
 
     /**
@@ -1036,11 +1112,30 @@ public class FalcoInstance extends Instance {
 
     /**
      * Writes one section of a fork into a chunk.
+     * <p>
+     * A fork which produced nothing for this section returns before the chunk is touched, because
+     * {@code Chunk#getSectionAt} materialises on a lazy storage and a fork covers whole areas of which
+     * it usually fills a few sections. Minestom applies the same test at
+     * {@code InstanceContainer.java:434}.
+     * </p>
+     * <p>
+     * The honest statement about this guard is that it cannot fire today, and it is kept anyway rather
+     * than presented as a saving: {@link #applyForks(Chunk, GeneratorImpl.UnitImpl)} already drops a
+     * fork section whose palette is empty, and it is the only writer of the map
+     * {@link #applyPendingForks(Chunk)} reads, so no empty section reaches this method by either route.
+     * It stays because this method is the point where the two routes converge and the only one that
+     * touches a section, and because a guard that lives where the materialisation happens does not
+     * depend on a caller remembering to filter. The special blocks are part of the condition for the
+     * same reason, even though a special block always writes its state into the palette as well.
+     * </p>
      *
      * @param chunk    the chunk which receives the blocks
      * @param modifier the section of the fork to write
      */
     private void applyFork(Chunk chunk, GeneratorImpl.SectionModifierImpl modifier) {
+        if (modifier.genSection().blocks().count() == 0 && modifier.genSection().specials().isEmpty()) {
+            return;
+        }
         final int sectionStartY = modifier.start().blockY();
         chunk.lockWriteLock();
         try {
