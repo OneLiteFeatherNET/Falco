@@ -43,7 +43,7 @@ dependencies {
     // Minestom is compileOnly in Falco, so it does not arrive with these
     // artefacts. Falco declares no version for it, on purpose. You pick it.
     // The version Falco compiles and measures against is recorded in the wiki:
-    // https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status#environment
+    // https://github.com/OneLiteFeatherNET/Falco/wiki/Contributing#environment
     implementation("net.minestom:minestom:<version>")
 }
 ```
@@ -152,7 +152,7 @@ faster, the wider of the two relative half-widths being 20 %, which holds the fa
 One fork — the `±` covers variance between iterations of one JVM, not between JVM launches, defined
 once in [Rationale: Measurement](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement#the-interval-after-a-number).
 The full four-row read and write table is owned by
-[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status#the-region-file-against-the-one-minestom-ships-with).</sub>
+[Measured Results](https://github.com/OneLiteFeatherNET/Falco/wiki/Measured-Results#the-region-file-against-the-one-minestom-ships-with).</sub>
 
 The two-thread figure did not reproduce, and that belongs next to it: an independent run of the same
 configuration put Minestom at 103 437 ± 856 306 µs/op there, which carries no factor at all. What
@@ -186,13 +186,14 @@ widest. One fork — the `±` covers variance between iterations of one JVM, not
 defined once in
 [Rationale: Measurement](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement#the-interval-after-a-number).
 The six rows and their bounds are owned by
-[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status#against-the-engine-minestom-ships-with).</sub>
+[Measured Results](https://github.com/OneLiteFeatherNET/Falco/wiki/Measured-Results#against-the-engine-minestom-ships-with).</sub>
 
 The figure after a `±` is [the half-width of a confidence interval over the measurement iterations of
 one JVM launch](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement); where two
-intervals overlap, no factor is printed. The charts, the full tables, the methodology and the
-optimisations that did **not** pay off are in
-[Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) and
+intervals overlap, no factor is printed. The charts and the methodology are in
+[Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking), the full tables in
+[Measured Results](https://github.com/OneLiteFeatherNET/Falco/wiki/Measured-Results), and the
+optimisations that did **not** pay off in
 [Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status).
 
 ## Documentation
@@ -206,14 +207,20 @@ Everything past the quick start lives in the
   loader does, how to use it standalone, and what it deliberately does not do
 - [Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine) — the engine, calling
   it by hand versus letting a chunk maintain its own light, its guarantees and its limits
+- [Measured Results](https://github.com/OneLiteFeatherNET/Falco/wiki/Measured-Results) — the
+  measurement environment and every published table with its provenance: the benchmark class and
+  methods, the parameter values and the run configuration behind each row
 - [Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) — what each published
   table does and does not establish, and how a third party can re-perform any of it
-- [Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status) — the full
-  measured record, the decisions that shape the design, defects found and fixed, and what is open
+- [Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status) — the decisions
+  that shape the design, what is in the branch, defects found and fixed, and what is open
 - [Rationale](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale) — why it is built this way:
   what each decision was weighed against, and where the argument is weaker than the figures suggest
 - [Research](https://github.com/OneLiteFeatherNET/Falco/wiki/Research) — the investigations run
   before writing any code, kept because each answers a question worth asking again
+- [Contributing](https://github.com/OneLiteFeatherNET/Falco/wiki/Contributing) — what a change is
+  built, tested and released with: the toolchain and library versions, the Gradle commands, the
+  conventions the build enforces, what a push to `main` publishes, and what review looks for
 - [Build Setup](https://github.com/OneLiteFeatherNET/Falco/wiki/Build-Setup) — how the Gradle build
   is put together, and where the rest of it is documented: dependency management, publishing,
   versioning and releases, tests and Javadoc, the benchmark and demo modules, the architecture rules
