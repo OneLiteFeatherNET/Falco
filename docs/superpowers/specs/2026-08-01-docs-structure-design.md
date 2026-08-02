@@ -189,6 +189,13 @@ irony is load-bearing: this is the one definition §0 declares authoritative.
 
 ## Deferred
 
+**Status as of 2026-08-02, added afterwards; the list below is left as it was written.** The first
+and third items are done, and not as this page expected them to be — the Gradle group folded without
+a new page, because `Build Setup` already listed all six pages behind it and therefore already
+satisfied the folding rule. The second is still open. What happened instead, and the reference class
+a split breaks that no link checker reports, is in
+[the split design of 2026-08-02](2026-08-02-docs-split-design.md).
+
 - A landing page for the Gradle cluster would fold seven sidebar lines into one. A new page is out of
   scope; noted as the obvious next round.
 - Whether `<details>`/`<summary>` renders inside `_Sidebar.md` is unverified — it appears in none of

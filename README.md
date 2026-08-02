@@ -225,6 +225,9 @@ Everything past the quick start lives in the
   is put together, and where the rest of it is documented: dependency management, publishing,
   versioning and releases, tests and Javadoc, the benchmark and demo modules, the architecture rules
 
+The shortest path from a clone to a green build, and the one credential problem that stops it, are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md) in this repository.
+
 ## Licence
 
 AGPL-3.0. See [`LICENSE`](LICENSE).
