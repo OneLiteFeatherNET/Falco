@@ -113,7 +113,7 @@ class FalcoInstanceBlockWriteTest {
     }
 
     @Test
-    @DisplayName("breaks a block, replaces it with what the event decided and tells the viewers")
+    @DisplayName("breaks a block and leaves air where it stood")
     void testBreakBlockReplacesTheBlock(Env env) {
         final FalcoInstance instance = registered(env);
         instance.loadChunk(0, 0).join();
