@@ -35,9 +35,11 @@ to `extends Chunk` holding a `BlockStorage`. The seam costs one object, 24 bytes
 whole-branch review found five Important defects, all fixed — two were real regressions no test saw
 (a dropped `requireNonNullElse(…, Block.AIR)` and both biome registry guards).
 
-**Stage 2 — tasks 1 to 9 done, task 10 (acceptance) was running when this was written.** Check
-`git log` and the ledger for the true state. Empty sections now share one flyweight, the generator
-stages through `view(int)` and packs on commit behind a guard, heightmaps are built on demand.
+**Stage 2 — done.** All ten tasks, acceptance recorded in `## Stage 2 result` at the end of the stage 2
+plan. Empty sections share one flyweight, the generator stages through `view(int)` and packs on commit
+behind a guard, heightmaps are built on demand, and the two block maps became one plus a counter.
+A fresh chunk fell from 192 objects / 6 848 B to **25 / 840**, which is −87.7 %; a filled chunk saves
+104 B and nothing more, because the flyweight pays for sections that hold nothing.
 
 **Stages 3 and 4 — specified, not planned.** Stage 3 is the facade split of `FalcoInstance`
 (1119 lines doing registry, loading, block writing, generation and persistence) plus lifecycle
