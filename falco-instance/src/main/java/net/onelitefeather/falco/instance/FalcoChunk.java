@@ -30,6 +30,7 @@ import net.minestom.server.utils.ArrayUtils;
 import net.minestom.server.world.DimensionType;
 import net.minestom.server.world.biome.Biome;
 import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -149,7 +150,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 3.5.0
+ * @version 3.6.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -304,6 +305,36 @@ public class FalcoChunk extends Chunk {
      */
     public BlockStorage storage() {
         return this.storage;
+    }
+
+    /**
+     * Checks that a chunk can be written to through the instance module, and types it.
+     * <p>
+     * The block setter that carries a placement and a destruction is {@code protected} on
+     * {@code Chunk} and only widened to public by {@link FalcoChunk} and {@code DynamicChunk}. A chunk
+     * of any other type is therefore accepted everywhere else in this module — a caller which owns its
+     * own chunk type hands the two lifecycle hooks over through
+     * {@link FalcoInstance#setChunkLifecycle(java.util.function.Consumer, java.util.function.Consumer)}
+     * and takes part in the lifecycle without ever being a {@link FalcoChunk} — and refused here, on
+     * the one path this module cannot reach without the subclass it ships itself.
+     * </p>
+     * <p>
+     * It lives on the chunk rather than on the instance because the check belongs to the type it
+     * checks for, and because {@code BlockWriter} is about to become the second caller of it; a check
+     * that two parts copy is a check that can drift.
+     * </p>
+     *
+     * @param chunk the chunk to check
+     * @return the same chunk, typed
+     * @throws FalcoInstanceException if the chunk is not a {@link FalcoChunk}
+     * @since 0.4.0
+     */
+    @Contract("_ -> param1")
+    public static FalcoChunk require(Chunk chunk) {
+        if (chunk instanceof FalcoChunk falcoChunk) return falcoChunk;
+        throw new FalcoInstanceException("the instance module writes blocks through "
+                + FalcoChunk.class.getName() + ", whose block setter carrying a placement is public,"
+                + " but its chunk supplier produced a " + chunk.getClass().getName());
     }
 
     /**

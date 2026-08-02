@@ -7,17 +7,13 @@ import net.minestom.server.coordinate.BlockVec;
 import net.minestom.server.coordinate.CoordConversion;
 import net.minestom.server.coordinate.Point;
 import net.minestom.server.coordinate.Vec;
-import net.minestom.server.entity.Entity;
 import net.minestom.server.entity.Player;
 import net.minestom.server.event.EventDispatcher;
 import net.minestom.server.event.instance.InstanceBlockUpdateEvent;
-import net.minestom.server.event.instance.InstanceChunkLoadEvent;
-import net.minestom.server.event.instance.InstanceChunkUnloadEvent;
 import net.minestom.server.event.player.PlayerBlockBreakEvent;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.ChunkLoader;
 import net.minestom.server.instance.DynamicChunk;
-import net.minestom.server.instance.EntityTracker;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.InstanceManager;
 import net.minestom.server.instance.block.Block;
@@ -28,7 +24,6 @@ import net.minestom.server.instance.block.rule.BlockPlacementRule;
 import net.minestom.server.instance.generator.Generator;
 import net.minestom.server.network.packet.server.play.BlockChangePacket;
 import net.minestom.server.network.packet.server.play.BlockEntityDataPacket;
-import net.minestom.server.network.packet.server.play.UnloadChunkPacket;
 import net.minestom.server.network.packet.server.play.WorldEventPacket;
 import net.minestom.server.registry.Registries;
 import net.minestom.server.timer.SchedulerManager;
@@ -105,7 +100,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.5.0
+ * @version 1.6.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -147,8 +142,8 @@ public class FalcoInstance extends Instance {
      * </p>
      * <p>
      * That the map of running loads is also the lock of a position is stated where the transitions
-     * are, in {@link ChunkRegistry}, and the steps this class hands to
-     * {@link ChunkRegistry#publish} and {@link ChunkRegistry#remove} are what it contributes to them.
+     * are, in {@link ChunkRegistry}, and the steps handed to {@link ChunkRegistry#publish} and
+     * {@link ChunkRegistry#remove} come from {@link ChunkLifecycle}.
      * </p>
      */
     private final ChunkRegistry registry = new ChunkRegistry();
@@ -189,19 +184,6 @@ public class FalcoInstance extends Instance {
     private final Map<BlockVec, Block> currentlyChangingBlocks = new ConcurrentHashMap<>();
 
     /**
-     * The factory every chunk of this instance is created by.
-     * <p>
-     * Volatile because the setter is public and unsynchronized while the load path reads the field
-     * from a chunk task on another thread. Without it the reader may not only miss the change, it
-     * may see a half-constructed supplier: the value is an arbitrary object handed in by a caller,
-     * and only a volatile write publishes that object safely. Synchronizing the setter instead
-     * would put a lock on the monitor of a public object, which is exactly what callers must not be
-     * able to hold against this instance.
-     * </p>
-     */
-    private volatile ChunkSupplier chunkSupplier = FalcoChunk::new;
-
-    /**
      * Everything this instance does with a {@link ChunkLoader}: the four save paths, the read and the
      * notification that a chunk left.
      * <p>
@@ -213,32 +195,19 @@ public class FalcoInstance extends Instance {
      */
     private final ChunkPersistence persistence;
 
-    private volatile boolean autoChunkLoad = true;
+    /**
+     * Everything that happens to a chunk between not existing and not existing again.
+     * <p>
+     * The create, the read, the publish, the unload and the two settings which steer them —
+     * the chunk supplier and the auto load flag — used to be {@code private} members of this class,
+     * which meant that a publish could only be reached by driving a whole load through a loader. They
+     * are a responsibility of their own and {@link ChunkLifecycle} carries it, which is what makes
+     * each step reachable and measurable one at a time.
+     * </p>
+     */
+    private final ChunkLifecycle lifecycle;
 
     private volatile long lastBlockChangeTime;
-
-    /**
-     * How a chunk of this instance is told that it was loaded, or null for the built-in way.
-     * <p>
-     * {@code Chunk#onLoad()} and {@code Chunk#unload()} are {@code protected}, so this package can
-     * drive them only on {@link FalcoChunk}, a type it defines itself. A caller that owns another
-     * chunk type — a lighting chunk from {@code falco-light}, say — can reach both hooks and hands
-     * them over here. Null means the built-in pair, which requires a {@link FalcoChunk} exactly as
-     * before.
-     * </p>
-     * <p>
-     * Volatile for the same reason as {@link #chunkSupplier}: a caller object written by a public
-     * setter and read on the load path from another thread.
-     * </p>
-     */
-    private volatile @Nullable Consumer<Chunk> chunkLoaded;
-
-    /**
-     * How a chunk of this instance is told that it left, or null for the built-in way.
-     *
-     * @see #chunkLoaded
-     */
-    private volatile @Nullable Consumer<Chunk> chunkUnloaded;
 
     /**
      * Whether {@link #shutdown(InstanceManager)} saves the chunks before it unregisters.
@@ -296,6 +265,7 @@ public class FalcoInstance extends Instance {
         // instance, and a callback into an object whose constructor has not finished is how a field
         // that is assigned two lines later is read as null.
         this.persistence.loader().loadInstance(this);
+        this.lifecycle = new ChunkLifecycle(this, this.registry, this.persistence, this.generation);
         this.lastBlockChangeTime = System.nanoTime();
     }
 
@@ -395,8 +365,8 @@ public class FalcoInstance extends Instance {
     public void unregister(InstanceManager instanceManager) {
         if (isRegistered()) instanceManager.unregisterInstance(this);
         for (int pass = 0; pass < UNREGISTER_PASSES; pass++) {
-            for (Long index : this.registry.loadingPositions()) discardRunningLoad(index);
-            for (Chunk chunk : this.registry.snapshot()) unloadChunk(chunk);
+            for (Long index : this.registry.loadingPositions()) this.lifecycle.discard(index);
+            for (Chunk chunk : this.registry.snapshot()) this.lifecycle.unload(chunk);
             if (this.registry.idle()) {
                 // A fork whose target chunk was never requested waits forever, and after this there
                 // is nothing left it could wait for.
@@ -410,37 +380,41 @@ public class FalcoInstance extends Instance {
     }
 
     /**
-     * Takes the slot of a running load so its chunk never reaches this instance.
+     * Hands out the registry of chunk positions of this instance.
      * <p>
-     * Removing the entry is the whole claim: the loading thread publishes its chunk only while its
-     * own future is still the entry of the position, so a load which finds the slot empty or taken
-     * knows that somebody decided its result is no longer wanted. The waiting callers are told with
-     * a failure rather than with the chunk, because a chunk which is handed back after it was
-     * discarded looks usable and is not.
+     * Exposed because a facade whose parts cannot be reached is a facade whose parts cannot be
+     * tested, which is the whole reason this class was split.
      * </p>
      *
-     * @param index the chunk index of the position whose load is claimed
+     * @return the registry of this instance
+     * @since 0.4.0
      */
-    private void discardRunningLoad(long index) {
-        final CompletableFuture<Chunk> running = this.registry.discard(index);
-        if (running == null) return;
-        running.completeExceptionally(new FalcoInstanceException("the chunk "
-                + CoordConversion.chunkIndexGetX(index) + ":" + CoordConversion.chunkIndexGetZ(index)
-                + " was unloaded while it was being loaded, so the load was cancelled"));
+    public ChunkRegistry registry() {
+        return this.registry;
+    }
+
+    /**
+     * Hands out the lifecycle of the chunks of this instance.
+     *
+     * @return the lifecycle of this instance
+     * @since 0.4.0
+     */
+    public ChunkLifecycle lifecycle() {
+        return this.lifecycle;
     }
 
     @Override
     public void setBlock(int x, int y, int z, Block block, boolean doBlockUpdates) {
         Chunk chunk = getChunkAt(x, z);
         if (chunk == null) {
-            if (!this.autoChunkLoad) {
+            if (!this.lifecycle.autoLoad()) {
                 throw new IllegalStateException(
                         "tried to set a block in the unloaded chunk " + CoordConversion.globalToChunk(x)
                                 + ":" + CoordConversion.globalToChunk(z) + " while auto chunk load is disabled");
             }
             chunk = loadChunk(CoordConversion.globalToChunk(x), CoordConversion.globalToChunk(z)).join();
         }
-        if (chunk.isLoaded()) writeBlock(requireWritableChunk(chunk), x, y, z, block, null, null, doBlockUpdates, 0);
+        if (chunk.isLoaded()) writeBlock(FalcoChunk.require(chunk), x, y, z, block, null, null, doBlockUpdates, 0);
     }
 
     @Override
@@ -448,7 +422,7 @@ public class FalcoInstance extends Instance {
         final Point blockPosition = placement.getBlockPosition();
         final Chunk chunk = getChunkAt(blockPosition);
         if (chunk == null || !chunk.isLoaded()) return false;
-        writeBlock(requireWritableChunk(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(),
+        writeBlock(FalcoChunk.require(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(),
                 placement.getBlock(), placement, null, doBlockUpdates, 0);
         return true;
     }
@@ -470,7 +444,7 @@ public class FalcoInstance extends Instance {
         if (event.isCancelled()) return false;
 
         final Block resultBlock = event.getResultBlock();
-        writeBlock(requireWritableChunk(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(), resultBlock,
+        writeBlock(FalcoChunk.require(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(), resultBlock,
                 null, new BlockHandler.PlayerDestroy(block, resultBlock, this, blockPosition, player),
                 doBlockUpdates, 0);
         PacketSendingUtils.sendGroupedPacket(chunk.getViewers(),
@@ -591,316 +565,43 @@ public class FalcoInstance extends Instance {
             if (neighbour.equals(updated)) continue;
             final Chunk neighbourChunk = getChunkAt(neighbourPosition);
             if (neighbourChunk == null || !neighbourChunk.isLoaded()) continue;
-            writeBlock(requireWritableChunk(neighbourChunk), neighbourX, neighbourY, neighbourZ, updated, null, null,
+            writeBlock(FalcoChunk.require(neighbourChunk), neighbourX, neighbourY, neighbourZ, updated, null, null,
                     true, updateDistance + 1);
         }
     }
 
     @Override
     public CompletableFuture<Chunk> loadChunk(int chunkX, int chunkZ) {
-        return retrieveChunk(chunkX, chunkZ);
+        return this.lifecycle.retrieve(chunkX, chunkZ);
     }
 
     @Override
     public CompletableFuture<@Nullable Chunk> loadOptionalChunk(int chunkX, int chunkZ) {
         final Chunk loaded = getChunk(chunkX, chunkZ);
         if (loaded != null) return CompletableFuture.completedFuture(loaded);
-        if (!this.autoChunkLoad) return CompletableFuture.completedFuture(null);
-        return retrieveChunk(chunkX, chunkZ);
-    }
-
-    /**
-     * Hands back the chunk at the given position, loading it if it is not there yet.
-     * <p>
-     * Two callers asking for the same chunk at the same time share one load: the first one to offer
-     * its future to {@link ChunkRegistry#acquire} performs the work, everyone else receives that
-     * same future. Which of the three cases a caller is in is the registry's decision and is
-     * explained there; this method only acts on the answer.
-     * </p>
-     * <p>
-     * The work itself starts after the decision, never inside it. A loader without parallel support
-     * runs on the calling thread, and starting it inside the decision would run it while the
-     * position is held, where a nested transition of the same position would deadlock.
-     * </p>
-     * <p>
-     * A failure completes the returned future exceptionally and stops there. It is deliberately not
-     * also pushed into the exception manager of the server the way the container does it, because a
-     * failure that is both reported and returned gets handled twice and logged twice.
-     * </p>
-     *
-     * @param chunkX the chunk X
-     * @param chunkZ the chunk Z
-     * @return a future completed with the chunk, or completed exceptionally if it cannot be created
-     */
-    private CompletableFuture<Chunk> retrieveChunk(int chunkX, int chunkZ) {
-        final long index = CoordConversion.chunkIndex(chunkX, chunkZ);
-        final Chunk loaded = this.registry.chunk(index);
-        if (loaded != null) return CompletableFuture.completedFuture(loaded);
-
-        final CompletableFuture<Chunk> own = new CompletableFuture<>();
-        final ChunkRegistry.LoadSlot slot = this.registry.acquire(index, own);
-        switch (slot) {
-            case ChunkRegistry.LoadSlot.Loaded(Chunk cached) -> {
-                return CompletableFuture.completedFuture(cached);
-            }
-            case ChunkRegistry.LoadSlot.Running(CompletableFuture<Chunk> running) -> {
-                return running;
-            }
-            case ChunkRegistry.LoadSlot.Claimed ignored -> {
-                final ChunkLoader loader = this.persistence.loader();
-                if (loader.supportsParallelLoading()) {
-                    Thread.startVirtualThread(() -> completeLoad(index, chunkX, chunkZ, loader, own));
-                } else {
-                    // A loader without parallel support is read on the calling thread, which keeps a
-                    // `loadChunk(…).join()` from a tick free of a thread hand-off it would only wait for.
-                    completeLoad(index, chunkX, chunkZ, loader, own);
-                }
-                return own;
-            }
-        }
-    }
-
-    /**
-     * Reads a chunk through the loader, publishes it and completes the waiting future.
-     * <p>
-     * The chunk is produced first and published second, and the publish may be refused. Everything
-     * in between the two is the window in which an unload can decide that this chunk is not wanted
-     * any more; a load which is refused therefore has to undo itself rather than complain, which is
-     * what the discard below does.
-     * </p>
-     * <p>
-     * The two ends of that undo do not necessarily reach the same loader. The chunk is read through
-     * the loader handed in here, which {@link #retrieveChunk(int, int)} captured before the load
-     * started, while {@link ChunkPersistence#unloaded(Chunk)} tells whichever loader is current when
-     * it runs. A {@link #setChunkLoader(ChunkLoader)} in between therefore hands the discarded chunk
-     * to a loader that never produced it — which its own documentation permits, since Minestom gives
-     * a loader no way to tell its own chunks apart anyway. It is written down rather than fixed
-     * because changing it is a change of behaviour.
-     * </p>
-     *
-     * @param index  the chunk index of the position, the key in the map of loading chunks
-     * @param chunkX the chunk X
-     * @param chunkZ the chunk Z
-     * @param loader the loader the chunk is read from
-     * @param future the future handed to the callers waiting for this chunk
-     */
-    private void completeLoad(long index, int chunkX, int chunkZ, ChunkLoader loader, CompletableFuture<Chunk> future) {
-        final Chunk falcoChunk;
-        try {
-            Chunk chunk = loader.loadChunk(this, chunkX, chunkZ);
-            if (chunk == null) {
-                chunk = createChunk(chunkX, chunkZ);
-                chunk.onGenerate();
-            }
-            falcoChunk = requireManagedChunk(chunk);
-        } catch (Throwable throwable) {
-            this.registry.release(index, future);
-            future.completeExceptionally(throwable);
-            return;
-        }
-        if (!publishChunk(index, falcoChunk, future)) {
-            // The chunk was never part of this instance, so there is no map entry and no partition
-            // to clean up. The loader is still told, because it created the chunk and may hold
-            // bookkeeping for it, which its own documentation allows for explicitly.
-            notifyUnloaded(falcoChunk);
-            this.persistence.unloaded(falcoChunk);
-            future.completeExceptionally(new FalcoInstanceException("the chunk " + chunkX + ":" + chunkZ
-                    + " was unloaded while it was being loaded, so the loaded chunk was discarded"));
-            return;
-        }
-        notifyLoaded(falcoChunk);
-        future.complete(falcoChunk);
-        EventDispatcher.call(new InstanceChunkLoadEvent(this, falcoChunk));
-    }
-
-    /**
-     * Makes a freshly loaded chunk part of this instance, unless somebody claimed its position.
-     * <p>
-     * Putting the chunk into the chunk map and giving it a tick partition are one step, taken while
-     * the position is held, so an unload of the same position can only run entirely before or
-     * entirely after it. Splitting them is what lets Minestom delete a partition that is created a
-     * moment later, which leaves the chunk being ticked for the rest of the life of the server even
-     * though nothing else knows about it any more.
-     * </p>
-     * <p>
-     * Telling the chunk that it was loaded happens outside, and the asymmetry with
-     * {@link #unloadChunk(Chunk)}, which tells the chunk it left from <em>inside</em> the lock, is
-     * not an oversight. {@code Chunk#onLoad()} sets no flag: a chunk reports {@code isLoaded()} from
-     * the moment it is constructed, so nothing a reader of this instance can see depends on that
-     * hook having run yet. The unload hook does set the flag, and a chunk which has left the chunk
-     * map while still reporting itself as loaded is one every {@code ChunkUtils#isLoaded} check in
-     * Minestom believes in — which is why that one step is inside and this one is not.
-     * </p>
-     * <p>
-     * The step below therefore has no foreign code in it, but that is a property of this method
-     * rather than a rule of the registry; {@link ChunkRegistry} states what a step handed to it may
-     * do, and the removal step of {@link #unloadChunk(Chunk)} is bound by exactly the same rules.
-     * </p>
-     *
-     * @param index  the chunk index of the position
-     * @param chunk  the chunk to publish
-     * @param future the future of this load, which has to still be the entry of the position
-     * @return true if the chunk is now part of this instance, false if the load was claimed
-     */
-    private boolean publishChunk(long index, Chunk chunk, CompletableFuture<Chunk> future) {
-        return this.registry.publish(index, chunk, future,
-                published -> MinecraftServer.process().dispatcher().createPartition(published));
-    }
-
-    /**
-     * Creates a chunk through the chunk supplier of this instance and generates it.
-     * <p>
-     * This is the path a chunk takes which no {@link ChunkLoader} knows about. Without a generator
-     * the chunk stays empty, which is a world made of air rather than a failure.
-     * </p>
-     *
-     * @param chunkX the chunk X
-     * @param chunkZ the chunk Z
-     * @return the created chunk
-     * @throws FalcoInstanceException if the chunk supplier returned null
-     */
-    protected Chunk createChunk(int chunkX, int chunkZ) {
-        final Chunk chunk = this.chunkSupplier.createChunk(this, chunkX, chunkZ);
-        if (chunk == null) {
-            throw new FalcoInstanceException("the chunk supplier returned null for chunk " + chunkX + ":" + chunkZ);
-        }
-        final Generator current = this.generation.generator();
-        if (current != null && chunk.shouldGenerate()) {
-            this.generation.apply(chunk, current);
-            refreshLastBlockChangeTime();
-        } else {
-            this.generation.applyPending(chunk);
-        }
-        return chunk;
-    }
-
-    /**
-     * Checks that a chunk is one this instance can manage.
-     * <p>
-     * A chunk of any other type would be accepted by everything except the unload path, where the
-     * {@code protected} lifecycle hooks are out of reach, so it would silently keep reporting itself
-     * as loaded forever. Refusing it here names the cause at the point where the wrong supplier was
-     * used.
-     * </p>
-     *
-     * @param chunk the chunk to check
-     * @return the same chunk, typed
-     * @throws FalcoInstanceException if the chunk is not a {@link FalcoChunk}
-     */
-    @Contract("_ -> param1")
-    private Chunk requireManagedChunk(Chunk chunk) {
-        if (this.chunkLoaded == null || this.chunkUnloaded == null) {
-            if (chunk instanceof FalcoChunk falcoChunk) return falcoChunk;
-            throw new FalcoInstanceException("this instance only manages " + FalcoChunk.class.getName()
-                    + ", but its chunk supplier produced a " + chunk.getClass().getName()
-                    + "; the lifecycle hooks of any other chunk cannot be reached from this package."
-                    + " Configure setChunkLifecycle if you own the chunk type and can reach them");
-        }
-        return chunk;
-    }
-
-    /**
-     * Checks that a chunk can be written to through this instance, and types it.
-     * <p>
-     * Stricter than {@link #requireManagedChunk(Chunk)} on purpose, and the difference is not a
-     * matter of taste. The lifecycle hooks can be delegated to a caller-supplied handler, so a chunk
-     * of any type is acceptable there. Writing is different: this instance calls the block setter
-     * which carries a placement and a destruction, and that one is {@code protected} on
-     * {@code Chunk}. Only a subclass can widen it, and {@link FalcoChunk} is the subclass this
-     * module ships. A foreign chunk type may therefore take part in the lifecycle and still not be
-     * writable through this instance, which is why the two checks are separate rather than one.
-     * </p>
-     *
-     * @param chunk the chunk to check
-     * @return the same chunk, typed
-     * @throws FalcoInstanceException if the chunk is not a {@link FalcoChunk}
-     */
-    @Contract("_ -> param1")
-    private FalcoChunk requireWritableChunk(Chunk chunk) {
-        if (chunk instanceof FalcoChunk falcoChunk) return falcoChunk;
-        throw new FalcoInstanceException("this instance writes blocks through "
-                + FalcoChunk.class.getName() + ", whose block setter carrying a placement is public,"
-                + " but its chunk supplier produced a " + chunk.getClass().getName());
-    }
-
-    /**
-     * Tells a chunk that it is now part of this instance.
-     *
-     * @param chunk the chunk which finished loading
-     */
-    private void notifyLoaded(Chunk chunk) {
-        @Nullable Consumer<Chunk> configured = this.chunkLoaded;
-
-        if (configured == null) {
-            ((FalcoChunk) chunk).markLoaded();
-            return;
-        }
-        configured.accept(chunk);
-    }
-
-    /**
-     * Tells a chunk that it is no longer part of this instance.
-     *
-     * @param chunk the chunk which left the instance
-     */
-    private void notifyUnloaded(Chunk chunk) {
-        @Nullable Consumer<Chunk> configured = this.chunkUnloaded;
-
-        if (configured == null) {
-            ((FalcoChunk) chunk).markUnloaded();
-            return;
-        }
-        configured.accept(chunk);
+        if (!this.lifecycle.autoLoad()) return CompletableFuture.completedFuture(null);
+        return this.lifecycle.retrieve(chunkX, chunkZ);
     }
 
     /**
      * Removes a chunk from this instance.
      * <p>
-     * Taking the chunk out of the chunk map, clearing its loaded flag and deleting its tick
-     * partition are one step, taken while the position of the chunk is held, so a load which is
-     * publishing the same position cannot interleave with it. Everything else — the packet, the
-     * event, the entities and the loader — follows outside, because all four can call back into this
-     * instance and holding a position while foreign code runs is how two chunks deadlock each other.
-     * </p>
-     * <p>
-     * Clearing the flag is the one step which cannot move out, and it may be foreign code: a caller
-     * which installed a lifecycle through {@link #setChunkLifecycle(Consumer, Consumer)} sees its own
-     * consumer run right there, while the position is held. That consumer is bound by what
-     * {@link ChunkRegistry} requires of such a step — short, non-blocking, no call back into the
-     * chunk map of this instance, no exception — and the constraint is documented on both.
-     * </p>
-     * <p>
-     * A running load is not cancelled here and not waited for either, and that is not an omission: a
-     * position which is loading has no chunk in the map, so a chunk a caller can hand to this method
-     * is never the one being loaded. It is either the chunk of that position, which the atomic step
-     * below removes, or a chunk of an earlier life of that position, which was already unloaded and
-     * is refused by the first line. Cancelling a load needs a position rather than a chunk, and
-     * {@link #unregister(InstanceManager)} is where that happens.
+     * What that means step by step, and which of the steps runs while the position of the chunk is
+     * held, is documented on {@link ChunkLifecycle#unload(Chunk)}; this is the door
+     * {@code Instance} demands.
      * </p>
      * <p>
      * Unloading the same chunk twice does nothing the second time, which makes this usable in a
      * cleanup path that may run more than once.
      * </p>
      *
-     * @param chunk the chunk to remove, has to be a {@link FalcoChunk}
-     * @throws FalcoInstanceException if the chunk is not a {@link FalcoChunk}
+     * @param chunk the chunk to remove, has to be a {@link FalcoChunk} unless a lifecycle pair was
+     *              installed through {@link #setChunkLifecycle(Consumer, Consumer)}
+     * @throws FalcoInstanceException if this instance cannot drive the lifecycle of that chunk
      */
     @Override
     public void unloadChunk(Chunk chunk) {
-        if (!chunk.isLoaded()) return;
-        final Chunk falcoChunk = requireManagedChunk(chunk);
-        final int chunkX = falcoChunk.getChunkX();
-        final int chunkZ = falcoChunk.getChunkZ();
-        final long index = CoordConversion.chunkIndex(chunkX, chunkZ);
-        final boolean removed = this.registry.remove(index, falcoChunk, unloaded -> {
-            notifyUnloaded(unloaded);
-            MinecraftServer.process().dispatcher().deletePartition(unloaded);
-        });
-        if (!removed) return;
-        falcoChunk.sendPacketToViewers(new UnloadChunkPacket(chunkX, chunkZ));
-        EventDispatcher.call(new InstanceChunkUnloadEvent(this, falcoChunk));
-        getEntityTracker().chunkEntities(chunkX, chunkZ, EntityTracker.Target.ENTITIES).forEach(Entity::remove);
-        this.persistence.unloaded(falcoChunk);
+        this.lifecycle.unload(chunk);
     }
 
     @Override
@@ -930,12 +631,12 @@ public class FalcoInstance extends Instance {
 
     @Override
     public void setChunkSupplier(ChunkSupplier chunkSupplier) {
-        this.chunkSupplier = Objects.requireNonNull(chunkSupplier, "the chunk supplier cannot be null");
+        this.lifecycle.supplier(chunkSupplier);
     }
 
     @Override
     public ChunkSupplier getChunkSupplier() {
-        return this.chunkSupplier;
+        return this.lifecycle.supplier();
     }
 
     /**
@@ -1221,10 +922,7 @@ public class FalcoInstance extends Instance {
      * @throws NullPointerException if either half is null
      */
     public void setChunkLifecycle(Consumer<Chunk> onLoaded, Consumer<Chunk> onUnloaded) {
-        Objects.requireNonNull(onLoaded, "the loaded half of the lifecycle cannot be null");
-        Objects.requireNonNull(onUnloaded, "the unloaded half of the lifecycle cannot be null");
-        this.chunkLoaded = onLoaded;
-        this.chunkUnloaded = onUnloaded;
+        this.lifecycle.hooks(onLoaded, onUnloaded);
     }
 
     /**
@@ -1315,12 +1013,12 @@ public class FalcoInstance extends Instance {
 
     @Override
     public void enableAutoChunkLoad(boolean enable) {
-        this.autoChunkLoad = enable;
+        this.lifecycle.autoLoad(enable);
     }
 
     @Override
     public boolean hasEnabledAutoChunkLoad() {
-        return this.autoChunkLoad;
+        return this.lifecycle.autoLoad();
     }
 
     @Override
