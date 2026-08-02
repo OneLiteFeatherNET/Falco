@@ -187,6 +187,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * whichever chunk it starts at. The whole JVM holds one of them. That is asserted as such rather
  * than assumed, by measuring two chunks at once — shared stays at one, owned would become two.
  * </p>
+ * <p>
+ * Seven defects were injected to find out where the new comparison stops biting, and six of them
+ * were caught by name: a field of an undeclared class, a second storage, a {@code long} that grows
+ * the chunk object, a {@code Section} materialised in the constructor, an eager
+ * {@code SectionBlockStorage} in place of the lazy one, and a shared section that is shared per
+ * storage instead of per JVM — that last one only by the two chunk measurement, which is why it is
+ * there. The seventh survives and is stated rather than hidden: a {@code boolean} field added to
+ * {@code FalcoChunk} fits into the padding the object already carries, so it adds no object, no
+ * byte and no shallow size, and nothing here can see it. It is caught by the field after it, which
+ * is the one that pushes the object over the next alignment boundary. This comparison measures
+ * bytes, and a field which costs no byte is a field this comparison cannot be asked about.
+ * </p>
  *
  * <h2>Why the equivalence check runs after the measurement and not before</h2>
  * <p>
