@@ -47,7 +47,7 @@ import java.util.Objects;
  * A palette holds plain integers, so nothing in it is a block or a biome, and
  * {@code Palette#set} validates the coordinates and never the value. Both a state id and a biome id
  * can therefore reach a section without ever passing {@link #setBlock} or {@link #setBiome}:
- * {@code FalcoInstance#applyFork} and every chunk loader write through {@code section.blockPalette()}
+ * {@code ChunkGeneration#applyFork} and every chunk loader write through {@code section.blockPalette()}
  * directly. {@code DynamicChunk} guards both reads and one of the writes, and both guards are copied
  * here rather than re-derived — but they are worth different things, and the difference is stated
  * because the block one reads like dead code and is.

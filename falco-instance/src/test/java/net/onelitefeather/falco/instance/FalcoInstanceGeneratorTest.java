@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -42,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.3.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -265,6 +266,37 @@ class FalcoInstanceGeneratorTest {
                         + "the top of the section the special block sits in instead");
         assertEquals(127, chunk.motionBlockingHeightmap().getHeight(1, 1),
                 "both heightmaps are latched by the same call, so both are wrong together");
+    }
+
+    /**
+     * Pins that both ways into the generator refresh the block change timestamp.
+     * <p>
+     * The refresh used to sit at the end of the commit itself, where one line covered both entry
+     * points. It now sits at the two call sites, because the timestamp belongs to the instance and
+     * the commit belongs to {@link ChunkGeneration}. Nothing observed that line before, so a move
+     * which dropped it at one of the two would have been green everywhere.
+     * </p>
+     *
+     * @param env the environment which provides the server process
+     */
+    @Test
+    void testBothWaysIntoTheGeneratorMoveTheBlockChangeTime(Env env) {
+        final FalcoInstance instance = registered(env, null);
+        instance.setGenerator(writing(3, 5, Block.STONE));
+        final long beforeLoad = instance.getLastBlockChangeTime();
+
+        instance.loadChunk(0, 0).join();
+
+        assertNotEquals(beforeLoad, instance.getLastBlockChangeTime(),
+                "a chunk which came out of the generator on its load carries blocks that were not there");
+
+        final long beforeGenerate = instance.getLastBlockChangeTime();
+
+        // The chunk is already loaded, so this is the second entry point and not the first one again.
+        instance.generateChunk(0, 0, writing(6, 7, Block.DIAMOND_BLOCK)).join();
+
+        assertNotEquals(beforeGenerate, instance.getLastBlockChangeTime(),
+                "a generator run over a chunk which is already loaded changes blocks just the same");
     }
 
     @Test

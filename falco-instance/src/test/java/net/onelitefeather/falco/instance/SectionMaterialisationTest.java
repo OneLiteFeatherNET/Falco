@@ -128,7 +128,7 @@ class SectionMaterialisationTest {
      * Generates the chunk at the origin of a fresh instance and hands it over.
      * <p>
      * The generator cases need an instance rather than the shared container of this class, because
-     * {@code FalcoInstance#applyGenerator} is the subject and only a {@link FalcoInstance} runs it. The
+     * {@code ChunkGeneration#apply} is the subject and only a {@link FalcoInstance} runs it. The
      * instance is unregistered again before the chunk is handed back: it exists for one chunk, and a
      * registered instance which nobody unregisters keeps its tick partition for the rest of the run.
      * </p>
@@ -426,7 +426,7 @@ class SectionMaterialisationTest {
      * </p>
      * <p>
      * The case is also the only cover for the second clause of the skip condition. Drop
-     * {@code biomes().count() == 0} from {@code FalcoInstance#commitSection} and a section whose sole
+     * {@code biomes().count() == 0} from {@code ChunkGeneration#commitSection} and a section whose sole
      * content is a biome is skipped and the biome is dropped in silence; without this case the whole
      * suite stays green through that mutation.
      * </p>

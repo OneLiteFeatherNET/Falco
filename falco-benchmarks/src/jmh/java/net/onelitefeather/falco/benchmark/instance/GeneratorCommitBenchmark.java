@@ -54,7 +54,7 @@ import java.util.concurrent.TimeUnit;
  * <h2>The five arms and why the middle ones exist</h2>
  * <p>
  * {@link #commitPlain()} copies the staged palettes into the sections of a chunk, which is what
- * {@code FalcoInstance#applyGenerator} does today. {@link #commitOptimized()} does the same and then
+ * {@code ChunkGeneration#apply} does today. {@link #commitOptimized()} does the same and then
  * optimises each palette it wrote. The difference between the two is the whole answer, and it is a
  * difference rather than an absolute on purpose: a number for {@code optimize} alone would be
  * compared against nothing, while the commit is the step it was added to.
@@ -240,7 +240,7 @@ public class GeneratorCommitBenchmark {
     }
 
     /**
-     * Measures the commit as {@code FalcoInstance#applyGenerator} performs it today.
+     * Measures the commit as {@code ChunkGeneration#apply} performs it today.
      *
      * @return the sections that were written, so that nothing can be eliminated
      */
