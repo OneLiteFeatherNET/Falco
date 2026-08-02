@@ -39,7 +39,7 @@ import java.util.concurrent.CompletableFuture;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.5.0
+ * @version 1.6.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -277,6 +277,16 @@ public class FalcoSharedInstance extends SharedInstance {
      * still reports success — the anvil loader writes {@code instance.tagHandler().asCompound()} of
      * whatever it was given. Reaching the loader directly and handing it {@code this} is the whole
      * of the repair.
+     * </p>
+     * <p>
+     * The repair has the consequence every other override in this class has, and it is the one to
+     * read twice: this call no longer writes the data of the container. Stock
+     * {@link SharedInstance} saved the container here, so code which called it on a view and got the
+     * world written is now writing the view instead — and a view starts with an empty tag handler,
+     * because the constructor copies the container's configuration but not its tags and
+     * {@link SharedInstance} does not share one. An {@code AnvilLoader} handed an empty compound
+     * returns without touching the file, so on a view that was never tagged this call writes nothing
+     * at all. Call {@code getInstanceContainer().saveInstance()} to write the data of the world.
      * </p>
      * <p>
      * What it does not repair: a loader writes to one place per world. An

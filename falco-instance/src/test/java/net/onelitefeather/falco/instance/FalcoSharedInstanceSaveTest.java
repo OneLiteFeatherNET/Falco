@@ -39,9 +39,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * which hands a parallel failure to the {@code ExceptionManager} <em>and</em> to the returned
  * future — handled twice, logged twice. Here the caller is the only one told.
  * </p>
+ * <p>
+ * The last case pins the other edge of the same repair: a view is constructed with an empty tag
+ * handler, so an untagged view hands the loader an empty compound. That is what the method's
+ * documentation warns about — an {@code AnvilLoader} returns on an empty compound without touching
+ * the file, so the container's data has to be saved through the container.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -120,6 +126,21 @@ class FalcoSharedInstanceSaveTest {
             assertSame(failure, thrown.getCause());
         }
         assertEquals(List.of(), handled);
+    }
+
+    @Test
+    @DisplayName("hands a fresh view's empty data over, which an anvil loader would drop")
+    void testAFreshViewHasNothingToWrite(Env env) {
+        final RecordingChunkLoader loader = new RecordingChunkLoader();
+        final InstanceContainer container = env.process().instance().createInstanceContainer(loader);
+        container.setTag(OWNER, "container");
+        final FalcoSharedInstance shared = new FalcoSharedInstance(UUID.randomUUID(), container);
+        env.process().instance().registerSharedInstance(shared);
+
+        shared.saveInstance().join();
+
+        assertSame(shared, loader.saved().getFirst());
+        assertEquals(CompoundBinaryTag.empty(), loader.written().getFirst());
     }
 
     /**
