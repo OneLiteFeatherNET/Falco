@@ -97,6 +97,14 @@ The listener is the explicit route: you decide which chunks are lit and when. Th
 that needs no listener at all — `instance.setChunkSupplier(scheduler.supplier())`, covered in
 [Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine).
 
+**That shorter route needs `falco-instance` on the classpath as well**, and the two lines above are
+not enough for it. The chunks the supplier produces are `FalcoChunk`s — which is what lets one chunk
+carry Falco's light *and* Falco's lifecycle instead of forcing a choice between them — and
+`falco-instance` is `compileOnly` in `falco-light`, so it does not arrive with the artefact. Add
+`implementation("net.onelitefeather:falco-instance:<version>")` next to the two above before calling
+`supplier()`; everything else in `falco-light`, including the `lighting.calculate` route used here,
+works without it.
+
 ### 3. Put a world where the loader looks
 
 `worlds/lobby/` is the **world root** — the directory that contains `region/`, or

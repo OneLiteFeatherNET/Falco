@@ -28,14 +28,30 @@ import java.util.Objects;
  * Every method is a default doing nothing, so a listener implements what it cares about. Every one of
  * them runs on the thread that caused the transition, under whatever lock that thread holds — a
  * listener which blocks blocks a chunk load, a tick or a block write. Which lock that is, is stated
- * per method, because the four are not the same.
+ * per method, because the five are not the same — and, where the two arms below differ, per arm.
+ * </p>
+ *
+ * <h2>Two instances drive these five, and they do not hold the same locks</h2>
+ * <p>
+ * A {@link FalcoChunk} is reached through two doors. {@link FalcoInstance} drives it through
+ * {@link ChunkLifecycle}, and an {@code InstanceContainer} drives it through the {@code protected}
+ * hooks of {@code Chunk} — which is not a corner case but the arrangement US-3.06 was built for:
+ * {@code FalcoLightingChunk} is a {@link FalcoChunk} and is meant to run in a plain container, where
+ * its listener is the light engine. The two arms differ in what a listener is allowed to do, and the
+ * difference is stated per method rather than averaged into one sentence.
+ * </p>
+ * <p>
+ * Written short: only {@link #onPublish} is missing on the container arm, and everything else that
+ * differs makes the container arm the <em>stricter</em> of the two — it holds the monitor of the
+ * instance where {@link FalcoInstance} holds a per-chunk lock or nothing. A listener written for the
+ * container arm therefore works on both, and that is the one to write.
  * </p>
  * <p>
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -47,6 +63,12 @@ public interface ChunkLifecycleListener {
      * Fired after the position of the chunk was released and therefore outside the lock of that
      * position, which is what makes it safe for a listener to call back into the instance.
      * </p>
+     * <p>
+     * <b>This is the one of the five which only a {@link FalcoInstance} ever fires.</b> Publishing is
+     * a step of {@link ChunkLifecycle} and nothing on a chunk marks it, so a chunk driven by an
+     * {@code InstanceContainer} is told that it loaded and never that it was published. A listener
+     * which wants one moment per chunk and has to work in both takes {@link #onLoad}.
+     * </p>
      *
      * @param event what happened, to which chunk
      */
@@ -56,8 +78,21 @@ public interface ChunkLifecycleListener {
     /**
      * Reports that a chunk has finished loading and is now reported as loaded.
      * <p>
-     * Fired after {@link #onPublish}, outside the lock of the position as well, and before the
-     * {@code InstanceChunkLoadEvent} of the server reaches anybody.
+     * Under a {@link FalcoInstance} this is fired after {@link #onPublish}, outside the lock of the
+     * position as well, and before the {@code InstanceChunkLoadEvent} of the server reaches anybody.
+     * </p>
+     * <p>
+     * Under an {@code InstanceContainer} there is no {@link #onPublish} before it and no position of
+     * a {@link ChunkRegistry} in the picture at all: the container calls the {@code protected}
+     * {@code Chunk#onLoad()} hook itself, from {@code retrieveChunk}, after the chunk is in its map
+     * and before it completes the future and dispatches the event. That call holds no lock either —
+     * {@code retrieveChunk} is not {@code synchronized}, unlike the unload — and it runs on whichever
+     * thread read the chunk, which for a loader with parallel support is a virtual thread of its own.
+     * </p>
+     * <p>
+     * So neither arm holds a lock here, and a listener may call back into its instance. What both
+     * arms do pay is time: this call sits between the chunk being ready and the caller of
+     * {@code loadChunk} being told, so a slow listener slows down every chunk load.
      * </p>
      *
      * @param event what happened, to which chunk
@@ -77,6 +112,11 @@ public interface ChunkLifecycleListener {
      * necessary have to be thread-safe" — so a listener which reads blocks here has to take the read
      * lock the way any other reader would.
      * </p>
+     * <p>
+     * This is the one method where the two arms are the same call. A tick reaches a chunk from the
+     * {@code ThreadDispatcher} of the server and never through its instance, so it looks identical
+     * whether a {@link FalcoInstance} or an {@code InstanceContainer} owns the chunk.
+     * </p>
      *
      * @param event what happened, to which chunk, and at which tick time
      */
@@ -86,12 +126,29 @@ public interface ChunkLifecycleListener {
     /**
      * Reports that a chunk is no longer part of its instance.
      * <p>
-     * This is the one of the five which is fired while the position of the chunk is held by
+     * <b>This is the one of the five which always runs under a lock, on both arms, and they are not
+     * the same lock.</b> Under a {@link FalcoInstance} the position of the chunk is held by
      * {@link ChunkRegistry}, because clearing the loaded flag of a chunk and taking it out of the
      * registry are deliberately one step. Everything {@link ChunkRegistry} says about a step handed
      * to it therefore applies to a listener here as well: short, non-blocking, no call back into the
      * instance and no exception, because a throwing listener leaves the chunk removed and only half
      * unloaded.
+     * </p>
+     * <p>
+     * Under an {@code InstanceContainer} there is no position lock, and the constraint is if anything
+     * tighter. {@code InstanceContainer#unloadChunk} is {@code synchronized} on the instance for its
+     * whole body, so the monitor of the instance is held while this runs; it has also already sent
+     * the unload packet, dispatched its event, removed the entities and taken the chunk out of its
+     * map before it calls the hook, so a listener asking that instance for this chunk is told there
+     * is none. Calling back into the instance from here does not deadlock the calling thread, since
+     * an intrinsic monitor is reentrant, but every other thread waiting on a {@code synchronized}
+     * method of that instance waits for the listener to return. The rule that holds on both arms is
+     * the short one: report, and return.
+     * </p>
+     * <p>
+     * The single exception to the sentence above is the discarded load on the {@link FalcoInstance}
+     * arm, which holds nothing because the position was released before the chunk was disowned — see
+     * {@link ChunkLifecycle#completeLoad}. A listener may not tell that case apart and must not try.
      * </p>
      * <p>
      * It is also the one which can arrive without {@link #onPublish} and {@link #onLoad} ever having
@@ -112,6 +169,13 @@ public interface ChunkLifecycleListener {
      * Fired after the block is in the storage and after the handlers of the old and the new block
      * ran, holding the write lock of the chunk. The position is world coordinates, as the chunk
      * received them.
+     * </p>
+     * <p>
+     * That write lock is all a {@link FalcoInstance} holds, which is the point of {@link BlockWriter}
+     * — a write into one chunk does not stop a write into another. An {@code InstanceContainer}
+     * reaches the same line through its {@code private synchronized UNSAFE_setBlock} and therefore
+     * holds the monitor of the whole instance on top of it. A listener here is on the hottest path of
+     * this module either way and belongs nowhere near a blocking call.
      * </p>
      *
      * @param chunk the chunk which received the block
