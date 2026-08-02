@@ -66,7 +66,7 @@ import java.util.function.Consumer;
  * way holds bookkeeping only its caller knows about.
  * </p>
  * <p>
- * What this does <em>not</em> say is "no foreign code inside the lock". {@link FalcoInstance} hands
+ * What this does <em>not</em> say is "no foreign code inside the lock". {@link ChunkLifecycle} hands
  * the removal step the very hook a caller installs through
  * {@link FalcoInstance#setChunkLifecycle(Consumer, Consumer)}, because clearing the loaded flag of a
  * chunk has to be atomic with that chunk leaving the chunk map — a chunk which is out of the map and
@@ -90,7 +90,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.1
+ * @version 1.0.2
  * @since 0.4.0
  */
 @ApiStatus.Experimental

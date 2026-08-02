@@ -341,7 +341,7 @@ public class FalcoChunk extends Chunk {
      * Tells the chunk that it has finished loading.
      * <p>
      * This is the reachable form of the {@code protected} {@code Chunk#onLoad()} hook.
-     * {@link FalcoInstance} calls it once, after the chunk has been put into the chunk map of the
+     * {@link ChunkLifecycle} calls it once, after the chunk has been put into the registry of the
      * instance and after its tick partition exists, which is the order Minestom uses as well.
      * </p>
      */
