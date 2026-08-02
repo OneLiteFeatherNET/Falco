@@ -1,0 +1,326 @@
+package net.onelitefeather.falco.instance;
+
+import net.minestom.server.coordinate.CoordConversion;
+import net.minestom.server.instance.Chunk;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.UnmodifiableView;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+
+/**
+ * The {@link ChunkRegistry} class knows which chunk sits at which position and which position is
+ * busy, and it is the only place where either of those two answers changes.
+ * <p>
+ * It was carved out of {@link FalcoInstance}, where the two maps and the four transitions between
+ * them were fields and {@code private} methods of a class of 1 722 lines. Nothing about the
+ * transitions changed in the move, and that is deliberate: the shape of the
+ * {@link ConcurrentHashMap#compute} calls below is what
+ * {@code FalcoInstanceLoadRaceTest#testConcurrentLoadsAndUnloadsNeverLeaveAChunkWhichCannotBeUnloaded}
+ * exists to protect, and a refactoring that improved them would be a rewrite of the one part of this
+ * module that was hardest to get right.
+ * </p>
+ *
+ * <h2>Why the map of running loads is the lock of a position</h2>
+ * <p>
+ * Every transition of a position — starting a load, publishing its result, unloading the chunk
+ * again — happens inside a {@code compute} on the index of that position. That serialises them
+ * without putting a monitor over the whole instance, which is what {@code InstanceContainer} does and
+ * what NFR-006 forbids. It is worth far more than the future it holds: without it an unload and the
+ * load it races can both believe they went first, and the chunk which loses ends up in the instance
+ * with its loaded flag already cleared, where nothing will ever unload it again.
+ * </p>
+ * <p>
+ * The steps a caller hands to {@link #publish} and {@link #remove} run <em>inside</em> that lock, and
+ * that is the whole reason they are parameters rather than something the caller does afterwards.
+ * Creating and deleting a tick partition has to be part of the same atomic step as entering and
+ * leaving the chunk map; splitting them is what lets Minestom delete a partition that is created a
+ * moment later, which leaves a chunk being ticked for the rest of the life of the server even though
+ * nothing else knows about it any more. Everything that may call back into the instance — the events,
+ * the packets, the loader, the listeners — stays outside and is the caller's business.
+ * </p>
+ *
+ * <h2>Why this registry speaks {@link Chunk} and not {@link FalcoChunk}</h2>
+ * <p>
+ * It holds no opinion about the chunk type, and it must not: since
+ * {@link FalcoInstance#setChunkLifecycle(Consumer, Consumer)} exists, a caller which owns another
+ * chunk type — a lighting chunk from {@code falco-light}, say — hands over the two {@code protected}
+ * hooks and its chunks are managed by this instance without ever being a {@link FalcoChunk}.
+ * Narrowing the two transitions to {@link FalcoChunk} would turn that supported case into a
+ * {@link ClassCastException} on the load path.
+ * </p>
+ * <p>
+ * This type is experimental. The instance module is new and its API may still change.
+ * </p>
+ *
+ * @author TheMeinerLP
+ * @version 1.0.0
+ * @since 0.4.0
+ */
+@ApiStatus.Experimental
+public final class ChunkRegistry {
+
+    /**
+     * The loaded chunks, keyed by the chunk index of their position.
+     * <p>
+     * A plain concurrent hash map rather than the synchronised long map of the container: chunk
+     * streaming is a lookup-dominated access pattern, and the copy-on-write map underneath the
+     * container pays for every load and unload instead.
+     * </p>
+     */
+    private final Map<Long, Chunk> chunks = new ConcurrentHashMap<>();
+
+    /**
+     * The chunks which are being loaded right now, keyed by chunk index, and the lock of a position.
+     * <p>
+     * Holding the future rather than a flag is what makes two concurrent requests for the same chunk
+     * share one load instead of racing into two chunk objects.
+     * </p>
+     */
+    private final Map<Long, CompletableFuture<Chunk>> loadingChunks = new ConcurrentHashMap<>();
+
+    /**
+     * What a caller asking for a position is told.
+     * <p>
+     * A sealed hierarchy rather than a nullable future plus an out parameter, because the three
+     * answers are genuinely different and the caller has to handle all three: the chunk is already
+     * there, somebody else is loading it, or this caller now owns the load. The
+     * {@code AtomicReference} the previous shape needed to smuggle the first case out of a
+     * {@code compute} is what this replaces.
+     * </p>
+     *
+     * @author TheMeinerLP
+     * @version 1.0.0
+     * @since 0.4.0
+     */
+    @ApiStatus.Experimental
+    public sealed interface LoadSlot {
+
+        /**
+         * The position already carries a chunk and no load is needed.
+         *
+         * @param chunk the chunk at the position
+         * @author TheMeinerLP
+         * @version 1.0.0
+         * @since 0.4.0
+         */
+        @ApiStatus.Experimental
+        record Loaded(Chunk chunk) implements LoadSlot {
+        }
+
+        /**
+         * Somebody else is loading this position and the caller has to wait for their future.
+         *
+         * @param future the future of the running load
+         * @author TheMeinerLP
+         * @version 1.0.0
+         * @since 0.4.0
+         */
+        @ApiStatus.Experimental
+        record Running(CompletableFuture<Chunk> future) implements LoadSlot {
+        }
+
+        /**
+         * The caller now owns the load of this position and has to complete the future it handed in.
+         *
+         * @param future the future the caller handed in
+         * @author TheMeinerLP
+         * @version 1.0.0
+         * @since 0.4.0
+         */
+        @ApiStatus.Experimental
+        record Claimed(CompletableFuture<Chunk> future) implements LoadSlot {
+        }
+    }
+
+    /**
+     * Returns the chunk at a position.
+     *
+     * @param index the chunk index of the position
+     * @return the chunk, or null if the position carries none
+     */
+    public @Nullable Chunk chunk(long index) {
+        return this.chunks.get(index);
+    }
+
+    /**
+     * Returns the chunk at a position.
+     *
+     * @param chunkX the chunk X
+     * @param chunkZ the chunk Z
+     * @return the chunk, or null if the position carries none
+     */
+    public @Nullable Chunk chunk(int chunkX, int chunkZ) {
+        return this.chunks.get(CoordConversion.chunkIndex(chunkX, chunkZ));
+    }
+
+    /**
+     * Returns a live, unmodifiable view of every chunk in this registry.
+     *
+     * @return the chunks of this registry
+     */
+    public @UnmodifiableView Collection<Chunk> chunks() {
+        return Collections.unmodifiableCollection(this.chunks.values());
+    }
+
+    /**
+     * Returns a snapshot of every chunk in this registry, safe to iterate while it changes.
+     *
+     * @return the chunks of this registry at the moment of the call
+     */
+    public List<Chunk> snapshot() {
+        return List.copyOf(this.chunks.values());
+    }
+
+    /**
+     * Returns a snapshot of every position which is being loaded right now.
+     *
+     * @return the positions with a running load at the moment of the call
+     */
+    public List<Long> loadingPositions() {
+        return List.copyOf(this.loadingChunks.keySet());
+    }
+
+    /**
+     * Returns how many chunks this registry holds.
+     *
+     * @return the amount of loaded chunks
+     */
+    public int size() {
+        return this.chunks.size();
+    }
+
+    /**
+     * Returns how many loads are running.
+     *
+     * @return the amount of running loads
+     */
+    public int loading() {
+        return this.loadingChunks.size();
+    }
+
+    /**
+     * Reports whether this registry holds neither a chunk nor a running load.
+     *
+     * @return true if nothing is left in this registry
+     */
+    public boolean idle() {
+        return this.chunks.isEmpty() && this.loadingChunks.isEmpty();
+    }
+
+    /**
+     * Decides who loads a position.
+     * <p>
+     * The chunk map is read a second time inside the decision. Without that second read a caller
+     * which looked at the chunk map just before a load published, and reached this point just after
+     * that load removed its entry, would start a second load for a position which already has a
+     * chunk. The second chunk then replaces the first one in the map and the first one is orphaned:
+     * still marked as loaded, still holding its tick partition and its viewers, and no longer
+     * reachable.
+     * </p>
+     *
+     * @param index the chunk index of the position
+     * @param own   the future the caller offers to complete if it wins the slot
+     * @return which of the three cases the caller is in
+     */
+    public LoadSlot acquire(long index, CompletableFuture<Chunk> own) {
+        final AtomicReference<Chunk> published = new AtomicReference<>();
+        final CompletableFuture<Chunk> slot = this.loadingChunks.compute(index, (key, running) -> {
+            if (running != null) return running;
+            final Chunk cached = this.chunks.get(index);
+            if (cached != null) {
+                published.set(cached);
+                return null;
+            }
+            return own;
+        });
+        final Chunk cached = published.get();
+
+        if (cached != null) return new LoadSlot.Loaded(cached);
+        if (slot != own) return new LoadSlot.Running(slot);
+        return new LoadSlot.Claimed(own);
+    }
+
+    /**
+     * Gives up a slot without publishing anything, for a load which failed.
+     *
+     * @param index the chunk index of the position
+     * @param own   the future of the load which is giving up
+     */
+    public void release(long index, CompletableFuture<Chunk> own) {
+        this.loadingChunks.remove(index, own);
+    }
+
+    /**
+     * Takes the slot of a running load so its chunk never reaches this registry.
+     * <p>
+     * Removing the entry is the whole claim: a load publishes only while its own future is still the
+     * entry of the position, so a load which finds the slot empty or taken knows that somebody
+     * decided its result is no longer wanted.
+     * </p>
+     *
+     * @param index the chunk index of the position
+     * @return the future of the claimed load, or null if there was none
+     */
+    public @Nullable CompletableFuture<Chunk> discard(long index) {
+        final AtomicReference<CompletableFuture<Chunk>> claimed = new AtomicReference<>();
+
+        this.loadingChunks.compute(index, (key, running) -> {
+            claimed.set(running);
+            return null;
+        });
+        return claimed.get();
+    }
+
+    /**
+     * Makes a chunk the chunk of its position, unless somebody claimed the load.
+     *
+     * @param index      the chunk index of the position
+     * @param chunk      the chunk to publish
+     * @param future     the future of this load, which has to still be the entry of the position
+     * @param insideLock the step to run while the position is held, once, only if the publish happens
+     * @return true if the chunk is now the chunk of its position, false if the load was claimed
+     */
+    public boolean publish(long index, Chunk chunk, CompletableFuture<Chunk> future,
+                           Consumer<Chunk> insideLock) {
+        final AtomicBoolean published = new AtomicBoolean();
+
+        this.loadingChunks.compute(index, (key, running) -> {
+            if (running != future) return running;
+            this.chunks.put(index, chunk);
+            insideLock.accept(chunk);
+            published.set(true);
+            return null;
+        });
+        return published.get();
+    }
+
+    /**
+     * Takes a chunk out of its position.
+     *
+     * @param index      the chunk index of the position
+     * @param chunk      the chunk to remove, which has to be the one at that position
+     * @param insideLock the step to run while the position is held, once, only if the removal happens
+     * @return true if the chunk was removed, false if it was not the chunk of that position
+     */
+    public boolean remove(long index, Chunk chunk, Consumer<Chunk> insideLock) {
+        final AtomicBoolean removed = new AtomicBoolean();
+
+        this.loadingChunks.compute(index, (key, running) -> {
+            if (this.chunks.remove(index, chunk)) {
+                insideLock.accept(chunk);
+                removed.set(true);
+            }
+            return running;
+        });
+        return removed.get();
+    }
+}
