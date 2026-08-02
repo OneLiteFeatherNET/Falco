@@ -3,6 +3,7 @@ package net.onelitefeather.falco.instance;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.InstanceManager;
 import net.minestom.server.instance.SharedInstance;
+import net.minestom.server.world.DimensionType;
 import net.minestom.testing.Env;
 import net.minestom.testing.extension.MicrotusExtension;
 import org.junit.jupiter.api.DisplayName;
@@ -25,9 +26,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * distance again. Nothing fails, nothing logs, the world simply costs a full resend per instance
  * change. A test is the only thing that notices.
  * </p>
+ * <p>
+ * The first case guards the other end of the same route change: {@code createSharedInstance} refuses
+ * an unregistered container and {@code registerSharedInstance} does not, so the constructor has to,
+ * and the case asserts both halves of that asymmetry rather than only the throw.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -75,6 +81,25 @@ class FalcoSharedInstanceTest {
 
         assertSame(SharedInstance.class, stock.getClass(),
                 "if this ever changes, the hand registration in the README can go");
+    }
+
+    @Test
+    @DisplayName("refuses a container that is registered nowhere, which its registration route does not")
+    void testAnUnregisteredContainerIsRefused(Env env) {
+        final InstanceContainer unregistered = new InstanceContainer(UUID.randomUUID(), DimensionType.OVERWORLD);
+        assertFalse(unregistered.isRegistered());
+
+        assertThrows(IllegalStateException.class,
+                () -> new FalcoSharedInstance(UUID.randomUUID(), unregistered));
+
+        assertThrows(IllegalStateException.class,
+                () -> env.process().instance().createSharedInstance(unregistered),
+                "the route that checks is the one this class cannot be built by");
+        final SharedInstance stock = env.process().instance()
+                .registerSharedInstance(new SharedInstance(UUID.randomUUID(), unregistered));
+        assertTrue(stock.isRegistered());
+        assertFalse(unregistered.isRegistered(),
+                "while the route this class does use takes the view and leaves the container unticked");
     }
 
     @Test

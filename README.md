@@ -151,8 +151,15 @@ FalcoSharedInstance view = new FalcoSharedInstance(UUID.randomUUID(), world);
 manager.registerSharedInstance(view);
 ```
 
+The order in that example is not decoration. `createInstanceContainer` registers the container, and
+the view's constructor refuses one that is not registered: `registerSharedInstance` performs no such
+check, whereas the `createSharedInstance` this class cannot be built by does, and an unregistered
+container is ticked by nobody.
+
 The view keeps its own generator, chunk supplier and auto-load setting, where Minestom's writes all
-three through to the container and lets one view reconfigure another. Its tags were always its own —
+three through to the container and lets one view reconfigure another. All three are read once, in the
+constructor, which cuts the other way too: turning auto chunk loading off on the container no longer
+stops a view that already exists, so that has to be said to each view. Its tags were always its own —
 `Instance` gives every instance a `TagHandler` and `SharedInstance` does not override it — but
 `saveInstance()` handed the loader the container, so they were never written; here the view's own
 data is what the loader is given.

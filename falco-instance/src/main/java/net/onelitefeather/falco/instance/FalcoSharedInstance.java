@@ -37,6 +37,17 @@ import java.util.concurrent.CompletableFuture;
  * {@code createSharedInstance} always constructs the stock type and can never produce this one, and
  * {@code registerInstance} refuses anything that is a {@link SharedInstance} outright.
  * </p>
+ * <p>
+ * That route change costs a check, and the constructor pays it back.
+ * {@code createSharedInstance} refuses a container which is not registered
+ * ({@code Check.stateCondition(!instanceContainer.isRegistered(), …)}); {@code registerSharedInstance},
+ * the only route which can register this type, does not. The failure it lets through is quiet: an
+ * unregistered container is in no {@code InstanceManager}, so {@code ServerProcess} never ticks it,
+ * so {@code InstanceContainer#tick} never clears {@code currentlyChangingBlocks} — every repeat
+ * write of the same block value at a position is suppressed for good and that map grows without
+ * bound, while the view itself ticks normally and looks healthy. The constructor therefore refuses
+ * an unregistered container, which is the guard the abandoned route performed.
+ * </p>
  * <h2>Why writes still serialise on the container</h2>
  * <p>
  * They have to, and the reason is a {@code private} modifier in a foreign class.
@@ -78,7 +89,7 @@ import java.util.concurrent.CompletableFuture;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.9.0
+ * @version 1.10.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -118,12 +129,25 @@ public class FalcoSharedInstance extends SharedInstance {
      * behave like the world it looks at while still being able to diverge from it — the alternative,
      * starting empty, would answer {@code null} to {@link #generator()} on a world that has one.
      * </p>
+     * <p>
+     * The container has to be registered already, and this is the one place that can insist on it:
+     * the registration route this class uses does not check, and the route that checks cannot
+     * construct this class. An unregistered container is never ticked, and the consequences of that
+     * are in the class documentation. Register the container first —
+     * {@code InstanceManager#createInstanceContainer} does it for you — then construct the view.
+     * </p>
      *
      * @param uuid              the identity of this instance
      * @param instanceContainer the container which owns the chunks this instance shows
+     * @throws NullPointerException  if {@code instanceContainer} is null
+     * @throws IllegalStateException if {@code instanceContainer} is not registered in an
+     *                               {@code InstanceManager}
      */
     public FalcoSharedInstance(UUID uuid, InstanceContainer instanceContainer) {
         super(uuid, Objects.requireNonNull(instanceContainer, "a shared instance needs a container to share"));
+        if (!instanceContainer.isRegistered()) {
+            throw new IllegalStateException("the container has to be registered in an InstanceManager before a view of it is created");
+        }
         this.generator = instanceContainer.generator();
         this.chunkSupplier = instanceContainer.getChunkSupplier();
         this.autoChunkLoad = instanceContainer.hasEnabledAutoChunkLoad();
