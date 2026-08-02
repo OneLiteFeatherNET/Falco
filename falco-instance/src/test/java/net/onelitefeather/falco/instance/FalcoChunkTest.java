@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.1.1
  * @since 0.1.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -111,8 +111,13 @@ class FalcoChunkTest {
     /**
      * States the property the on-demand heightmaps exist for, in the only way it can be stated.
      * <p>
-     * A heightmap is a {@code short[256]} plus its carrier, and the two of them together are the
-     * second largest post of a fresh chunk. The claim is not that they are cheaper but that a chunk
+     * A heightmap is a {@code short[256]} plus its carrier, and the two of them together were the
+     * largest post a fresh {@link FalcoChunk} had while it built them eagerly — {@code 1 120} of
+     * {@code 2 088} bytes; in a fresh {@code DynamicChunk}, whose sections are real, the same
+     * {@code 1 120} bytes are the second largest post after those sections. The conditions those
+     * figures were measured under are on {@link FalcoChunk#motionBlockingHeightmap()}, and the
+     * measurement itself is {@code ChunkFootprintTest}, not this case: nothing here weighs anything.
+     * The claim this case makes is not that heightmaps are cheaper but that a chunk
      * which is only constructed and read has none, so the case walks exactly that path: construct,
      * read one block, and only then ask. The read is in the middle rather than at the end because a
      * block read is what a chunk loader and a light computation do, and it is the path on which the

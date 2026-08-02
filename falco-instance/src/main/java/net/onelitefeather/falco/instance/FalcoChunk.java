@@ -90,9 +90,12 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * <p>
  * The heightmaps are the one place where that copying stops at the {@code when} rather than the
  * {@code what}. They are built on the first question instead of in a field initialiser — see
- * {@link #motionBlockingHeightmap()} — because they are the second largest post of a fresh chunk
- * after the sections. What they contain, and the order in which {@link #setBlock} refreshes them,
- * is unchanged, which is what keeps the comparison against {@code DynamicChunk} honest.
+ * {@link #motionBlockingHeightmap()}, which carries the bytes and the conditions they were measured
+ * under. In a fresh {@code DynamicChunk} the two of them are the second largest post after the
+ * sections; in a fresh chunk of this class, whose sections are shared and empty until something
+ * writes, they were the largest post there was, which is why they and not the sections are what this
+ * class defers. What they contain, and the order in which {@link #setBlock} refreshes them, is
+ * unchanged, which is what keeps the comparison against {@code DynamicChunk} honest.
  * </p>
  *
  * <h2>Where the coordinates are folded</h2>
@@ -141,7 +144,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 3.2.0
+ * @version 3.2.1
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -470,9 +473,22 @@ public class FalcoChunk extends Chunk {
      * Hands out the heightmap of the highest movement-blocking block per column, building it if this
      * chunk does not have one yet.
      * <p>
-     * A heightmap is a {@code short[256]} plus its carrier, and both heightmaps together are one sixth
-     * of everything a fresh chunk retains. Minestom builds them in a field initialiser, so a chunk
-     * pays for them whether or not anybody ever reads a height. Most chunks do get asked eventually —
+     * A heightmap is a {@code short[256]} plus its carrier: four objects and {@code 1 120} bytes for
+     * the two of them together. Which share of a chunk that is depends entirely on which chunk is
+     * being talked about, so both are named here. Against a fresh {@code DynamicChunk}, which retains
+     * {@code 6 848} bytes, it is {@code 16,4 %} — the second largest post after the sections. Against
+     * a fresh chunk of this class it is far more: this chunk shares one empty section until something
+     * writes, so while it still built its heightmaps eagerly it retained {@code 2 088} bytes, of which
+     * the two heightmaps were {@code 1 120}, {@code 53,6 %}, the largest post it had; without them it
+     * retains {@code 968}. Every figure above is what {@code ChunkFootprintTest} measures with jol
+     * 0.17 through the instrumentation agent on OpenJDK 25.0.3 with a twelve byte object header and an
+     * alignment of eight ({@code falco.compactHeaders=false}), over an overworld chunk of 24 sections,
+     * counting what the chunk retains once the instance is subtracted. Under compact headers, or at
+     * another world height, they are different numbers.
+     * </p>
+     * <p>
+     * Minestom builds both heightmaps in a field initialiser, so a chunk pays for them whether or not
+     * anybody ever reads a height. Most chunks do get asked eventually —
      * a chunk that is sent to a client hands both of them to the packet, and a chunk that is written
      * to refreshes both — but the window between construction and that first question is exactly the
      * window a chunk loader and a generator work in, and a chunk that is loaded, read and never sent
