@@ -2438,3 +2438,107 @@ Allocation, `gc.alloc.rate.norm`, same run: `commitPlain` 196 992 B/op at both 6
 2. **Above 256 distinct states per section the optimisation charges full price and returns nothing.** `PaletteImpl#downsizeWithPalette` opens with `if (newBpe >= bpe || newBpe > maxBitsPerEntry) return;` and `maxBitsPerEntry` is 8 for blocks. A section holding more than 256 distinct states cannot be narrowed at all, yet `optimize` has already walked all 4 096 entries through `getAll` and built an `IntOpenHashSet` over them before it finds out. At 1 024 states `commitOptimized` (529.3 µs) and the control `optimizeAlreadyPacked` (534.0 µs) are the same number within their error bars, and the widths stay at 15 — 506 µs and 196 kB of garbage for zero bytes saved. This is a real hazard for worlds with very heterogeneous sections, and it cannot be cheaply guarded: the walk that would detect it *is* the cost.
 
 3. **The benchmark had to re-stage its fixture, and the reason is a trap for Task 6 as well.** `MinestomChunks#fill` writes through `Chunk#setBlock`, and a palette grown one block at a time is never more than about a bit wider than its content needs — the survey found 7 → 6 at 64 states, not 15 → 6. A generator does not write that way: `UnitModifier#setAllRelative` ends in `PaletteImpl#setAll`, which calls `makeDirect()` **unconditionally** for any non-constant supplier, without looking at how many distinct values it saw. A generated section is at the direct width because of *how* it was written, not because of *what* it holds, and that — not the block count — is what `optimize` reclaims. `GeneratorCommitBenchmark#widthAGeneratorWouldLeave` reproduces both branches through the only public door to them (`Optimization.SPEED` is `makeDirect`, `Optimization.SIZE` on single-valued content is the `fill`). Measuring the `setBlock` shape and reporting it as the generator shape understated cost and benefit at two of the three points on the axis, and the first draft of this benchmark did exactly that.
+
+---
+
+## Stage 2 result
+
+Measured 2026-08-02 on branch `feat/block-storage`, against Minestom as pinned by the build and
+JDK 25.0.3 (Temurin), legacy object headers of twelve bytes with eight byte alignment
+(`falco.compactHeaders=false`), sizes through the JOL instrumentation agent.
+
+### The footprint, which is citable
+
+JOL walks a reachable object graph and counts it. That is deterministic, so these figures hold
+despite the machine having been under load throughout.
+
+| | objects | bytes |
+| --- | ---: | ---: |
+| fresh chunk, `DynamicChunk` | 192 | 6 848 |
+| fresh chunk, `FalcoChunk` | **25** | **840** |
+| difference | **−167** | **−6 008**, or −87.7 % |
+
+A **filled** chunk saves 104 bytes and nothing more, at every state count and every arrangement from
+67 kB to 230 kB. That is the honest shape of this stage: the flyweight pays for sections that hold
+nothing, and a chunk whose sections all hold something has none of those. The 62.24 % empty share
+measured in a real generated overworld is what decides how much of the −6 008 a running server sees,
+and that share is itself a measurement of 441 finished chunks around one spawn — not a general claim.
+
+The instance-side cost is unchanged by this stage: 185 B per chunk for an `InstanceContainer`,
+161 B for a `FalcoInstance`.
+
+### What materialises, and when
+
+From `SectionMaterialisationTest`, counted rather than timed:
+
+| operation | sections materialised |
+| --- | ---: |
+| fresh chunk | 0 |
+| pure read pass | 0 |
+| one `setBlock` at y=64 | 10 |
+| serialising a fresh chunk into a packet | 1 |
+| `getSection(4)` | 1 |
+| `getSections()` | 24 |
+| generation of y=−64..0 | 4 of 24 |
+| building a heightmap | 0 |
+| **first `Heightmap#getHeight` on a fresh chunk** | **24** |
+| write order y=200 then y=−64 | 18 |
+| the same two writes in the opposite order | 3 |
+
+Two of these deserve to be read twice. The **heightmap descent is the dominant driver**, not the
+block write — a single `setBlock` costs ten sections, almost all of them through
+`getHighestBlockSection` walking down from the build limit. And the **write order is worth a factor
+of six**, which is a property of the storage that no API expresses and that a caller can only exploit
+if it is told.
+
+The last line of the first table is the one this stage did *not* fix: `Heightmap#getHeight` still
+materialises all twenty-four on a fresh chunk, because Minestom's own fallback walks
+`Chunk#getSection`. Building the heightmap is free now; asking it a question is not.
+
+### What `optimize()` costs — a trade, not a win
+
+`GeneratorCommitBenchmark`, µs per chunk of 24 sections, at 1 / 64 / 1 024 distinct states:
+
+| arm | 1 | 64 | 1 024 |
+| --- | ---: | ---: | ---: |
+| `commitPlain` | 0.044 | 22.0 | 26.3 |
+| `commitOptimized`, unconditional | 0.049 | 576.7 | 529.8 |
+| `commitGuarded`, asks first | 0.049 | **714.0** | **185.1** |
+| `packAlreadyPacked` | 0.047 | **31.8** | 176.1 |
+
+The guard costs **24 % more** where `optimize()` genuinely narrows a palette, and saves **2.9×**
+above the indirect limit and **8.5×** on palettes that are already packed. It is worth having because
+the unconditional call charges full price for nothing above 256 distinct states per section —
+`downsizeWithPalette` gives up when the required width exceeds `maxBitsPerEntry = 8`, but only after
+walking all 4 096 entries to find out.
+
+**These timings are not citable.** One fork of a scouting configuration on a machine at load 4.4 to
+7.0. They establish direction and rough magnitude, nothing finer. `docs/benchmarks/full-run.sh` has
+still never run.
+
+### What the footprint comparison cannot see
+
+Task 9 replaced a single asserted number with a declared per-class difference table, then attacked it
+with seven injected defects. Six were caught by name. **The seventh was a `boolean` field on
+`FalcoChunk`**, which adds no object and fits into padding the object already carries — it changes
+neither the object count nor the shallow size, so nothing in this comparison can observe it. That
+limit is now stated in the test's own javadoc rather than left for someone to discover.
+
+A second honesty note the test prints itself: proving the two chunks equivalent is not free on a lazy
+chunk. The equivalence check leaves the fresh Falco chunk at 36 objects and 2 168 bytes, against 25
+and 840 before it — both heightmaps and the one section the descent materialised. The check runs
+after the measurement, so it lands outside the tables, and saying so is cheaper than someone later
+finding a discrepancy and mistrusting the numbers.
+
+### Tests
+
+`:falco-instance:` 143, `:falco-anvil:` 193, `:falco-light:` 189, `:falco-demo:` 139,
+`:falco-benchmarks:` 38 — all green, none skipped. `ChunkFootprintTest` is green again after having
+been deliberately red since stage 1.
+
+### What stage 2 did not do
+
+No off-heap storage, no replacement of `Palette`, no facade split of `FalcoInstance`, no shared
+instance — those are stages 3 and 4, or explicit non-goals of the spec. And within its own scope it
+leaves the heightmap descent standing: the largest single materialisation driver is Minestom code
+this stage chose not to reach into.
