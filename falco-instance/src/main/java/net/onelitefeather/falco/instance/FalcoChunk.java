@@ -81,14 +81,19 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  * <p>
  * Everything that is not about where a block physically sits was carried over from
- * {@code DynamicChunk} as it stands: the entries map, the tickable map, the two heightmaps, the
- * cached chunk packet and the viewer and tag plumbing inherited from {@code Chunk}. Copying it is
- * deliberate. This class is measured against {@code DynamicChunk}, and a difference that came from
- * rewriting the bookkeeping would be indistinguishable from a difference that came from the
- * storage.
+ * {@code DynamicChunk} as it stands: the entries map, the two heightmaps, the cached chunk packet
+ * and the viewer and tag plumbing inherited from {@code Chunk}. Copying it is deliberate. This class
+ * is measured against {@code DynamicChunk}, and a difference that came from rewriting the
+ * bookkeeping would be indistinguishable from a difference that came from the storage.
  * </p>
  * <p>
- * The heightmaps are the one place where that copying stops at the {@code when} rather than the
+ * The second block map is the one post that was not carried over at all. {@code DynamicChunk} keeps
+ * a subset of its entries in a map of its own so that a tick can leave early; {@link #tickableCount}
+ * buys the same early exit without the map — see there for what that trade costs. What a tick does
+ * is unchanged, which {@code FalcoChunkTest} pins from both directions.
+ * </p>
+ * <p>
+ * The heightmaps are the one place where the copying stops at the {@code when} rather than the
  * {@code what}. They are built on the first question instead of in a field initialiser — see
  * {@link #motionBlockingHeightmap()}, which carries the bytes and the conditions they were measured
  * under. In a fresh {@code DynamicChunk} the two of them are the second largest post after the
@@ -144,7 +149,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 3.2.1
+ * @version 3.3.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -165,14 +170,24 @@ public class FalcoChunk extends Chunk {
     protected final Int2ObjectOpenHashMap<Block> entries = new Int2ObjectOpenHashMap<>(0);
 
     /**
-     * The subset of {@link #entries} whose handler wants a tick, keyed the same way.
+     * How many of {@link #entries} carry a handler which asked to be ticked.
      * <p>
-     * It is a separate map rather than a filter over {@link #entries} because {@link #tick(long)}
-     * runs every tick for every loaded chunk, and walking the entries to find the few tickable ones
-     * would make the cost of ticking depend on how many block entities a chunk happens to hold.
+     * This is what is left of the second map {@code DynamicChunk} keeps. That map held a subset of
+     * {@link #entries} under the same keys pointing at the same blocks, so it was a second copy of
+     * information the chunk already had, at the price of one {@code Int2ObjectOpenHashMap} and its two
+     * backing arrays per chunk — for every chunk in a world, whether or not it holds a single block
+     * entity.
+     * </p>
+     * <p>
+     * What that map bought was the early exit of {@link #tick(long)}: almost every chunk has nothing
+     * to tick, and a tick which had to walk the entries to find that out would make the cost of
+     * ticking depend on how many block entities a chunk happens to hold. The counter buys the same
+     * exit for four bytes. What is genuinely paid is the case that remains — a chunk which holds both
+     * tickable and non-tickable block entities now walks all of them once per tick instead of only the
+     * tickable ones.
      * </p>
      */
-    protected final Int2ObjectOpenHashMap<Block> tickableMap = new Int2ObjectOpenHashMap<>(0);
+    private int tickableCount;
 
     private volatile boolean needsCompleteHeightmapRefresh = true;
 
@@ -286,8 +301,8 @@ public class FalcoChunk extends Chunk {
      * Widened to public so {@link FalcoInstance}, which lives outside the Minestom package, can pass
      * a placement and a destruction along. Everything but the one line that reaches the storage is
      * the body {@code DynamicChunk} has, in its order: the cache is dropped first, then the block is
-     * written, then the entry and tickable maps are brought in line with it, then the handlers of the
-     * old and the new block are told, and only then are the heightmaps refreshed.
+     * written, then the entries and the tickable counter are brought in line with it, then the
+     * handlers of the old and the new block are told, and only then are the heightmaps refreshed.
      * </p>
      * <p>
      * The order matters. A handler that reads the chunk during {@code onPlace} has to see the block
@@ -332,11 +347,13 @@ public class FalcoChunk extends Chunk {
         } else {
             lastCachedBlock = this.entries.remove(index);
         }
-        // Block tick
-        if (handler != null && handler.isTickable()) {
-            this.tickableMap.put(index, block);
-        } else {
-            this.tickableMap.remove(index);
+        // Block tick. A tickable block always carries a handler and is therefore always in the
+        // entries above, so the counter and the map can never disagree about who is in which.
+        final BlockHandler previousHandler = lastCachedBlock == null ? null : lastCachedBlock.handler();
+        final boolean wasTickable = previousHandler != null && previousHandler.isTickable();
+        final boolean isTickable = handler != null && handler.isTickable();
+        if (wasTickable != isTickable) {
+            this.tickableCount += isTickable ? 1 : -1;
         }
 
         // Update block handlers
@@ -580,21 +597,23 @@ public class FalcoChunk extends Chunk {
     /**
      * Ticks the block handlers of this chunk which asked to be ticked.
      * <p>
-     * The empty check up front is what keeps a world of ordinary chunks cheap: almost every chunk has
-     * no tickable block at all, and this makes its tick a single comparison.
+     * The counter check up front is what keeps a world of ordinary chunks cheap: almost every chunk
+     * has no tickable block at all, and this makes its tick a single comparison. That property is the
+     * one {@link #tickableCount} exists to preserve now that the second map which used to provide it
+     * is gone; the walk below is over {@link #entries}, so a chunk which does hold tickable blocks
+     * pays for the block entities it holds beside them.
      * </p>
      *
      * @param time the time of the tick in milliseconds
      */
     @Override
     public void tick(long time) {
-        if (this.tickableMap.isEmpty()) return;
-        this.tickableMap.int2ObjectEntrySet().fastForEach(entry -> {
-            final int index = entry.getIntKey();
+        if (this.tickableCount == 0) return;
+        this.entries.int2ObjectEntrySet().fastForEach(entry -> {
             final Block block = entry.getValue();
             final BlockHandler handler = block.handler();
-            if (handler == null) return;
-            final Point blockPosition = CoordConversion.chunkBlockIndexGetGlobal(index, chunkX, chunkZ);
+            if (handler == null || !handler.isTickable()) return;
+            final Point blockPosition = CoordConversion.chunkBlockIndexGetGlobal(entry.getIntKey(), chunkX, chunkZ);
             handler.tick(new BlockHandler.Tick(block, instance, blockPosition));
         });
     }
@@ -621,9 +640,11 @@ public class FalcoChunk extends Chunk {
      * hooks are out of reach from this package.
      * </p>
      * <p>
-     * Both block maps are carried over. {@code DynamicChunk#copy} carries only the entries, which
-     * leaves a copied chunk with block entities that have stopped ticking; that omission is a defect
-     * this class already corrected before the storage moved, and it stays corrected.
+     * The entries and the tickable counter are both carried over. {@code DynamicChunk#copy} carries
+     * only the entries and leaves its second map behind, which leaves a copied chunk with block
+     * entities that have stopped ticking; that omission is a defect this class already corrected
+     * before the storage moved, and it stays corrected — the counter is the same correction, in the
+     * form the second map left behind.
      * </p>
      * <p>
      * The caller has to hold the read lock of this chunk.
@@ -640,12 +661,18 @@ public class FalcoChunk extends Chunk {
         final FalcoChunk copy = new FalcoChunk(instance, chunkX, chunkZ, this.storage.copy());
 
         copy.entries.putAll(this.entries);
-        copy.tickableMap.putAll(this.tickableMap);
+        copy.tickableCount = this.tickableCount;
         return copy;
     }
 
     /**
      * Empties this chunk.
+     * <p>
+     * The counter goes back to zero with the entries it counts. {@code DynamicChunk#reset} clears its
+     * entries and leaves its second map behind, so a reset chunk there keeps ticking blocks it no
+     * longer holds; here the two cannot drift apart, because clearing one without the other would
+     * leave a chunk whose tick can never take its early exit again.
+     * </p>
      * <p>
      * The caller has to hold the write lock of this chunk.
      * </p>
@@ -655,6 +682,7 @@ public class FalcoChunk extends Chunk {
         assertWriteLock();
         this.storage.clear();
         this.entries.clear();
+        this.tickableCount = 0;
     }
 
     /**
