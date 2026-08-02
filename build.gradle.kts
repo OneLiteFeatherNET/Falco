@@ -1,5 +1,9 @@
 // Build rationale documented in the wiki: https://github.com/OneLiteFeatherNET/Falco/wiki
 
+plugins {
+    alias(libs.plugins.japicmp) apply false
+}
+
 version = "0.3.0" // x-release-please-version
 
 if (providers.gradleProperty("snapshot").isPresent) {
@@ -102,5 +106,42 @@ project(":falco-bom") {
         publications.create<MavenPublication>("maven") {
             from(components["javaPlatform"])
         }
+    }
+}
+
+val apiBaselineVersion: String = providers.gradleProperty("apiBaselineVersion").get()
+
+configure(publishedModules - project(":falco-bom")) {
+    apply(plugin = "me.champeau.gradle.japicmp")
+
+    val apiBaseline = configurations.detachedConfiguration(
+        dependencies.create("net.onelitefeather:${project.name}:$apiBaselineVersion")
+    ).apply {
+        isTransitive = false
+    }
+
+    val checkApiCompatibility = tasks.register<me.champeau.gradle.japicmp.JapicmpTask>("checkApiCompatibility") {
+        oldClasspath.from(apiBaseline)
+        newClasspath.from(tasks.named<Jar>("jar").flatMap { it.archiveFile })
+        onlyBinaryIncompatibleModified.set(true)
+        failOnModification.set(true)
+        ignoreMissingClasses.set(true)
+        htmlOutputFile.set(layout.buildDirectory.file("reports/japicmp/${project.name}.html"))
+        txtOutputFile.set(layout.buildDirectory.file("reports/japicmp/${project.name}.txt"))
+
+        doFirst {
+            val resolved = apiBaseline.resolve()
+            require(resolved.isNotEmpty()) {
+                "the API baseline net.onelitefeather:${project.name}:$apiBaselineVersion resolved to nothing"
+            }
+            require(resolved.none { it.absolutePath.contains("${File.separator}build${File.separator}libs${File.separator}") }) {
+                "the API baseline resolved to this build's own jar instead of $apiBaselineVersion from the repository, " +
+                        "so the comparison would pass no matter what changed"
+            }
+        }
+    }
+
+    tasks.named("check") {
+        dependsOn(checkApiCompatibility)
     }
 }
