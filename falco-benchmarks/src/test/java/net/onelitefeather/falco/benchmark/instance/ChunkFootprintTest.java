@@ -1,11 +1,14 @@
 package net.onelitefeather.falco.benchmark.instance;
 
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.InstanceContainer;
+import net.minestom.server.instance.Section;
 import net.onelitefeather.falco.benchmark.support.MinestomChunks;
 import net.onelitefeather.falco.benchmark.support.MinestomChunks.FillShape;
 import net.onelitefeather.falco.instance.FalcoInstance;
+import net.onelitefeather.falco.instance.LazySectionBlockStorage;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -24,6 +27,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.LongUnaryOperator;
+import java.util.function.ToLongFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -137,17 +141,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The object <em>count</em> of a fresh chunk can be read off the source: twenty-four sections, two
  * palettes and two light carriers each, one {@code AtomicBoolean} per light carrier. Those counts
  * are asserted exactly, and a change in any of them is a structural change in Minestom that this
- * project wants to be told about. The byte figures are not asserted that way. They move with the
- * JDK, with the header mode and with the object alignment, and a test that turns red on a JDK
- * upgrade teaches nobody anything, so bytes are only bounded generously — an empty chunk is
- * asserted to be kibibytes rather than megabytes, and a chunk whose palettes have gone direct is
- * asserted to be dominated by the twenty-four {@code long[1024]} arrays that arithmetic says must be
- * there.
+ * project wants to be told about. An <em>absolute</em> byte figure is not asserted that way. It moves
+ * with the JDK, with the header mode and with the object alignment, and a test that turns red on a JDK
+ * upgrade teaches nobody anything, so an absolute byte figure is only bounded generously — an empty
+ * chunk is asserted to be kibibytes rather than megabytes, and a chunk whose palettes have gone direct
+ * is asserted to be dominated by the twenty-four {@code long[1024]} arrays that arithmetic says must
+ * be there.
  * </p>
  * <p>
- * One comparison is asserted strictly, and it is the one this class exists for: outside the classes
- * stage 2 declared a difference for, {@code FalcoChunk} must weigh exactly what {@code DynamicChunk}
- * weighs. A deviation would not be a tolerance to widen, it would be a finding.
+ * One comparison is asserted strictly, and it is the one this class exists for: the two chunk types
+ * against each other. Outside the classes stage 2 declared a difference for, {@code FalcoChunk} must
+ * weigh exactly what {@code DynamicChunk} weighs; inside them it must weigh exactly what the table
+ * declares. Bytes are hard there and nowhere else, because both sides are measured in the same run of
+ * the same JVM, so the header mode and the alignment are the same on both and cancel — a strict
+ * comparison of two sides is a different thing from a constant, and every expectation of that
+ * comparison is derived from the Minestom side of the same walk or from an object this test builds
+ * next to it. A deviation would not be a tolerance to widen, it would be a finding.
  * </p>
  *
  * <h2>The declared difference table, and why it replaced an equality</h2>
@@ -164,20 +173,33 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Stage 2 makes that equality impossible by construction, because removing objects is the point. A
  * fresh {@code FalcoChunk} shares one {@code LazySectionBlockStorage#EMPTY} section instead of
  * owning twenty-four, builds neither heightmap until one is asked for, and keeps one block map and a
- * counter where {@code DynamicChunk} keeps two maps. Measured on the pinned build, that is
- * {@code 25} objects and {@code 840} bytes against {@code 192} and {@code 6848} — a hundred and
- * sixty-seven objects fewer, not one more.
+ * counter where {@code DynamicChunk} keeps two maps. Measured on the pinned build, with the sections
+ * of tasks 2 and 3, the lazy heightmaps of task 7 and the single block map of task 8 all in place,
+ * that is {@code 25} objects and {@code 840} bytes against {@code 192} and {@code 6848} — a hundred
+ * and sixty-seven objects fewer, not one more.
  * </p>
  * <p>
  * What survives the rewrite is the property the equality had, and it is what
  * {@link #assertOnlyTheDeclaredClassesDiffer} is named after: a class the Falco chunk retains and
  * the plan did not declare has to fail the test. The two tables {@link #FRESH_DIFFERENCE} and
- * {@link #FILLED_DIFFERENCE} name every class the two sides may differ in and the count the Falco
- * side has to show for it; every class outside them is still asserted equal on both objects and
- * bytes; and the byte difference of the whole footprint has to be the sum of the declared classes
- * and of nothing else. A tolerance of the form "at most six kibibytes" was considered and rejected,
- * because it would pass for a chunk that saved the sections and grew a field — the exact failure the
- * strict comparison of stage 1 was written to catch.
+ * {@link #FILLED_DIFFERENCE} name every class the two sides may differ in, the count the Falco side
+ * has to show for it and the bytes that count is worth; every class outside them is still asserted
+ * equal on both objects and bytes. A tolerance of the form "at most six kibibytes" was considered and
+ * rejected, because it would pass for a chunk that saved the sections and grew a field — the exact
+ * failure the strict comparison of stage 1 was written to catch.
+ * </p>
+ * <p>
+ * The byte half of those rows was missing when the tables were first written, and the hole it left is
+ * worth naming, because the shape of it recurs. A declared class was asserted on its count alone, and
+ * the total that was supposed to catch the rest was a sum of the very bytes it was compared against —
+ * true by arithmetic in every run, and therefore never the first assertion to fail. What that left
+ * unguarded was not a corner: {@code [I} is a declared class, and in a filled chunk it holds the index
+ * array of every palette that went indirect, so a Falco side with the same number of arrays and wider
+ * ones satisfied the whole table. Injecting exactly that — one fastutil map of the chunk constructed
+ * with room for eight entries instead of none — passed the class as it stood, and fails it now by
+ * name. Each declared row therefore carries a byte expectation that is derived from the Minestom side
+ * of the same walk, or from a {@link Probes} object built by this test; never from the chunk it is
+ * asserted against.
  * </p>
  * <p>
  * Three rows of the fresh table are worth reading before the rest. The one {@code Section}, one
@@ -188,16 +210,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * than assumed, by measuring two chunks at once — shared stays at one, owned would become two.
  * </p>
  * <p>
- * Seven defects were injected to find out where the new comparison stops biting, and six of them
+ * Eight defects were injected to find out where the new comparison stops biting, and seven of them
  * were caught by name: a field of an undeclared class, a second storage, a {@code long} that grows
  * the chunk object, a {@code Section} materialised in the constructor, an eager
- * {@code SectionBlockStorage} in place of the lazy one, and a shared section that is shared per
- * storage instead of per JVM — that last one only by the two chunk measurement, which is why it is
- * there. The seventh survives and is stated rather than hidden: a {@code boolean} field added to
- * {@code FalcoChunk} fits into the padding the object already carries, so it adds no object, no
- * byte and no shallow size, and nothing here can see it. It is caught by the field after it, which
- * is the one that pushes the object over the next alignment boundary. This comparison measures
- * bytes, and a field which costs no byte is a field this comparison cannot be asked about.
+ * {@code SectionBlockStorage} in place of the lazy one, a shared section that is shared per storage
+ * instead of per JVM — that one only by the two chunk measurement, which is why it is there — and a
+ * block map given room for eight entries, which changes no count anywhere and is caught only by the
+ * byte expectation of the two array rows. The eighth survives and is stated rather than hidden: a
+ * {@code boolean} field added to {@code FalcoChunk} fits into the padding the object already carries,
+ * so it adds no object, no byte and no shallow size, and nothing here can see it. It is caught by the
+ * field after it, which is the one that pushes the object over the next alignment boundary. This
+ * comparison measures bytes, and a field which costs no byte is a field this comparison cannot be
+ * asked about.
  * </p>
  *
  * <h2>Why the equivalence check runs after the measurement and not before</h2>
@@ -208,8 +232,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * section of its own. Every fresh Falco chunk in these tables was therefore fully materialised before
  * a single byte of it was counted, and the table said so without saying so — {@code 193} objects
  * against {@code 192}, the same delta the eager storage of stage 1 produced, which is exactly what a
- * chunk with twenty-four sections of its own costs. The measured truth is {@code 32} objects; see the
- * diagnosis report of 2026-08-02 in {@code .superpowers/sdd/2026-08-02-falco-lazy-sections}.
+ * chunk with twenty-four sections of its own costs. The chunk that was being hidden held {@code 32}
+ * objects at the time of that diagnosis, which was taken with tasks 2 and 3 in place and tasks 7 and 8
+ * not yet written; the {@code 25} of the section above is the same measurement after both of them
+ * landed, and the two numbers differ by the four objects of the heightmaps and the three of the second
+ * block map rather than by anything the diagnosis got wrong. See the diagnosis report of 2026-08-02 in
+ * {@code .superpowers/sdd/2026-08-02-falco-lazy-sections}.
  * </p>
  * <p>
  * Two things follow and both are done. {@code MinestomChunks#assertSameBlocks} no longer reaches
@@ -218,9 +246,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * table is printed. That keeps what the check is for — a run whose two sides disagree still fails and
  * still publishes nothing — while removing the last way it can decide the number it is guarding. The
  * residue is stated rather than removed: comparing the heightmaps forces both sides to compute them,
- * and on a fresh Falco chunk the column descent of {@code Heightmap#refresh(int, int, int)}
- * materialises the one section it lands in. That is {@code 7} objects, it is Minestom's descent and
- * not this class's, and after the inversion it lands outside every number below.
+ * which since task 7 means building the two a fresh Falco chunk does not have, and the column descent
+ * of {@code Heightmap#refresh(int, int, int)} then materialises the one section it lands in. Measured
+ * on the pinned build, that residue is {@code 11} objects and {@code 1 328} bytes — the two heightmaps
+ * with their {@code short[256]}, and the seven objects of one section — which takes the chunk from
+ * {@code 25} objects and {@code 840} bytes to {@code 36} and {@code 2 168}. What that residue is made
+ * of is asserted class by class in {@link #aFreshChunkHoldsTheObjectsTheSourceDeclares()}, which also
+ * prints the two totals with every run, so a third heightmap or a second materialised section turns
+ * this paragraph red rather than stale. It is Minestom's descent and not this class's, and after the
+ * inversion it lands outside every number above.
  * </p>
  *
  * <h2>Running it</h2>
@@ -238,7 +272,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 2.0.0
+ * @version 2.1.0
  * @since 0.4.0
  */
 @DisplayName("The retained size of a chunk, measured with JOL")
@@ -316,6 +350,16 @@ class ChunkFootprintTest {
      * not have at all. A class outside these fifteen still has to be equal to the Minestom side on
      * both its object count and its bytes.
      * </p>
+     * <p>
+     * Every row carries a byte expectation as well as a count, and where the two differ in shape it
+     * is because the class does. {@link #exactly(long, String)} multiplies the count by the size one
+     * instance has on the Minestom side, which is only meaningful for a class whose instances are all
+     * the same size and which therefore refuses a class where they are not.
+     * {@link #fewerBy(long, ToLongFunction, String)} and {@link #added(long, ToLongFunction, String)}
+     * carry the size of what was removed or added, taken from {@link Probes} — objects built by this
+     * test rather than read off the chunk under test, because a byte expectation read off the subject
+     * asserts nothing about it.
+     * </p>
      */
     private static final Map<String, Declared> FRESH_DIFFERENCE = Map.ofEntries(
             Map.entry(SECTION, exactly(1,
@@ -334,14 +378,22 @@ class ChunkFootprintTest {
             Map.entry(HEIGHTS, exactly(0, "the short[256] of each heightmap that was never built")),
             Map.entry(BLOCK_INDEX_MAP, exactly(1,
                     "task 8: one block map and an int counter instead of entries and tickableMap")),
-            Map.entry(INT_ARRAY, fewerBy(1, "the int[] key array of the block map task 8 removed")),
-            Map.entry(OBJECT_ARRAY, fewerBy(2,
-                    "the Object[] value array of that same map, and the backing array of the section list")),
+            Map.entry(INT_ARRAY, fewerBy(1, Probes::mapKeys,
+                    "the int[] key array of the block map task 8 removed, which is the key array of an "
+                            + "Int2ObjectOpenHashMap constructed the way DynamicChunk constructs both of "
+                            + "its own")),
+            Map.entry(OBJECT_ARRAY, fewerBy(2, probes -> probes.mapValues() + probes.slotArray(),
+                    "the Object[] value array of that same map, and the backing array of Minestom's "
+                            + "List.of(Section...), which holds one reference per section and is therefore "
+                            + "the size of the slot array that replaced it")),
             Map.entry(SECTION_LIST, exactly(0,
                     "Minestom's List.of(Section...); the storage keeps the Section[] itself")),
-            Map.entry(SECTION_ARRAY, exactly(1, "that Section[], the slot array of the storage")),
-            Map.entry(LAZY_STORAGE, exactly(1, "the storage, which is what the seam of stage 1 costs")),
-            Map.entry(STORAGE_VIEW, exactly(1, "the AbstractList that BlockStorage#views answers with")));
+            Map.entry(SECTION_ARRAY, added(1, Probes::slotArray,
+                    "that Section[], the slot array of the storage, one reference per section")),
+            Map.entry(LAZY_STORAGE, added(1, Probes::storage,
+                    "the storage, which is what the seam of stage 1 costs")),
+            Map.entry(STORAGE_VIEW, added(1, Probes::storageView,
+                    "the AbstractList that BlockStorage#views answers with")));
 
     /**
      * What a filled {@code FalcoChunk} is allowed to differ from a filled {@code DynamicChunk} in.
@@ -354,14 +406,22 @@ class ChunkFootprintTest {
     private static final Map<String, Declared> FILLED_DIFFERENCE = Map.ofEntries(
             Map.entry(BLOCK_INDEX_MAP, exactly(1,
                     "task 8: one block map and an int counter instead of entries and tickableMap")),
-            Map.entry(INT_ARRAY, fewerBy(1, "the int[] key array of the block map task 8 removed")),
-            Map.entry(OBJECT_ARRAY, fewerBy(2,
-                    "the Object[] value array of that same map, and the backing array of the section list")),
+            Map.entry(INT_ARRAY, fewerBy(1, Probes::mapKeys,
+                    "the int[] key array of the block map task 8 removed. Every other int[] of a filled "
+                            + "chunk belongs to a palette that went indirect, and this row is what bounds "
+                            + "them: the Falco side may hold one array fewer and not one byte more")),
+            Map.entry(OBJECT_ARRAY, fewerBy(2, probes -> probes.mapValues() + probes.slotArray(),
+                    "the Object[] value array of that same map, and the backing array of Minestom's "
+                            + "List.of(Section...), which holds one reference per section and is therefore "
+                            + "the size of the slot array that replaced it")),
             Map.entry(SECTION_LIST, exactly(0,
                     "Minestom's List.of(Section...); the storage keeps the Section[] itself")),
-            Map.entry(SECTION_ARRAY, exactly(1, "that Section[], the slot array of the storage")),
-            Map.entry(LAZY_STORAGE, exactly(1, "the storage, which is what the seam of stage 1 costs")),
-            Map.entry(STORAGE_VIEW, exactly(1, "the AbstractList that BlockStorage#views answers with")));
+            Map.entry(SECTION_ARRAY, added(1, Probes::slotArray,
+                    "that Section[], the slot array of the storage, one reference per section")),
+            Map.entry(LAZY_STORAGE, added(1, Probes::storage,
+                    "the storage, which is what the seam of stage 1 costs")),
+            Map.entry(STORAGE_VIEW, added(1, Probes::storageView,
+                    "the AbstractList that BlockStorage#views answers with")));
 
     /**
      * The instance the Minestom side of every comparison is built in.
@@ -422,6 +482,14 @@ class ChunkFootprintTest {
      * a chunk that quietly materialised one would also report. Two chunks separate the two readings:
      * shared stays at one, owned becomes two.
      * </p>
+     * <p>
+     * The last measurement of this method is of the equivalence check rather than of the chunk, and it
+     * is the reason the check runs after everything else. {@code MinestomChunks#assertSameBlocks} asks
+     * both sides for their heightmaps, which on a lazy chunk builds the two that task 7 removed, and
+     * the column descent of {@code Heightmap#refresh(int, int, int)} then materialises the one section
+     * it lands in. The residue that leaves behind is asserted here class by class, so that the figure
+     * the class documentation quotes for it is one this run produced and not one from before task 7.
+     * </p>
      */
     @Test
     @DisplayName("A fresh chunk holds the objects the source declares, and Falco holds what stage 2 declared")
@@ -439,6 +507,7 @@ class ChunkFootprintTest {
         final Footprint twoFalcoChunks = measureBoth(falcoChunk, secondFalcoChunk, falco);
         final Footprint sections = measureSections(minestomChunk);
         MinestomChunks.assertSameBlocks(minestomChunk, falcoChunk);
+        final Footprint afterTheCheck = measure(falcoChunk, falco);
 
         final StringBuilder out = new StringBuilder();
         appendHeader(out, "a fresh chunk, before a single block is set");
@@ -450,7 +519,7 @@ class ChunkFootprintTest {
         report(out);
 
         assertOnlyTheDeclaredClassesDiffer(minestom, minestomChunk, falcoFootprint, falcoChunk,
-                FRESH_DIFFERENCE, "a fresh chunk");
+                FRESH_DIFFERENCE, probes(falcoChunk), "a fresh chunk");
 
         assertEquals(2 * minestom.objectsOf(SECTION), twoMinestomChunks.objectsOf(SECTION),
                 "two DynamicChunks own two full sets of sections, which is the control this comparison "
@@ -475,6 +544,26 @@ class ChunkFootprintTest {
                         + minestom.bytes() + " for a DynamicChunk; the sections are 74,9 % of that "
                         + "figure and both heightmaps another 16,4 %, so anything above a quarter "
                         + "means one of the two did not actually go");
+
+        assertEquals(1, afterTheCheck.objectsOf(MOTION_BLOCKING),
+                "the equivalence check asks for the heightmaps, so it builds the one task 7 removed");
+        assertEquals(1, afterTheCheck.objectsOf(WORLD_SURFACE),
+                "the equivalence check asks for the heightmaps, so it builds the one task 7 removed");
+        assertEquals(2, afterTheCheck.objectsOf(HEIGHTS),
+                "the short[256] of each of those two heightmaps");
+        assertEquals(2, afterTheCheck.objectsOf(SECTION),
+                "the shared EMPTY section this walk charges the chunk with, plus the one the column "
+                        + "descent of Heightmap#refresh materialised. A third would mean the descent "
+                        + "walked further than the one section it lands in");
+        report(new StringBuilder()
+                .append(" The equivalence check is not free on a lazy chunk: proving the two sides equal "
+                        + "left the fresh Falco chunk at ")
+                .append(afterTheCheck.objects()).append(" objects and ").append(afterTheCheck.bytes())
+                .append(" bytes, against ").append(falcoFootprint.objects()).append(" and ")
+                .append(falcoFootprint.bytes()).append(" before it. That residue is both heightmaps with "
+                        + "their short[256] and the one section the descent materialised, and it lands "
+                        + "outside every table above because the check runs after the measurement.")
+                .append(System.lineSeparator()));
 
         assertEquals(24, minestom.objectsOf(SECTION), "sections per overworld chunk");
         assertEquals(48, minestom.objectsOf(PALETTE), "palettes per overworld chunk, one for blocks and one for biomes per section");
@@ -531,6 +620,7 @@ class ChunkFootprintTest {
         final Chunk freshFalcoChunk = MinestomChunks.newChunk(falco, 0, 0);
         final Footprint fresh = measure(freshChunk, container);
         final Footprint freshFalco = measure(freshFalcoChunk, falco);
+        final Probes probes = probes(freshFalcoChunk);
         MinestomChunks.assertSameBlocks(freshChunk, freshFalcoChunk);
 
         final StringBuilder out = new StringBuilder();
@@ -538,7 +628,8 @@ class ChunkFootprintTest {
         appendProfileHeader(out);
         appendProfileRow(out, "fresh", "-", "-", fresh, freshFalco);
         assertOnlyTheDeclaredClassesDiffer(fresh, freshChunk, freshFalco, freshFalcoChunk,
-                FRESH_DIFFERENCE, "fresh");
+                FRESH_DIFFERENCE, probes, "fresh");
+
 
         long directModeBytes = 0;
         long layeredAtLargestCount = 0;
@@ -558,7 +649,7 @@ class ChunkFootprintTest {
                         minestom, falcoFootprint);
 
                 assertOnlyTheDeclaredClassesDiffer(minestom, minestomChunk, falcoFootprint, falcoChunk,
-                        FILLED_DIFFERENCE, states + " states in " + shape);
+                        FILLED_DIFFERENCE, probes, states + " states in " + shape);
                 assertTrue(minestom.bytes() >= fresh.bytes(),
                         "A filled chunk cannot retain less than an empty one, " + states + " states in " + shape);
 
@@ -685,16 +776,33 @@ class ChunkFootprintTest {
      * the seam added one object and removed none. Stage 2 removes a hundred and sixty-seven of them,
      * so equality is no longer the right shape — but the property it existed for is unchanged and is
      * preserved here: a class the Falco chunk retains and this table does not name still fails, on
-     * both its object count and its bytes. What is asserted per declared class is the count, exactly,
-     * on the Falco side; what is asserted over the whole footprint is that the byte difference is the
-     * sum of the bytes of the declared classes and of nothing else. That is a stronger statement than
-     * the old equality and not a weaker one, because the old equality never had to add anything up.
+     * both its object count and its bytes. A class the table does name is asserted twice over, on the
+     * count the table declares and on the bytes that count is worth, and neither of those two numbers
+     * is read off the chunk being asserted about: the count comes from the plan, the size comes either
+     * from the Minestom side of the same walk or from a {@link Probes} object this test built itself.
+     * There is no tolerance anywhere in it, and no class is left unbounded on either axis.
+     * </p>
+     * <p>
+     * The byte side of the declared rows is the part that was missing until it was pointed out, and
+     * the row it was missing from most is {@link #INT_ARRAY} of {@link #FILLED_DIFFERENCE}: every
+     * indirect palette of a filled chunk keeps its index array in that class, so a table that declared
+     * only the count would have let the Falco side hold arrays of any width at all. The total at the
+     * end is not what closes that hole and is no longer advertised as if it were — see below.
      * </p>
      * <p>
      * A tolerance was considered and rejected. "The Falco chunk retains at most six kibibytes" would
      * pass for a chunk that saved the sections and grew a field, which is the exact failure the strict
      * comparison of stage 1 was written to catch and the reason three defects were injected into it to
      * prove that it did.
+     * </p>
+     * <p>
+     * The sum at the end is a check on the apparatus and not on the chunk, and it is worth being clear
+     * about which. Once every class has been compared — the declared ones against their expectation,
+     * the undeclared ones against the Minestom side, the chunk class as one post — the difference of
+     * the two totals is already determined, so this assertion cannot be the first one to fail on a
+     * chunk that changed. What it can still catch is a walk whose per class table does not add up to
+     * the total it reported, which would mean the two footprints below are not describing the same set
+     * of objects and that every number this class prints is suspect.
      * </p>
      * <p>
      * The declared table is iterated together with the union of the two footprints rather than only
@@ -719,16 +827,25 @@ class ChunkFootprintTest {
      * @param minestomChunk the chunk the Minestom side was measured from
      * @param falcoSide     the footprint of the Falco side
      * @param falcoChunk    the chunk the Falco side was measured from
-     * @param declared      the expected count per class on the Falco side, for every class the two
-     *                      sides may differ in
+     * @param declared      the expected count and byte weight per class on the Falco side, for every
+     *                      class the two sides may differ in
+     * @param probes        the sizes the byte expectations of the declared rows are derived from
      * @param context       what was measured, named in every failure message
      */
     private static void assertOnlyTheDeclaredClassesDiffer(Footprint minestom, Chunk minestomChunk,
                                                           Footprint falcoSide, Chunk falcoChunk,
-                                                          Map<String, Declared> declared,
+                                                          Map<String, Declared> declared, Probes probes,
                                                           String context) {
         final String minestomType = minestomChunk.getClass().getName();
         final String falcoType = falcoChunk.getClass().getName();
+
+        assertEquals(minestom.bytesOf(BLOCK_INDEX_MAP) / minestom.objectsOf(BLOCK_INDEX_MAP),
+                probes.mapObject(),
+                context + ": the byte expectations of the two array rows are the size of the arrays of a "
+                        + "map this test built, and that only states anything if it is the same map a chunk "
+                        + "builds. The one this test built weighs " + probes.mapObject() + " bytes against "
+                        + (minestom.bytesOf(BLOCK_INDEX_MAP) / minestom.objectsOf(BLOCK_INDEX_MAP))
+                        + " for the ones a DynamicChunk holds");
 
         assertEquals(minestom.objectsUnder(minestomType), falcoSide.objectsUnder(falcoType),
                 context + ": the chunk object and the lambdas the JVM spins for it are "
@@ -769,13 +886,23 @@ class ChunkFootprintTest {
                             + " on the Falco side, against " + minestom.objectsOf(className)
                             + " on the Minestom side, because " + row.reason() + ". The chunk holds "
                             + falcoSide.objectsOf(className));
-            declaredBytes += falcoSide.bytesOf(className) - minestom.bytesOf(className);
+
+            final long expectedBytes = row.bytes().applyAsLong(new ByteContext(expected,
+                    minestom.objectsOf(className), minestom.bytesOf(className), probes, className));
+            assertEquals(expectedBytes, falcoSide.bytesOf(className),
+                    context + ": the plan declares " + expected + " objects of " + className
+                            + " on the Falco side and " + expectedBytes + " bytes for them, against "
+                            + minestom.bytesOf(className) + " bytes on the Minestom side, because "
+                            + row.reason() + ". The chunk holds " + falcoSide.bytesOf(className)
+                            + " bytes, so it holds the declared objects at a size nobody declared");
+            declaredBytes += expectedBytes - minestom.bytesOf(className);
         }
         assertEquals(declaredBytes, falcoSide.bytes() - minestom.bytes(),
                 context + ": the two chunks differ by " + (falcoSide.bytes() - minestom.bytes())
                         + " bytes while the classes the plan declared account for " + declaredBytes
-                        + ". The remainder belongs to a class this comparison did not look at, which "
-                        + "means a post moved without anybody deciding that it should.");
+                        + " and every other class was just asserted equal. The two do not add up, which "
+                        + "is a statement about the walk rather than about the chunk: the per class table "
+                        + "of a footprint has to sum to the total that footprint reports.");
         assertEquals(ClassLayout.parseInstance(minestomChunk).instanceSize(),
                 ClassLayout.parseInstance(falcoChunk).instanceSize(),
                 context + ": the two chunk objects themselves must still have the same shallow size");
@@ -1133,7 +1260,8 @@ class ChunkFootprintTest {
     }
 
     /**
-     * One row of a declared difference table: how many objects of a class the Falco side may hold.
+     * One row of a declared difference table: how many objects of a class the Falco side may hold,
+     * and how many bytes those objects may weigh.
      * <p>
      * The count is a function of the count on the Minestom side rather than a constant, because two
      * of the rows can only be stated that way. The {@code int[]} and {@code Object[]} a chunk holds
@@ -1141,7 +1269,17 @@ class ChunkFootprintTest {
      * went indirect, so their absolute number moves with the fill — a filled chunk of this class
      * shows anything between one and seventy-four of them — while what task 8 removed is exactly one
      * of each, at every fill. A constant would either not hold or would pin a palette detail this
-     * comparison has no business pinning; {@link #fewerBy(long, String)} states the removal instead.
+     * comparison has no business pinning; {@link #fewerBy(long, ToLongFunction, String)} states the
+     * removal instead.
+     * </p>
+     * <p>
+     * The byte expectation exists because the count alone leaves the declared classes unbounded, and
+     * the row that shows why is {@link #INT_ARRAY} of {@link #FILLED_DIFFERENCE}: a filled chunk holds
+     * one {@code int[]} per indirect palette, all of them inside a class this table declares, so a
+     * Falco side that allocated the same number of arrays and made them wider would satisfy every
+     * count in the table. It is written as a function of the Minestom side and of {@link Probes}
+     * rather than as a literal, because a literal would be a figure for one header mode and this class
+     * runs under two.
      * </p>
      * <p>
      * The reason is carried along and printed in the failure, because a bare count in a table is the
@@ -1149,31 +1287,153 @@ class ChunkFootprintTest {
      * </p>
      *
      * @param expected how many objects the Falco side may hold, given the count on the Minestom side
+     * @param bytes    how many bytes those objects may weigh
      * @param reason   why the plan of this stage declares that count
      */
-    private record Declared(LongUnaryOperator expected, String reason) {
+    private record Declared(LongUnaryOperator expected, ToLongFunction<ByteContext> bytes, String reason) {
+    }
+
+    /**
+     * What a byte expectation is allowed to be computed from.
+     *
+     * @param expectedObjects  the count this row declares for the Falco side
+     * @param minestomObjects  how many objects of the class the Minestom side holds
+     * @param minestomBytes    how many bytes those objects weigh
+     * @param probes           the sizes measured from objects this test built itself
+     * @param className        the class the row is about, named in the failure of a rejected rule
+     */
+    private record ByteContext(long expectedObjects, long minestomObjects, long minestomBytes,
+                               Probes probes, String className) {
     }
 
     /**
      * Declares a count that does not depend on what the Minestom side holds.
+     * <p>
+     * The byte expectation that comes with it is the count times the size one instance has on the
+     * Minestom side. That is only a statement for a class whose instances are all the same size, so a
+     * class whose bytes are not a whole multiple of its object count is rejected rather than asserted
+     * about: every class this factory is used for — {@code Section}, {@code PaletteImpl}, the two
+     * light carriers, {@code AtomicBoolean}, {@code Int2ObjectOpenHashMap}, the two heightmaps, the
+     * {@code short[256]} of a heightmap and {@code ListN} — has a fixed shape, and one that stopped
+     * having it would need a row of a different kind rather than a wider tolerance.
+     * </p>
      *
      * @param objects the amount of objects the Falco side has to hold
      * @param reason  why the plan of this stage declares that count
      * @return the declaration
      */
     private static Declared exactly(long objects, String reason) {
-        return new Declared(minestomObjects -> objects, reason);
+        return new Declared(minestomObjects -> objects, context -> perInstance(context) * objects, reason);
     }
 
     /**
      * Declares a count as a removal from what the Minestom side holds.
      *
-     * @param objects the amount of objects the Falco side holds fewer of
-     * @param reason  why the plan of this stage declares that removal
+     * @param objects      the amount of objects the Falco side holds fewer of
+     * @param removedBytes the size of what was removed, measured from an object this test built
+     * @param reason       why the plan of this stage declares that removal
      * @return the declaration
      */
-    private static Declared fewerBy(long objects, String reason) {
-        return new Declared(minestomObjects -> minestomObjects - objects, reason);
+    private static Declared fewerBy(long objects, ToLongFunction<Probes> removedBytes, String reason) {
+        return new Declared(minestomObjects -> minestomObjects - objects,
+                context -> context.minestomBytes() - removedBytes.applyAsLong(context.probes()), reason);
+    }
+
+    /**
+     * Declares a class the Falco side holds and the Minestom side does not.
+     * <p>
+     * The Minestom side offers no size to derive a byte expectation from here, so it is taken from a
+     * {@link Probes} object of the same shape. For the slot array that is an independent statement:
+     * an array of one reference per section is a thing this test can build without asking the chunk.
+     * For the storage and its view list it is the weaker one — a field added to
+     * {@code LazySectionBlockStorage} grows the probe as well and stays invisible — so what this row
+     * asserts is that the chunk holds one storage of the size a plain storage has, and not that a
+     * plain storage is the right size. That second question belongs to the tests of the storage.
+     * </p>
+     *
+     * @param objects   the amount of objects the Falco side has to hold
+     * @param bytesEach the size of one of them, measured from an object this test built
+     * @param reason    why the plan of this stage declares that addition
+     * @return the declaration
+     */
+    private static Declared added(long objects, ToLongFunction<Probes> bytesEach, String reason) {
+        return new Declared(minestomObjects -> objects,
+                context -> bytesEach.applyAsLong(context.probes()) * objects, reason);
+    }
+
+    /**
+     * Returns the size one instance of a class has on the Minestom side.
+     *
+     * @param context what the byte expectation may be computed from
+     * @return the size of one instance, zero when the row declares no object at all
+     * @throws IllegalStateException if the instances of the class are not all the same size, which
+     *                               makes a per instance size a number that means nothing
+     */
+    private static long perInstance(ByteContext context) {
+        if (context.expectedObjects() == 0) {
+            return 0;
+        }
+        if (context.minestomObjects() <= 0) {
+            throw new IllegalStateException("The declared row of " + context.className() + " states a count "
+                    + "for the Falco side and takes the size of one instance from the Minestom side, which "
+                    + "holds none. A class only the Falco side holds needs an added(...) row, whose size "
+                    + "comes from a probe.");
+        }
+        if (context.minestomBytes() % context.minestomObjects() != 0) {
+            throw new IllegalStateException("The " + context.minestomObjects() + " instances of "
+                    + context.className() + " the Minestom side holds weigh " + context.minestomBytes()
+                    + " bytes, which is not a whole multiple of their count, so they are not all the same "
+                    + "size and the byte expectation of an exactly(...) row cannot be stated for them.");
+        }
+        return context.minestomBytes() / context.minestomObjects();
+    }
+
+    /**
+     * The sizes the byte expectations of the two declared tables are derived from.
+     * <p>
+     * Every one of them is measured on the running JVM from an object this test constructed, which is
+     * what keeps them independent of the chunk they are asserted against and correct under both header
+     * modes. The map is built the way {@code DynamicChunk.java:55-56} builds the two it declares, with
+     * an expected size of zero, so its two arrays are the arrays task 8 removed.
+     * </p>
+     *
+     * @param mapObject   the size of one {@code Int2ObjectOpenHashMap} as a chunk constructs it
+     * @param mapKeys     the size of its {@code int[]} key array
+     * @param mapValues   the size of its {@code Object[]} value array
+     * @param slotArray   the size of an array of one reference per section
+     * @param storage     the shallow size of a {@link LazySectionBlockStorage}
+     * @param storageView the shallow size of the list its {@code views()} answers with
+     */
+    private record Probes(long mapObject, long mapKeys, long mapValues, long slotArray,
+                          long storage, long storageView) {
+    }
+
+    /**
+     * Measures the sizes the declared byte expectations are derived from.
+     * <p>
+     * It runs inside a test method rather than in a static initialiser for the reason the class
+     * documentation gives about {@code jol.magicFieldOffset}: nothing in this class may touch JOL
+     * before {@link JolMeasurement#require()} has confirmed that the test JVM was started the way
+     * these measurements need.
+     * </p>
+     *
+     * @param chunk the chunk the section bounds are read from, so that the slot array probe has the
+     *              length the chunk under test gives its own
+     * @return the sizes, for the header mode this run uses
+     */
+    private static Probes probes(Chunk chunk) {
+        final int sectionCount = chunk.getMaxSection() - chunk.getMinSection();
+        final Int2ObjectOpenHashMap<Object> map = new Int2ObjectOpenHashMap<>(0);
+        final LazySectionBlockStorage storage = new LazySectionBlockStorage(chunk.getMinSection(), sectionCount);
+
+        walk(map);
+        final Footprint mapFootprint = difference(walk(map), null);
+        return new Probes(mapFootprint.bytesOf(BLOCK_INDEX_MAP),
+                mapFootprint.bytesOf(INT_ARRAY),
+                mapFootprint.bytesOf(OBJECT_ARRAY),
+                ClassLayout.parseInstance(new Section[sectionCount]).instanceSize(),
+                ClassLayout.parseInstance(storage).instanceSize(),
+                ClassLayout.parseInstance(storage.views()).instanceSize());
     }
 
     /**
