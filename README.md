@@ -151,13 +151,17 @@ FalcoSharedInstance view = new FalcoSharedInstance(UUID.randomUUID(), world);
 manager.registerSharedInstance(view);
 ```
 
-The view keeps its own generator, chunk supplier, auto-load setting and tags, where Minestom's writes
-all four through to the container and lets one view reconfigure another. What it does not change is
-who owns the blocks: `setBlock` reaches the container, and the container serialises every write on
-its own monitor, because the method that performs the write is `private synchronized` and is reached
-from three further places that an override cannot follow. A world built this way keeps what the Falco
-chunk saves and keeps the container's write path; a world that needs the write path uses
-`FalcoInstance` and gives up sharing.
+The view keeps its own generator, chunk supplier and auto-load setting, where Minestom's writes all
+three through to the container and lets one view reconfigure another. Its tags were always its own —
+`Instance` gives every instance a `TagHandler` and `SharedInstance` does not override it — but
+`saveInstance()` handed the loader the container, so they were never written; here the view's own
+data is what the loader is given.
+
+What none of that changes is who owns the blocks: `setBlock` reaches the container, and the container
+serialises every write on its own monitor, because the method that performs the write is
+`private synchronized` and is reached from three further places that an override cannot follow. A
+world built this way keeps what the Falco chunk saves and keeps the container's write path; a world
+that needs the write path uses `FalcoInstance` and gives up sharing.
 
 The per-view generator and chunk supplier are a repair and not a capability: they stop one view from
 reconfiguring another, and nothing inside Minestom reads them, because the container creates every
