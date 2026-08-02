@@ -150,7 +150,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 3.6.0
+ * @version 3.6.1
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -320,8 +320,8 @@ public class FalcoChunk extends Chunk {
      * </p>
      * <p>
      * It lives on the chunk rather than on the instance because the check belongs to the type it
-     * checks for, and because {@code BlockWriter} is about to become the second caller of it; a check
-     * that two parts copy is a check that can drift.
+     * checks for, and because {@link BlockWriter} is its second caller; a check that two parts copy is
+     * a check that can drift.
      * </p>
      *
      * @param chunk the chunk to check

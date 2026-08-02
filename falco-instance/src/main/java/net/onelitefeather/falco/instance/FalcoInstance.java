@@ -1,39 +1,23 @@
 package net.onelitefeather.falco.instance;
 
 import net.kyori.adventure.key.Key;
-import net.kyori.adventure.nbt.CompoundBinaryTag;
 import net.minestom.server.MinecraftServer;
-import net.minestom.server.coordinate.BlockVec;
-import net.minestom.server.coordinate.CoordConversion;
 import net.minestom.server.coordinate.Point;
-import net.minestom.server.coordinate.Vec;
 import net.minestom.server.entity.Player;
-import net.minestom.server.event.EventDispatcher;
-import net.minestom.server.event.instance.InstanceBlockUpdateEvent;
-import net.minestom.server.event.player.PlayerBlockBreakEvent;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.ChunkLoader;
 import net.minestom.server.instance.DynamicChunk;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.InstanceManager;
 import net.minestom.server.instance.block.Block;
-import net.minestom.server.instance.block.BlockEntityType;
 import net.minestom.server.instance.block.BlockFace;
 import net.minestom.server.instance.block.BlockHandler;
-import net.minestom.server.instance.block.rule.BlockPlacementRule;
 import net.minestom.server.instance.generator.Generator;
-import net.minestom.server.network.packet.server.play.BlockChangePacket;
-import net.minestom.server.network.packet.server.play.BlockEntityDataPacket;
-import net.minestom.server.network.packet.server.play.WorldEventPacket;
 import net.minestom.server.registry.Registries;
 import net.minestom.server.timer.SchedulerManager;
 import net.minestom.server.registry.RegistryKey;
-import net.minestom.server.utils.PacketSendingUtils;
-import net.minestom.server.utils.block.BlockUtils;
-import net.minestom.server.utils.chunk.ChunkCache;
 import net.minestom.server.utils.chunk.ChunkSupplier;
 import net.minestom.server.world.DimensionType;
-import net.minestom.server.worldevent.WorldEvent;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.Nullable;
@@ -42,11 +26,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -70,9 +52,9 @@ import java.util.function.Consumer;
  *   one. That is a missing feature rather than a defect, and it is refused by the compiler.</li>
  *   <li>The {@code Chunk} constructor asks the instance for its shared instances and gets an empty
  *   list here. Since there are no shared instances, an empty list is the correct answer.</li>
- *   <li>The block batches skip {@code refreshLastBlockChangeTime()} for a foreign instance. This
- *   class keeps the timestamp itself, but nothing outside it refreshes it, so batch copies must not
- *   rely on it.</li>
+ *   <li>The block batches skip {@code refreshLastBlockChangeTime()} for a foreign instance.
+ *   {@link BlockWriter} keeps the timestamp, but nothing outside it refreshes it, so batch copies
+ *   must not rely on it.</li>
  * </ul>
  * <p>
  * A world here comes from its {@link ChunkLoader}, from a {@link Generator}, or stays empty, in that
@@ -93,27 +75,21 @@ import java.util.function.Consumer;
  * parallelism of chunk and entity ticking lives in the global {@code ThreadDispatcher} of the server
  * process, not in the instance. Replacing the instance cannot make ticking faster. What it does buy
  * is that block writes are guarded by the lock of the chunk they touch rather than by a monitor on
- * the whole instance, so two writes to two chunks no longer wait for each other.
+ * the whole instance, so two writes to two chunks no longer wait for each other. That ordering lives
+ * in {@link BlockWriter}, which is where it can be read and measured.
  * </p>
  * <p>
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.6.1
+ * @version 1.7.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
 public class FalcoInstance extends Instance {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(FalcoInstance.class);
-
-    /**
-     * The faces a block change offers to its neighbours for a placement rule update.
-     */
-    private static final BlockFace[] BLOCK_UPDATE_FACES = {
-            BlockFace.WEST, BlockFace.EAST, BlockFace.NORTH, BlockFace.SOUTH, BlockFace.BOTTOM, BlockFace.TOP
-    };
 
     /**
      * The depth below the bottom of the dimension at which a point counts as being in the void.
@@ -168,20 +144,23 @@ public class FalcoInstance extends Instance {
      * <p>
      * It is handed {@link #getChunkAt(Point)} rather than this instance, because a neighbour a fork
      * writes into is the only thing generation ever needs a world for. What it is <em>not</em> handed
-     * is {@link #refreshLastBlockChangeTime()}: the timestamp belongs to the block write side of this
-     * class, so the two callers of {@link ChunkGeneration#apply} refresh it themselves.
+     * is {@link #refreshLastBlockChangeTime()}: the timestamp belongs to {@link BlockWriter}, so the
+     * two callers of {@link ChunkGeneration#apply} refresh it themselves.
      * </p>
      */
     private final ChunkGeneration generation;
 
     /**
-     * The blocks changed since the last tick, used to break recursion between block handlers.
+     * Everything this instance does when a block changes.
      * <p>
-     * Concurrent rather than a plain map behind a lock that guarded nothing, which is the shape the
-     * container has.
+     * The three entry points, the write, the neighbour pass, the packets, the event, the recursion
+     * guard and the change timestamp used to be members of this class, and the ordering they promise —
+     * the write lock of one chunk held across the write and across nothing else — was a property of
+     * one {@code private} method nobody could drive on its own. {@link BlockWriter} carries all of it,
+     * which is what makes that ordering something a test can measure.
      * </p>
      */
-    private final Map<BlockVec, Block> currentlyChangingBlocks = new ConcurrentHashMap<>();
+    private final BlockWriter blockWriter;
 
     /**
      * Everything this instance does with a {@link ChunkLoader}: the four save paths, the read and the
@@ -206,8 +185,6 @@ public class FalcoInstance extends Instance {
      * </p>
      */
     private final ChunkLifecycle lifecycle;
-
-    private volatile long lastBlockChangeTime;
 
     /**
      * Whether {@link #shutdown(InstanceManager)} saves the chunks before it unregisters.
@@ -262,12 +239,12 @@ public class FalcoInstance extends Instance {
         this.generation = new ChunkGeneration(this.registries, this::getChunkAt);
         this.persistence = new ChunkPersistence(loader);
         this.lifecycle = new ChunkLifecycle(this, this.registry, this.persistence, this.generation);
+        this.blockWriter = new BlockWriter(this);
         // Last, and outside the ChunkPersistence constructor on purpose: loadInstance may call back
         // into this instance, and a callback into an object whose constructor has not finished is how
         // a field that is assigned one line later is read as null. Every field this instance
         // delegates to has to stand before this line, not after it.
         this.persistence.loader().loadInstance(this);
-        this.lastBlockChangeTime = System.nanoTime();
     }
 
     /**
@@ -404,171 +381,34 @@ public class FalcoInstance extends Instance {
         return this.lifecycle;
     }
 
+    /**
+     * Hands out the block writer of this instance.
+     * <p>
+     * Exposed for the same reason as {@link #registry()}: the ordering {@link BlockWriter} promises
+     * around the lock of a chunk can only be measured by a caller which can drive one write on its
+     * own, and no entry point of this class offers that.
+     * </p>
+     *
+     * @return the block writer of this instance
+     * @since 0.4.0
+     */
+    public BlockWriter blockWriter() {
+        return this.blockWriter;
+    }
+
     @Override
     public void setBlock(int x, int y, int z, Block block, boolean doBlockUpdates) {
-        Chunk chunk = getChunkAt(x, z);
-        if (chunk == null) {
-            if (!this.lifecycle.autoLoad()) {
-                throw new IllegalStateException(
-                        "tried to set a block in the unloaded chunk " + CoordConversion.globalToChunk(x)
-                                + ":" + CoordConversion.globalToChunk(z) + " while auto chunk load is disabled");
-            }
-            chunk = loadChunk(CoordConversion.globalToChunk(x), CoordConversion.globalToChunk(z)).join();
-        }
-        if (chunk.isLoaded()) writeBlock(FalcoChunk.require(chunk), x, y, z, block, null, null, doBlockUpdates, 0);
+        this.blockWriter.setBlock(x, y, z, block, doBlockUpdates);
     }
 
     @Override
     public boolean placeBlock(BlockHandler.Placement placement, boolean doBlockUpdates) {
-        final Point blockPosition = placement.getBlockPosition();
-        final Chunk chunk = getChunkAt(blockPosition);
-        if (chunk == null || !chunk.isLoaded()) return false;
-        writeBlock(FalcoChunk.require(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(),
-                placement.getBlock(), placement, null, doBlockUpdates, 0);
-        return true;
+        return this.blockWriter.placeBlock(placement, doBlockUpdates);
     }
 
     @Override
     public boolean breakBlock(Player player, Point blockPosition, BlockFace blockFace, boolean doBlockUpdates) {
-        final Chunk chunk = getChunkAt(blockPosition);
-        if (chunk == null || !chunk.isLoaded() || chunk.isReadOnly()) return false;
-
-        final Block block = getBlock(blockPosition);
-        if (block.isAir()) {
-            // The client believes there is a block here; hand it the chunk it actually has.
-            chunk.sendChunk(player);
-            return false;
-        }
-        final PlayerBlockBreakEvent event = new PlayerBlockBreakEvent(player, this, block, Block.AIR,
-                blockPosition.asBlockVec(), blockFace);
-        EventDispatcher.call(event);
-        if (event.isCancelled()) return false;
-
-        final Block resultBlock = event.getResultBlock();
-        writeBlock(FalcoChunk.require(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(), resultBlock,
-                null, new BlockHandler.PlayerDestroy(block, resultBlock, this, blockPosition, player),
-                doBlockUpdates, 0);
-        PacketSendingUtils.sendGroupedPacket(chunk.getViewers(),
-                new WorldEventPacket(WorldEvent.PARTICLES_DESTROY_BLOCK.id(), blockPosition, block.stateId(), false),
-                // The breaking player already played the effect locally.
-                viewer -> !viewer.equals(player));
-        return true;
-    }
-
-    /**
-     * Writes a block into a chunk and tells everyone who needs to know.
-     * <p>
-     * Only the write lock of the touched chunk is held here. The container of Minestom takes its own
-     * monitor around the whole method, which turns every block write in the world into a queue
-     * behind every other one; two writes to two chunks have no reason to wait for each other.
-     * </p>
-     * <p>
-     * The chunk is taken as a {@link FalcoChunk} rather than a {@link Chunk} because the block
-     * setter carrying a placement and a destruction is {@code protected} on {@code Chunk} and only
-     * widened to public by {@code DynamicChunk}. That is a third lifecycle barrier next to the two
-     * hooks {@link FalcoChunk} re-exposes, and it is answered the same way.
-     * </p>
-     *
-     * @param chunk          the chunk which receives the block, has to be loaded
-     * @param x              the block X
-     * @param y              the block Y
-     * @param z              the block Z
-     * @param block          the block to write
-     * @param placement      the placement which caused the write, null if it was not a placement
-     * @param destroy        the destruction which caused the write, null if it was not a break
-     * @param doBlockUpdates true to let the neighbours of the block reshape themselves
-     * @param updateDistance how many neighbour updates deep this write already is
-     */
-    private void writeBlock(FalcoChunk chunk, int x, int y, int z, Block block,
-                            @Nullable BlockHandler.Placement placement, @Nullable BlockHandler.Destroy destroy,
-                            boolean doBlockUpdates, int updateDistance) {
-        if (chunk.isReadOnly()) return;
-        final DimensionType dimension = getCachedDimensionType();
-        if (y >= dimension.maxY() || y < dimension.minY()) {
-            LOGGER.warn("tried to set a block outside the world bounds, should be within [{}, {}): {}",
-                    dimension.minY(), dimension.maxY(), y);
-            return;
-        }
-        final BlockVec blockPosition = new BlockVec(x, y, z);
-        // A handler which destroys its own block would otherwise recurse until the stack ends.
-        if (Objects.equals(this.currentlyChangingBlocks.get(blockPosition), block)) return;
-        this.currentlyChangingBlocks.put(blockPosition, block);
-
-        Block placed = block;
-        chunk.lockWriteLock();
-        try {
-            this.lastBlockChangeTime = System.nanoTime();
-            final BlockPlacementRule rule = MinecraftServer.getBlockManager().getBlockPlacementRule(placed);
-            if (placement != null && rule != null && doBlockUpdates) {
-                placed = Objects.requireNonNullElse(rule.blockPlace(placementState(placement, placed, blockPosition)), Block.AIR);
-            }
-            chunk.setBlock(x, y, z, placed, placement, destroy);
-        } finally {
-            chunk.unlockWriteLock();
-        }
-
-        // Outside the chunk lock on purpose: a neighbour may live in another chunk, and taking a
-        // second chunk lock while holding the first is how two block writes deadlock each other.
-        if (doBlockUpdates) updateNeighbours(blockPosition, updateDistance);
-
-        chunk.sendPacketToViewers(new BlockChangePacket(blockPosition, placed.stateId()));
-        final BlockEntityType blockEntityType = placed.registry().blockEntityType();
-        if (blockEntityType != null) {
-            final CompoundBinaryTag data = BlockUtils.extractClientNbt(placed);
-            chunk.sendPacketToViewers(new BlockEntityDataPacket(blockPosition, blockEntityType, data));
-        }
-        EventDispatcher.call(new InstanceBlockUpdateEvent(this, blockPosition, placed));
-    }
-
-    /**
-     * Builds the state a placement rule is asked about.
-     *
-     * @param placement     the placement which caused the write
-     * @param block         the block which is about to be placed
-     * @param blockPosition the position the block goes to
-     * @return the state to hand to {@code BlockPlacementRule#blockPlace}
-     */
-    @Contract("_, _, _ -> new")
-    private BlockPlacementRule.PlacementState placementState(BlockHandler.Placement placement, Block block,
-                                                             Point blockPosition) {
-        if (placement instanceof BlockHandler.PlayerPlacement playerPlacement) {
-            final Player player = playerPlacement.getPlayer();
-            return new BlockPlacementRule.PlacementState(this, block, playerPlacement.getBlockFace(), blockPosition,
-                    new Vec(playerPlacement.getCursorX(), playerPlacement.getCursorY(), playerPlacement.getCursorZ()),
-                    player.getPosition(), player.getItemInHand(playerPlacement.getHand()), player.isSneaking());
-        }
-        return new BlockPlacementRule.PlacementState(this, block, null, blockPosition, null, null, null, false);
-    }
-
-    /**
-     * Lets the six neighbours of a changed block reshape themselves.
-     *
-     * @param blockPosition  the position of the block which changed
-     * @param updateDistance how many neighbour updates deep the causing write already was
-     */
-    private void updateNeighbours(Point blockPosition, int updateDistance) {
-        final ChunkCache cache = new ChunkCache(this, null, null);
-        final DimensionType dimension = getCachedDimensionType();
-        for (BlockFace face : BLOCK_UPDATE_FACES) {
-            final var direction = face.toDirection();
-            final int neighbourX = blockPosition.blockX() + direction.normalX();
-            final int neighbourY = blockPosition.blockY() + direction.normalY();
-            final int neighbourZ = blockPosition.blockZ() + direction.normalZ();
-            if (neighbourY < dimension.minY() || neighbourY >= dimension.maxY()) continue;
-            final Block neighbour = cache.getBlock(neighbourX, neighbourY, neighbourZ, Condition.NONE);
-            if (neighbour == null || neighbour.isAir()) continue;
-            final BlockPlacementRule rule = MinecraftServer.getBlockManager().getBlockPlacementRule(neighbour);
-            if (rule == null || updateDistance >= rule.maxUpdateDistance()) continue;
-
-            final Vec neighbourPosition = new Vec(neighbourX, neighbourY, neighbourZ);
-            final Block updated = rule.blockUpdate(new BlockPlacementRule.UpdateState(
-                    this, neighbourPosition, neighbour, face.getOppositeFace()));
-            if (neighbour.equals(updated)) continue;
-            final Chunk neighbourChunk = getChunkAt(neighbourPosition);
-            if (neighbourChunk == null || !neighbourChunk.isLoaded()) continue;
-            writeBlock(FalcoChunk.require(neighbourChunk), neighbourX, neighbourY, neighbourZ, updated, null, null,
-                    true, updateDistance + 1);
-        }
+        return this.blockWriter.breakBlock(player, blockPosition, blockFace, doBlockUpdates);
     }
 
     @Override
@@ -1038,7 +878,7 @@ public class FalcoInstance extends Instance {
      * @return the time of the last block change in nanoseconds
      */
     public long getLastBlockChangeTime() {
-        return this.lastBlockChangeTime;
+        return this.blockWriter.lastChangeTime();
     }
 
     /**
@@ -1048,14 +888,14 @@ public class FalcoInstance extends Instance {
      * </p>
      */
     public void refreshLastBlockChangeTime() {
-        this.lastBlockChangeTime = System.nanoTime();
+        this.blockWriter.refreshLastChangeTime();
     }
 
     /**
      * Runs one tick of this instance.
      * <p>
-     * Beyond what the base class does, this clears the recursion guard of the block writes, which
-     * is scoped to a single tick.
+     * Beyond what the base class does, this ends the tick of {@link BlockWriter}, which clears the
+     * recursion guard of the block writes; the guard is scoped to a single tick.
      * </p>
      * <p>
      * Chunks and entities are not ticked here. They are ticked by the thread dispatcher of the
@@ -1067,6 +907,6 @@ public class FalcoInstance extends Instance {
     @Override
     public void tick(long time) {
         super.tick(time);
-        this.currentlyChangingBlocks.clear();
+        this.blockWriter.endTick();
     }
 }
