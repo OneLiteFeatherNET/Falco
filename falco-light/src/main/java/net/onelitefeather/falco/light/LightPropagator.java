@@ -29,6 +29,30 @@ import java.util.Arrays;
 public final class LightPropagator {
 
     private static final BlockFace[] FACES = BlockFace.values();
+
+    /**
+     * The opposite of every face, in the order of {@link #FACES}.
+     * <p>
+     * {@code BlockFace#opposite()} is a switch over the enum, and the inner loop of a propagation
+     * calls it once per face per queued position — six times for every block the light reaches.
+     * Resolving it once at class load turns that into an array read.
+     * </p>
+     */
+    private static final BlockFace[] OPPOSITES = opposites();
+
+    /**
+     * Resolves the opposite of every face once.
+     *
+     * @return the opposite of every face, indexed like {@link #FACES}
+     */
+    private static BlockFace[] opposites() {
+        BlockFace[] opposites = new BlockFace[FACES.length];
+
+        for (int index = 0; index < FACES.length; index++) {
+            opposites[index] = FACES[index].opposite();
+        }
+        return opposites;
+    }
     private static final int MASK = LightNibbles.DIMENSION - 1;
 
     private final byte[] levels;
@@ -86,7 +110,8 @@ public final class LightPropagator {
             int y = (index >> 8) & MASK;
             int next = level - 1;
 
-            for (BlockFace face : FACES) {
+            for (int faceIndex = 0; faceIndex < FACES.length; faceIndex++) {
+                BlockFace face = FACES[faceIndex];
                 int neighbourX = x + face.offsetX();
                 int neighbourY = y + face.offsetY();
                 int neighbourZ = z + face.offsetZ();
@@ -97,7 +122,7 @@ public final class LightPropagator {
                 // Only the face light enters decides whether it can pass. Testing the face it
                 // leaves as well would keep every emitting block that is opaque itself dark, and a
                 // glowstone block is exactly that.
-                if (opacity.blocksFace(neighbourX, neighbourY, neighbourZ, face.opposite())) {
+                if (opacity.blocksFace(neighbourX, neighbourY, neighbourZ, OPPOSITES[faceIndex])) {
                     continue;
                 }
 
