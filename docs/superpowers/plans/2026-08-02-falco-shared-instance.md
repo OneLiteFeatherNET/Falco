@@ -1644,12 +1644,17 @@ deliberate — see *What may be quoted*.
 | `:falco-benchmarks:` | 38 | **42** | +4 |
 | `:falco-archunit:` | — | **46** | new module |
 
-The divergence is accounted for rather than accepted. Stage 4 touched **ten files** and no others:
-six in `falco-instance` (`FalcoSharedInstance`, `package-info`, four test classes), one in
-`falco-archunit` (`ForeignWritePathTest`, added by the review follow-up), `README.md` and this plan —
-the union of `git show --name-only` over the stage's own commits is the check, and it has to be taken
-per commit rather than over a range, because the branch merged `feat/block-storage` and `main`
-mid-stage. Of the +39 in `falco-instance`, **30 are this stage**
+The divergence is accounted for rather than accepted. Stage 4 touched **ten files** and no others,
+and they are named here one by one so that the count can be checked against the list rather than
+believed: **seven** in `falco-instance` — `FalcoSharedInstance`, `package-info` and the five test
+classes `FalcoSharedInstanceTest`, `FalcoSharedInstanceResendTest`, `FalcoSharedInstanceStateTest`,
+`FalcoSharedInstanceSaveTest`, `FalcoSharedInstanceWriteTest` — **one** in `falco-archunit`
+(`ForeignWritePathTest`, added by the review follow-up), `README.md` and this plan. 7 + 1 + 1 + 1 =
+10, and the same five test classes are counted again by test case two sentences below. The union of
+`git show --name-only` over the stage's own commits is the check, and it has to be taken per commit
+rather than over a range, because the branch merged `feat/block-storage` and `main` mid-stage — a
+range check drops exactly the two classes it is easiest to lose here, `FalcoSharedInstanceTest` and
+`FalcoSharedInstanceResendTest`, which tasks 1 and 2 committed before the first of those merges. Of the +39 in `falco-instance`, **30 are this stage**
 (`FalcoSharedInstanceTest` 7, `FalcoSharedInstanceResendTest` 3, `FalcoSharedInstanceStateTest` 12,
 `FalcoSharedInstanceSaveTest` 5, `FalcoSharedInstanceWriteTest` 3). The remaining 9, and the whole of
 the other four columns, arrived with the two merges this branch took mid-stage — `feat/block-storage`
