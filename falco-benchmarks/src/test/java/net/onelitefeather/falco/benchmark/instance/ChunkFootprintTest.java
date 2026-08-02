@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.LongUnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -144,46 +145,47 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * there.
  * </p>
  * <p>
- * One comparison is asserted strictly, and it is the one this stage exists for: {@code FalcoChunk}
- * must weigh exactly what {@code DynamicChunk} weighs, plus the one object the seam costs. A
- * deviation would not be a tolerance to widen, it would be a finding.
+ * One comparison is asserted strictly, and it is the one this class exists for: outside the classes
+ * stage 2 declared a difference for, {@code FalcoChunk} must weigh exactly what {@code DynamicChunk}
+ * weighs. A deviation would not be a tolerance to widen, it would be a finding.
  * </p>
  *
- * <h2>What the seam costs, and why the delta is not zero</h2>
+ * <h2>The declared difference table, and why it replaced an equality</h2>
  * <p>
- * Until the storage moved, {@code FalcoChunk} extended {@code DynamicChunk} and declared no field of
- * its own, so the delta was zero by construction and this class asserted it as such. It no longer
- * is. {@code FalcoChunk} now holds a {@link net.onelitefeather.falco.instance.BlockStorage} instead
- * of inheriting a section list, and an indirection is an object: the
- * {@code SectionBlockStorage} that holds {@code minSection} and the same
- * {@code List.of(Section...)} the old chunk held directly. On the pinned build that object is
- * {@code 24} bytes, which is what these tables report as {@code DELTA B} and what the assertions
- * below expect.
+ * Stage 1 asserted that the two chunk types retain identical objects and identical bytes in every
+ * class but one, of which the Falco side held exactly one — its {@code SectionBlockStorage}, the
+ * indirection that replaced an inherited section list. Zero was never reachable while the storage is
+ * a separate type, so the price was named rather than rounded away, and three injected defects were
+ * used to prove the comparison still bit. The most instructive of them was a primitive {@code long}
+ * field, which adds no object at all and fitted into the padding that was already there: only the
+ * byte comparison caught it.
  * </p>
  * <p>
- * Zero was never reachable while the storage is a separate type, and buying it back would mean
- * letting the chunk implement its own storage — which is exactly the coupling stage 1 paid to
- * remove, because it is what kept {@code FalcoChunk} and {@code FalcoLightingChunk} from ever being
- * combined. So the number is not rounded away and not tolerated either: the assertion names the
- * class the extra object belongs to and requires every extra byte to come from it. A second object,
- * or a byte from anywhere else, still fails — which is the property the old equality had and the
- * reason it is replaced rather than deleted.
+ * Stage 2 makes that equality impossible by construction, because removing objects is the point. A
+ * fresh {@code FalcoChunk} shares one {@code LazySectionBlockStorage#EMPTY} section instead of
+ * owning twenty-four, builds neither heightmap until one is asked for, and keeps one block map and a
+ * counter where {@code DynamicChunk} keeps two maps. Measured on the pinned build, that is
+ * {@code 25} objects and {@code 840} bytes against {@code 192} and {@code 6848} — a hundred and
+ * sixty-seven objects fewer, not one more.
  * </p>
  * <p>
- * For scale, next to the figures below: {@code 24} bytes against the {@code 6848} of a fresh chunk
- * is {@code 0,35} percent, and against a generated chunk of roughly two hundred kibibytes it is
- * {@code 0,01} percent. The stage that follows this one removes thousands of bytes per empty chunk,
- * so the seam is paid for many times over — but it is paid, and a reader of this table should see
- * the price rather than a zero.
+ * What survives the rewrite is the property the equality had, and it is what
+ * {@link #assertOnlyTheDeclaredClassesDiffer} is named after: a class the Falco chunk retains and
+ * the plan did not declare has to fail the test. The two tables {@link #FRESH_DIFFERENCE} and
+ * {@link #FILLED_DIFFERENCE} name every class the two sides may differ in and the count the Falco
+ * side has to show for it; every class outside them is still asserted equal on both objects and
+ * bytes; and the byte difference of the whole footprint has to be the sum of the declared classes
+ * and of nothing else. A tolerance of the form "at most six kibibytes" was considered and rejected,
+ * because it would pass for a chunk that saved the sections and grew a field — the exact failure the
+ * strict comparison of stage 1 was written to catch.
  * </p>
  * <p>
- * That whole account describes the eager storage of stage 1 and no longer describes the default.
- * {@code FalcoChunk} now builds a {@code LazySectionBlockStorage}, a fresh one holds no section of
- * its own, and the difference the two sides may show is consequently not one object of one named
- * class — it is twenty-four sections and everything under them. {@link #assertTheSeamIsTheOnlyDifference}
- * is therefore the assertion of a layout that is gone, and it fails. It is left standing rather than
- * softened: the plan replaces it in its task 9, and until then a red assertion states the discrepancy
- * where a widened one would bury it. The tables it fails after are the corrected ones and can be read.
+ * Three rows of the fresh table are worth reading before the rest. The one {@code Section}, one
+ * {@code SkyLight}, one {@code BlockLight}, two {@code PaletteImpl} and two {@code AtomicBoolean} on
+ * the Falco side are not a section this chunk owns: they are the single static {@code EMPTY}
+ * flyweight, which no walk of the instance reaches and which a difference walk therefore charges to
+ * whichever chunk it starts at. The whole JVM holds one of them. That is asserted as such rather
+ * than assumed, by measuring two chunks at once — shared stays at one, owned would become two.
  * </p>
  *
  * <h2>Why the equivalence check runs after the measurement and not before</h2>
@@ -224,7 +226,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 2.0.0
  * @since 0.4.0
  */
 @DisplayName("The retained size of a chunk, measured with JOL")
@@ -280,11 +282,71 @@ class ChunkFootprintTest {
     private static final String MOTION_BLOCKING = "net.minestom.server.instance.heightmap.MotionBlockingHeightmap";
     private static final String WORLD_SURFACE = "net.minestom.server.instance.heightmap.WorldSurfaceHeightmap";
     private static final String BLOCK_INDEX_MAP = "it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap";
-    private static final String BLOCK_STORAGE = "net.onelitefeather.falco.instance.SectionBlockStorage";
+    private static final String SECTION_LIST = "java.util.ImmutableCollections$ListN";
+    private static final String LAZY_STORAGE = "net.onelitefeather.falco.instance.LazySectionBlockStorage";
+    private static final String STORAGE_VIEW = "net.onelitefeather.falco.instance.LazySectionBlockStorage$1";
+    private static final String SECTION_ARRAY = "[Lnet.minestom.server.instance.Section;";
+    private static final String IDENTIFIER = "java.util.UUID";
     private static final String HEIGHTS = "[S";
     private static final String PACKED_VALUES = "[J";
     private static final String INT_ARRAY = "[I";
+    private static final String OBJECT_ARRAY = "[Ljava.lang.Object;";
     private static final String LIGHT_ARRAY = "[B";
+
+    /**
+     * What a fresh {@code FalcoChunk} is allowed to differ from a fresh {@code DynamicChunk} in.
+     * <p>
+     * Every row was derived from the tasks of this stage before it was compared with a measurement,
+     * and the three rows where the two disagreed are marked as such, because a table that is edited
+     * until it matches the measurement asserts nothing. Sixteen rows, and a class outside them still
+     * has to be equal on both its object count and its bytes.
+     * </p>
+     */
+    private static final Map<String, Declared> FRESH_DIFFERENCE = Map.ofEntries(
+            Map.entry(SECTION, exactly(1,
+                    "the one LazySectionBlockStorage#EMPTY every slot of a fresh chunk points at. It is "
+                            + "static and therefore exists once per JVM, but it is unreachable from the "
+                            + "instance, so this walk charges it to whichever chunk is measured")),
+            Map.entry(PALETTE, exactly(2,
+                    "the block and the biome palette of that one shared section")),
+            Map.entry(SKY_LIGHT, exactly(1, "the sky light carrier of that one shared section")),
+            Map.entry(BLOCK_LIGHT, exactly(1, "the block light carrier of that one shared section")),
+            Map.entry(NEEDS_SEND, exactly(2,
+                    "one needsSend flag per light carrier of that one shared section, against forty-eight "
+                            + "for the twenty-four sections a DynamicChunk owns")),
+            Map.entry(MOTION_BLOCKING, exactly(0, "task 7: no heightmap exists until one is asked for")),
+            Map.entry(WORLD_SURFACE, exactly(0, "task 7: no heightmap exists until one is asked for")),
+            Map.entry(HEIGHTS, exactly(0, "the short[256] of each heightmap that was never built")),
+            Map.entry(BLOCK_INDEX_MAP, exactly(1,
+                    "task 8: one block map and an int counter instead of entries and tickableMap")),
+            Map.entry(INT_ARRAY, fewerBy(1, "the int[] key array of the block map task 8 removed")),
+            Map.entry(OBJECT_ARRAY, fewerBy(2,
+                    "the Object[] value array of that same map, and the backing array of the section list")),
+            Map.entry(SECTION_LIST, exactly(0,
+                    "Minestom's List.of(Section...); the storage keeps the Section[] itself")),
+            Map.entry(SECTION_ARRAY, exactly(1, "that Section[], the slot array of the storage")),
+            Map.entry(LAZY_STORAGE, exactly(1, "the storage, which is what the seam of stage 1 costs")),
+            Map.entry(STORAGE_VIEW, exactly(1, "the AbstractList that BlockStorage#views answers with")));
+
+    /**
+     * What a filled {@code FalcoChunk} is allowed to differ from a filled {@code DynamicChunk} in.
+     * <p>
+     * Shorter than {@link #FRESH_DIFFERENCE} by construction: {@code MinestomChunks#fill} writes
+     * through {@code Chunk#setBlock}, which materialises every section and builds both heightmaps, so
+     * everything the flyweight and task 7 save is bought back and only the bookkeeping remains.
+     * </p>
+     */
+    private static final Map<String, Declared> FILLED_DIFFERENCE = Map.ofEntries(
+            Map.entry(BLOCK_INDEX_MAP, exactly(1,
+                    "task 8: one block map and an int counter instead of entries and tickableMap")),
+            Map.entry(INT_ARRAY, fewerBy(1, "the int[] key array of the block map task 8 removed")),
+            Map.entry(OBJECT_ARRAY, fewerBy(2,
+                    "the Object[] value array of that same map, and the backing array of the section list")),
+            Map.entry(SECTION_LIST, exactly(0,
+                    "Minestom's List.of(Section...); the storage keeps the Section[] itself")),
+            Map.entry(SECTION_ARRAY, exactly(1, "that Section[], the slot array of the storage")),
+            Map.entry(LAZY_STORAGE, exactly(1, "the storage, which is what the seam of stage 1 costs")),
+            Map.entry(STORAGE_VIEW, exactly(1, "the AbstractList that BlockStorage#views answers with")));
 
     /**
      * The instance the Minestom side of every comparison is built in.
@@ -323,30 +385,43 @@ class ChunkFootprintTest {
      * This is the number the research report calls the fixed cost of a chunk, and the one every
      * argument about lazy sections, shared empty sections and a leaner light representation has to
      * be measured against. It is taken for both chunk types at once, because the second finding of
-     * this method is what the two cost against each other: {@code FalcoChunk} holds one object the
-     * {@code DynamicChunk} does not, its {@code BlockStorage}, and nothing else. Any further object
-     * would be one added behind this project's back.
+     * this method is what the two cost against each other, which after stage 2 is a subtraction
+     * rather than an addition: {@code FalcoChunk} holds the classes {@link #FRESH_DIFFERENCE}
+     * declares, in the counts it declares, and is equal to {@code DynamicChunk} in every class that
+     * table does not name.
      * </p>
      * <p>
-     * The asserted counts are the ones the source dictates rather than the ones that happened to be
-     * measured. Twenty-four sections come from {@code DynamicChunk.java:61-67}, the two palettes and
-     * the two light carriers per section from {@code Section.java:11-13}, and the one
-     * {@code AtomicBoolean} per light carrier from the {@code needsSend} field of {@code BlockLight}
-     * and {@code SkyLight}. All five are package-private types, which is why they are named by
-     * string here — a test that had to live inside {@code net.minestom.server.instance} to count
-     * them would be a heavier coupling than the count is worth.
+     * The asserted counts on the Minestom side are the ones the source dictates rather than the ones
+     * that happened to be measured. Twenty-four sections come from {@code DynamicChunk.java:61-67},
+     * the two palettes and the two light carriers per section from {@code Section.java:11-13}, and
+     * the one {@code AtomicBoolean} per light carrier from the {@code needsSend} field of
+     * {@code BlockLight} and {@code SkyLight}. All five are package-private types, which is why they
+     * are named by string here — a test that had to live inside {@code net.minestom.server.instance}
+     * to count them would be a heavier coupling than the count is worth.
+     * </p>
+     * <p>
+     * The one section the Falco side does show is measured a second time, from two chunks at once,
+     * because the count alone cannot tell a shared object from an owned one. A difference walk
+     * charges {@code LazySectionBlockStorage#EMPTY} to whichever chunk it starts at — the field is
+     * static, so no walk of the instance ever reaches it — and one section per chunk is exactly what
+     * a chunk that quietly materialised one would also report. Two chunks separate the two readings:
+     * shared stays at one, owned becomes two.
      * </p>
      */
     @Test
-    @DisplayName("A fresh chunk holds the objects the source declares, and Falco adds none")
+    @DisplayName("A fresh chunk holds the objects the source declares, and Falco holds what stage 2 declared")
     void aFreshChunkHoldsTheObjectsTheSourceDeclares() {
         JolMeasurement.require();
 
         final Chunk minestomChunk = MinestomChunks.newChunk(container, 0, 0);
         final Chunk falcoChunk = MinestomChunks.newChunk(falco, 0, 0);
+        final Chunk secondMinestomChunk = MinestomChunks.newChunk(container, 1, 0);
+        final Chunk secondFalcoChunk = MinestomChunks.newChunk(falco, 1, 0);
 
         final Footprint minestom = measure(minestomChunk, container);
         final Footprint falcoFootprint = measure(falcoChunk, falco);
+        final Footprint twoMinestomChunks = measureBoth(minestomChunk, secondMinestomChunk, container);
+        final Footprint twoFalcoChunks = measureBoth(falcoChunk, secondFalcoChunk, falco);
         final Footprint sections = measureSections(minestomChunk);
         MinestomChunks.assertSameBlocks(minestomChunk, falcoChunk);
 
@@ -359,11 +434,32 @@ class ChunkFootprintTest {
         appendClassTable(out, minestom);
         report(out);
 
-        assertTheSeamIsTheOnlyDifference(minestom, minestomChunk, falcoFootprint, falcoChunk,
-                "a fresh chunk");
-        assertEquals(ClassLayout.parseInstance(minestomChunk).instanceSize(),
-                ClassLayout.parseInstance(falcoChunk).instanceSize(),
-                "The two chunk objects themselves must have the same shallow size");
+        assertOnlyTheDeclaredClassesDiffer(minestom, minestomChunk, falcoFootprint, falcoChunk,
+                FRESH_DIFFERENCE, "a fresh chunk");
+
+        assertEquals(2 * minestom.objectsOf(SECTION), twoMinestomChunks.objectsOf(SECTION),
+                "two DynamicChunks own two full sets of sections, which is the control this comparison "
+                        + "needs: without it, one section per Falco chunk cannot be told apart from one "
+                        + "section for every Falco chunk in the JVM");
+        assertEquals(1, twoFalcoChunks.objectsOf(SECTION),
+                "two fresh FalcoChunks have to share the one EMPTY section between them, and they "
+                        + "retained " + twoFalcoChunks.objectsOf(SECTION) + " between them");
+        assertEquals(2, twoFalcoChunks.objectsOf(SECTION_ARRAY),
+                "what does scale with the chunk count is the slot array, one per storage");
+        assertEquals(1, falcoFootprint.objectsOf(SECTION),
+                "a fresh Falco chunk owns no section at all. The one this walk charges it with is the "
+                        + "shared EMPTY flyweight, which exists once per JVM and is proved shared by the "
+                        + "two chunk measurement above; anything beyond it was materialised");
+        assertEquals(2, falcoFootprint.objectsOf(NEEDS_SEND),
+                "forty-six of the forty-eight AtomicBoolean send flags of a fresh chunk are gone with "
+                        + "the sections that held them; the two that remain belong to the shared EMPTY "
+                        + "section, and the ones that come back with a materialised section are two per "
+                        + "section and are what US-2.05 does not remove");
+        assertTrue(falcoFootprint.bytes() * 4 < minestom.bytes(),
+                "a fresh Falco chunk retained " + falcoFootprint.bytes() + " bytes against "
+                        + minestom.bytes() + " for a DynamicChunk; the sections are 74,9 % of that "
+                        + "figure and both heightmaps another 16,4 %, so anything above a quarter "
+                        + "means one of the two did not actually go");
 
         assertEquals(24, minestom.objectsOf(SECTION), "sections per overworld chunk");
         assertEquals(48, minestom.objectsOf(PALETTE), "palettes per overworld chunk, one for blocks and one for biomes per section");
@@ -405,8 +501,8 @@ class ChunkFootprintTest {
      * <p>
      * The {@code fresh} row is measured on both sides rather than printed twice from the Minestom
      * side. It used to be the latter, which cost nothing while the delta was zero and would now print
-     * a zero in a column where every other row shows what the seam costs — a row that reports a
-     * difference it never measured. Its pair is now compared like every other row, which it was not:
+     * a zero in the one column where the two sides differ most — a row that reports a difference it
+     * never measured. Its pair is now compared like every other row, which it was not:
      * the two fresh chunks went unchecked here, and the only reason that never showed is that the
      * check they were missing was the one destroying the row above them.
      * </p>
@@ -426,7 +522,8 @@ class ChunkFootprintTest {
         appendHeader(out, "one chunk over the distinct state count and the arrangement");
         appendProfileHeader(out);
         appendProfileRow(out, "fresh", "-", "-", fresh, freshFalco);
-        assertTheSeamIsTheOnlyDifference(fresh, freshChunk, freshFalco, freshFalcoChunk, "fresh");
+        assertOnlyTheDeclaredClassesDiffer(fresh, freshChunk, freshFalco, freshFalcoChunk,
+                FRESH_DIFFERENCE, "fresh");
 
         long directModeBytes = 0;
         long layeredAtLargestCount = 0;
@@ -445,8 +542,8 @@ class ChunkFootprintTest {
                         Integer.toString(MinestomChunks.countDistinctStates(minestomChunk)),
                         minestom, falcoFootprint);
 
-                assertTheSeamIsTheOnlyDifference(minestom, minestomChunk, falcoFootprint, falcoChunk,
-                        states + " states in " + shape);
+                assertOnlyTheDeclaredClassesDiffer(minestom, minestomChunk, falcoFootprint, falcoChunk,
+                        FILLED_DIFFERENCE, states + " states in " + shape);
                 assertTrue(minestom.bytes() >= fresh.bytes(),
                         "A filled chunk cannot retain less than an empty one, " + states + " states in " + shape);
 
@@ -532,16 +629,63 @@ class ChunkFootprintTest {
     }
 
     /**
-     * Fails unless the entire difference between the two chunk types is one {@code SectionBlockStorage}.
+     * States what the chunk identifier costs and why this stage does not remove it.
      * <p>
-     * This is the strict comparison of this class, and it is what allows the delta to be quoted as a
-     * number at all. Subtracting the two totals would not be enough: a chunk that grew a field
-     * pointing at a twenty-four byte object of any other class would produce the very same delta and
-     * pass, and catching exactly that was the whole point of the equality this replaces. The
-     * comparison therefore runs per class, over the union of the classes either side retains, and
-     * demands equality everywhere except {@link #BLOCK_STORAGE} — which the Falco side has to hold
-     * once and the Minestom side not at all. The tallies are the ones the tables above are printed
-     * from, taken from the same two walks, so nothing is measured a second time here.
+     * US-2.08 asks for the {@code UUID} of a chunk to go, on the grounds that {@code grep
+     * getIdentifier} finds only its declaration in all of Minestom — which it does, at
+     * {@code Chunk.java:167}, with no caller anywhere in the server. It cannot go from here anyway.
+     * {@code Chunk.java:48} declares {@code private final UUID identifier} and {@code Chunk.java:66}
+     * assigns it {@code UUID.randomUUID()} in the constructor every subclass has to call. A subclass
+     * cannot remove a field of its superclass, and not extending {@code Chunk} is not available
+     * either, because {@code Instance} is typed on it throughout. What this test does instead is
+     * state the price, so that the story is closed by a number rather than by a shrug.
+     * </p>
+     * <p>
+     * The identifier is deliberately absent from both declared difference tables. It is one object on
+     * either side, so the class comparison already demands that the two chunks carry the same one,
+     * and a change to that is a finding rather than a saving.
+     * </p>
+     */
+    @Test
+    @DisplayName("The chunk identifier cannot be removed from a subclass, and this is what it costs")
+    void theChunkIdentifierIsOutOfReach() {
+        JolMeasurement.require();
+
+        final Chunk falcoChunk = MinestomChunks.newChunk(falco, 0, 0);
+        final Footprint falcoFootprint = measure(falcoChunk, falco);
+
+        assertEquals(1, falcoFootprint.objectsOf(IDENTIFIER),
+                "every chunk of Minestom allocates one UUID in the constructor of Chunk");
+        report(new StringBuilder()
+                .append(" The chunk identifier costs ")
+                .append(falcoFootprint.bytesOf(IDENTIFIER))
+                .append(" bytes per chunk and is unreachable from a subclass (Chunk.java:48, :66).")
+                .append(System.lineSeparator()));
+    }
+
+    /**
+     * Fails unless the two chunks differ in exactly the classes this stage declared they differ in.
+     * <p>
+     * The comparison of stage 1 demanded equality everywhere except one class, and it could, because
+     * the seam added one object and removed none. Stage 2 removes a hundred and sixty-seven of them,
+     * so equality is no longer the right shape — but the property it existed for is unchanged and is
+     * preserved here: a class the Falco chunk retains and this table does not name still fails, on
+     * both its object count and its bytes. What is asserted per declared class is the count, exactly,
+     * on the Falco side; what is asserted over the whole footprint is that the byte difference is the
+     * sum of the bytes of the declared classes and of nothing else. That is a stronger statement than
+     * the old equality and not a weaker one, because the old equality never had to add anything up.
+     * </p>
+     * <p>
+     * A tolerance was considered and rejected. "The Falco chunk retains at most six kibibytes" would
+     * pass for a chunk that saved the sections and grew a field, which is the exact failure the strict
+     * comparison of stage 1 was written to catch and the reason three defects were injected into it to
+     * prove that it did.
+     * </p>
+     * <p>
+     * The declared table is iterated together with the union of the two footprints rather than only
+     * over it. A class that vanished from both sides would otherwise never be visited, and a
+     * declaration of one storage would pass for a chunk that holds none — which is a hole the byte
+     * sum would report as an unattributable remainder instead of by name.
      * </p>
      * <p>
      * One post is exempt from the per class comparison, and it is the chunk class itself.
@@ -549,21 +693,25 @@ class ChunkFootprintTest {
      * the lambda classes the JVM spins for the method reference each of them hands to its
      * {@code CachedPacket} — those carry a generated name which need not even be stable between two
      * runs of the same build. Everything whose class name starts with the name of the chunk class is
-     * consequently compared as a single post: same object count, same bytes. That still holds the
-     * shallow size of the chunk object under assertion, which is where a field added to
-     * {@code FalcoChunk} shows up first, and it is why {@code startsWith} is used rather than an
-     * equality that would let the lambda escape the comparison entirely.
+     * consequently compared as a single post: same object count, same bytes. That is where a field
+     * added to {@code FalcoChunk} shows up first, and it is why {@code startsWith} is used rather
+     * than an equality that would let the lambda escape the comparison entirely. It is checked twice
+     * over, once by class name and once through {@code ClassLayout}, because a field that fits into
+     * the padding of the object grows neither.
      * </p>
      *
      * @param minestom      the footprint of the Minestom side
      * @param minestomChunk the chunk the Minestom side was measured from
      * @param falcoSide     the footprint of the Falco side
      * @param falcoChunk    the chunk the Falco side was measured from
+     * @param declared      the expected count per class on the Falco side, for every class the two
+     *                      sides may differ in
      * @param context       what was measured, named in every failure message
      */
-    private static void assertTheSeamIsTheOnlyDifference(Footprint minestom, Chunk minestomChunk,
-                                                        Footprint falcoSide, Chunk falcoChunk,
-                                                        String context) {
+    private static void assertOnlyTheDeclaredClassesDiffer(Footprint minestom, Chunk minestomChunk,
+                                                          Footprint falcoSide, Chunk falcoChunk,
+                                                          Map<String, Declared> declared,
+                                                          String context) {
         final String minestomType = minestomChunk.getClass().getName();
         final String falcoType = falcoChunk.getClass().getName();
 
@@ -579,36 +727,43 @@ class ChunkFootprintTest {
 
         final Set<String> classNames = new TreeSet<>(minestom.perClass().keySet());
         classNames.addAll(falcoSide.perClass().keySet());
+        classNames.addAll(declared.keySet());
+
+        long declaredBytes = 0;
 
         for (String className : classNames) {
-            if (className.startsWith(minestomType) || className.startsWith(falcoType)
-                    || BLOCK_STORAGE.equals(className)) {
+            if (className.startsWith(minestomType) || className.startsWith(falcoType)) {
                 continue;
             }
-            assertEquals(minestom.objectsOf(className), falcoSide.objectsOf(className),
-                    context + ": FalcoChunk retains " + falcoSide.objectsOf(className) + " objects of "
-                            + className + " against " + minestom.objectsOf(className) + " of DynamicChunk, "
-                            + "and " + BLOCK_STORAGE + " is the only class the two may differ in");
-            assertEquals(minestom.bytesOf(className), falcoSide.bytesOf(className),
-                    context + ": FalcoChunk retains " + falcoSide.bytesOf(className) + " bytes of "
-                            + className + " against " + minestom.bytesOf(className) + " of DynamicChunk, "
-                            + "and " + BLOCK_STORAGE + " is the only class the two may differ in");
+            final Declared row = declared.get(className);
+
+            if (row == null) {
+                assertEquals(minestom.objectsOf(className), falcoSide.objectsOf(className),
+                        context + ": FalcoChunk retains " + falcoSide.objectsOf(className) + " objects of "
+                                + className + " against " + minestom.objectsOf(className) + " of DynamicChunk, "
+                                + "and this class is not one the plan of stage 2 declared a difference for");
+                assertEquals(minestom.bytesOf(className), falcoSide.bytesOf(className),
+                        context + ": FalcoChunk retains " + falcoSide.bytesOf(className) + " bytes of "
+                                + className + " against " + minestom.bytesOf(className) + " of DynamicChunk, "
+                                + "and this class is not one the plan of stage 2 declared a difference for");
+                continue;
+            }
+            final long expected = row.expected().applyAsLong(minestom.objectsOf(className));
+            assertEquals(expected, falcoSide.objectsOf(className),
+                    context + ": the plan declares " + expected + " objects of " + className
+                            + " on the Falco side, against " + minestom.objectsOf(className)
+                            + " on the Minestom side, because " + row.reason() + ". The chunk holds "
+                            + falcoSide.objectsOf(className));
+            declaredBytes += falcoSide.bytesOf(className) - minestom.bytesOf(className);
         }
-        assertEquals(0, minestom.objectsOf(BLOCK_STORAGE),
-                context + ": a DynamicChunk cannot hold a BlockStorage, so the walk that reported one "
-                        + "measured something other than what this comparison assumes");
-        assertEquals(1, falcoSide.objectsOf(BLOCK_STORAGE),
-                context + ": FalcoChunk has to hold exactly one BlockStorage, not "
-                        + falcoSide.objectsOf(BLOCK_STORAGE));
-        assertEquals(minestom.objects() + 1, falcoSide.objects(),
-                context + ": the seam costs one object, the storage. FalcoChunk retained "
-                        + falcoSide.objects() + " objects against " + minestom.objects() + " of DynamicChunk");
-        assertTrue(falcoSide.bytesOf(BLOCK_STORAGE) > 0,
-                context + ": the storage was not sized, which makes the delta below unattributable");
-        assertEquals(falcoSide.bytesOf(BLOCK_STORAGE), falcoSide.bytes() - minestom.bytes(),
-                context + ": every extra byte has to belong to the storage, but FalcoChunk retained "
-                        + (falcoSide.bytes() - minestom.bytes()) + " bytes more than DynamicChunk while its "
-                        + "storage is only " + falcoSide.bytesOf(BLOCK_STORAGE) + " bytes");
+        assertEquals(declaredBytes, falcoSide.bytes() - minestom.bytes(),
+                context + ": the two chunks differ by " + (falcoSide.bytes() - minestom.bytes())
+                        + " bytes while the classes the plan declared account for " + declaredBytes
+                        + ". The remainder belongs to a class this comparison did not look at, which "
+                        + "means a post moved without anybody deciding that it should.");
+        assertEquals(ClassLayout.parseInstance(minestomChunk).instanceSize(),
+                ClassLayout.parseInstance(falcoChunk).instanceSize(),
+                context + ": the two chunk objects themselves must still have the same shallow size");
     }
 
     /**
@@ -644,8 +799,8 @@ class ChunkFootprintTest {
      *                               the difference between the two walks meaningless
      */
     private static Footprint measure(Chunk chunk, Instance instance) {
-        footprintOf(chunk, instance);
-        final Footprint footprint = footprintOf(chunk, instance);
+        footprintOf(instance, chunk);
+        final Footprint footprint = footprintOf(instance, chunk);
 
         if (footprint.objects() <= 0) {
             throw new IllegalStateException("The chunk " + chunk.getChunkX() + ":" + chunk.getChunkZ()
@@ -657,15 +812,40 @@ class ChunkFootprintTest {
     }
 
     /**
+     * Measures what two chunks of the same instance retain between them.
+     * <p>
+     * The number this answers that {@link #measure(Chunk, Instance)} cannot is how much of a
+     * footprint is shared. An object both chunks point at is walked once and counted once, so a post
+     * that is twice as large here as in a single measurement is owned per chunk, and one that did not
+     * grow at all is shared by the JVM. That distinction is the whole claim of the flyweight, and
+     * without a second chunk it is not observable from a footprint at all.
+     * </p>
+     *
+     * @param first    the first chunk, which must not be registered with the instance
+     * @param second   the second chunk, which must not be registered with the instance
+     * @param instance the instance both chunks were built for
+     * @return the footprint of the two chunks together
+     */
+    private static Footprint measureBoth(Chunk first, Chunk second, Instance instance) {
+        footprintOf(instance, first, second);
+        return footprintOf(instance, first, second);
+    }
+
+    /**
      * Walks the chunk together with its instance and the instance alone, and returns the difference.
      *
-     * @param chunk    the chunk to measure
-     * @param instance the instance the chunk was built for
+     * @param instance the instance the chunks were built for
+     * @param chunks   the chunks to measure, walked as one graph so that anything they share is
+     *                 counted once
      * @return the difference between the two walks, per class and in total
      */
-    private static Footprint footprintOf(Chunk chunk, Instance instance) {
+    private static Footprint footprintOf(Instance instance, Chunk... chunks) {
+        final Object[] roots = new Object[chunks.length + 1];
+        roots[0] = instance;
+        System.arraycopy(chunks, 0, roots, 1, chunks.length);
+
         final GraphLayout environment = walk(instance);
-        final GraphLayout together = walk(chunk, instance);
+        final GraphLayout together = walk(roots);
         return difference(together, environment);
     }
 
@@ -935,6 +1115,50 @@ class ChunkFootprintTest {
      * @param bytes   the amount of bytes those instances occupy
      */
     private record Tally(String name, long objects, long bytes) {
+    }
+
+    /**
+     * One row of a declared difference table: how many objects of a class the Falco side may hold.
+     * <p>
+     * The count is a function of the count on the Minestom side rather than a constant, because two
+     * of the rows can only be stated that way. The {@code int[]} and {@code Object[]} a chunk holds
+     * are the key and value arrays of its fastutil maps <em>and</em> the arrays of every palette that
+     * went indirect, so their absolute number moves with the fill — a filled chunk of this class
+     * shows anything between one and seventy-four of them — while what task 8 removed is exactly one
+     * of each, at every fill. A constant would either not hold or would pin a palette detail this
+     * comparison has no business pinning; {@link #fewerBy(long, String)} states the removal instead.
+     * </p>
+     * <p>
+     * The reason is carried along and printed in the failure, because a bare count in a table is the
+     * kind of assertion the next reader deletes.
+     * </p>
+     *
+     * @param expected how many objects the Falco side may hold, given the count on the Minestom side
+     * @param reason   why the plan of this stage declares that count
+     */
+    private record Declared(LongUnaryOperator expected, String reason) {
+    }
+
+    /**
+     * Declares a count that does not depend on what the Minestom side holds.
+     *
+     * @param objects the amount of objects the Falco side has to hold
+     * @param reason  why the plan of this stage declares that count
+     * @return the declaration
+     */
+    private static Declared exactly(long objects, String reason) {
+        return new Declared(minestomObjects -> objects, reason);
+    }
+
+    /**
+     * Declares a count as a removal from what the Minestom side holds.
+     *
+     * @param objects the amount of objects the Falco side holds fewer of
+     * @param reason  why the plan of this stage declares that removal
+     * @return the declaration
+     */
+    private static Declared fewerBy(long objects, String reason) {
+        return new Declared(minestomObjects -> minestomObjects - objects, reason);
     }
 
     /**
