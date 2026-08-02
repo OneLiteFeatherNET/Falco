@@ -1,6 +1,7 @@
 package net.onelitefeather.falco.light;
 
 import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Contract;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -128,9 +129,23 @@ public final class ChunkLightPropagator {
      */
     private static final int TOP_BIT = 1 << BlockFace.TOP.ordinal();
 
+    /**
+     * The amount of columns a chunk holds.
+     */
+    private static final int COLUMN_COUNT = LightNibbles.DIMENSION * LightNibbles.DIMENSION;
+
     private byte[] levels;
     private byte[] occlusion;
     private int[] queue;
+
+    /**
+     * The lowest position of every column which still sees the open sky.
+     * <p>
+     * One entry per column, so the size does not depend on the height of the chunk and the array is
+     * allocated once with the propagator.
+     * </p>
+     */
+    private final int[] skyBottom = new int[COLUMN_COUNT];
 
     /**
      * Creates a new propagator without any buffer. The buffers are sized on the first run.
@@ -168,7 +183,7 @@ public final class ChunkLightPropagator {
      */
     public List<LightNibbles> propagateSky(List<SectionOpacity> sections) {
         int height = prepare(sections);
-        return search(sections, height, seedSky(sections, height));
+        return search(sections, height, seedSky(height));
     }
 
     /**
@@ -323,35 +338,104 @@ public final class ChunkLightPropagator {
     }
 
     /**
-     * Puts every block which sees the open sky into the queue.
+     * Lights every block which sees the open sky and queues the few of them that can spread it.
      * <p>
      * Every column is walked from the top of the chunk downwards. As long as light can enter the
      * block from above it receives the full level, which is why an open column is lit to the very
-     * bottom. The walk of a column ends at the first block that stops the light.
+     * bottom. The walk of a column ends at the first block that stops the light, and where it ended
+     * is kept per column — that is the heightmap this method builds on the way past.
+     * </p>
+     * <p>
+     * <b>Lighting a position and queueing it are two different things, and this is the one place
+     * where the difference is worth most.</b> An open position whose four horizontal neighbours are
+     * open at the same height can raise nobody: above and below it the column is already at the
+     * full level or is blocked, and so is every neighbour. Queueing it costs a pop and six face
+     * tests to establish that. On an open chunk that used to be every position of every column.
+     * </p>
+     * <p>
+     * What has to be queued is exactly the positions with a darker neighbour, and the heightmap
+     * gives that as a range rather than a test: a neighbouring column is dark at every height below
+     * where its own sky stops, so the positions of a column that need queueing are the ones from its
+     * own bottom up to the deepest bottom among its four neighbours. Above that line every neighbour
+     * is open, and there is nothing left to give.
      * </p>
      *
-     * @param sections the light properties of every section
-     * @param height   the amount of blocks the column spans vertically
+     * @param height the amount of blocks the column spans vertically
      * @return the amount of queued positions
      */
-    private int seedSky(List<SectionOpacity> sections, int height) {
-        int tail = 0;
-
+    private int seedSky(int height) {
         for (int z = 0; z < LightNibbles.DIMENSION; z++) {
             for (int x = 0; x < LightNibbles.DIMENSION; x++) {
-                for (int y = height - 1; y >= 0; y--) {
+                int y = height - 1;
+
+                for (; y >= 0; y--) {
                     int index = index(x, y, z);
 
                     if ((this.occlusion[index] & TOP_BIT) != 0) {
                         break;
                     }
                     this.levels[index] = LightNibbles.MAX_LEVEL;
+                }
+                this.skyBottom[column(x, z)] = y + 1;
+            }
+        }
+
+        int tail = 0;
+
+        for (int z = 0; z < LightNibbles.DIMENSION; z++) {
+            for (int x = 0; x < LightNibbles.DIMENSION; x++) {
+                int until = deepestNeighbourBottom(x, z);
+
+                for (int y = this.skyBottom[column(x, z)]; y < until; y++) {
                     ensureRoom(tail);
-                    this.queue[tail++] = index | (NO_FACE << POSITION_BITS);
+                    this.queue[tail++] = index(x, y, z) | (NO_FACE << POSITION_BITS);
                 }
             }
         }
         return tail;
+    }
+
+    /**
+     * Returns the height below which at least one horizontal neighbour of a column is dark.
+     * <p>
+     * A column outside the chunk is left out rather than treated as dark. Light does not leave the
+     * chunk through the search — the border exchange carries it — and a position at the edge is lit
+     * either way, because lighting it and queueing it are separate.
+     * </p>
+     *
+     * @param x the x coordinate of the column
+     * @param z the z coordinate of the column
+     * @return the deepest sky bottom among the horizontal neighbours inside the chunk
+     */
+    @Contract(pure = true)
+    private int deepestNeighbourBottom(int x, int z) {
+        int deepest = 0;
+
+        if (x > 0) {
+            deepest = Math.max(deepest, this.skyBottom[column(x - 1, z)]);
+        }
+        if (x < MASK) {
+            deepest = Math.max(deepest, this.skyBottom[column(x + 1, z)]);
+        }
+        if (z > 0) {
+            deepest = Math.max(deepest, this.skyBottom[column(x, z - 1)]);
+        }
+        if (z < MASK) {
+            deepest = Math.max(deepest, this.skyBottom[column(x, z + 1)]);
+        }
+        return deepest;
+    }
+
+    /**
+     * Calculates the index of a column inside the heightmap.
+     *
+     * @param x the x coordinate inside the chunk
+     * @param z the z coordinate inside the chunk
+     * @return the index of the column
+     */
+    @Contract(pure = true)
+    private static int column(int x, int z) {
+        return (z << 4) | x;
     }
 
     /**
