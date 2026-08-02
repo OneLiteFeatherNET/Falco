@@ -149,8 +149,18 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
+ *
+ * <h2>How something else takes part in the life of this chunk</h2>
+ * <p>
+ * Through {@link #addLifecycleListener(ChunkLifecycleListener)}, and that is US-3.03. Everything
+ * this class does that another part of a server may want to know about — being published, finishing
+ * a load, being ticked, receiving a block, leaving its instance — used to be reachable only by
+ * overriding it, which meant being the superclass of this chunk, of which there can be exactly one.
+ * A listener is a field, so two of them fit where one subclass did.
+ * </p>
+ *
  * @author TheMeinerLP
- * @version 3.6.1
+ * @version 3.7.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -254,6 +264,21 @@ public class FalcoChunk extends Chunk {
     private final CachedPacket chunkCache = new CachedPacket(this::createChunkPacket);
 
     /**
+     * What is told about the transitions of this chunk, null while nobody listens.
+     * <p>
+     * One reference and not a list. A list is an object per chunk and an iterator per transition, and
+     * a fresh chunk of this class retains 840 bytes in total — a per-chunk collection for a feature
+     * almost no chunk uses would give back a quarter of what stage 2 bought. More than one listener
+     * composes through {@link ChunkLifecycleListener#of}, which allocates once, at registration.
+     * </p>
+     * <p>
+     * Volatile because a listener may be installed by the thread that loads a chunk and read by the
+     * thread that ticks it.
+     * </p>
+     */
+    private volatile @Nullable ChunkLifecycleListener lifecycleListener;
+
+    /**
      * Creates an empty chunk at the given position, storing its blocks in sections which are
      * allocated only once something is written into them.
      * <p>
@@ -338,6 +363,49 @@ public class FalcoChunk extends Chunk {
     }
 
     /**
+     * Adds a listener to this chunk.
+     * <p>
+     * A second listener is composed with the first through {@link ChunkLifecycleListener#of} rather
+     * than appended to a collection, which is where the reason for that lives.
+     * </p>
+     *
+     * @param listener the listener to add
+     * @throws NullPointerException if the listener is null
+     * @since 0.4.0
+     */
+    public void addLifecycleListener(ChunkLifecycleListener listener) {
+        final ChunkLifecycleListener current = this.lifecycleListener;
+        this.lifecycleListener = current == null ? Objects.requireNonNull(listener,
+                "the listener cannot be null") : ChunkLifecycleListener.of(current, listener);
+    }
+
+    /**
+     * Hands out what is told about the transitions of this chunk.
+     *
+     * @return the listener of this chunk, or null if nothing listens
+     * @since 0.4.0
+     */
+    public @Nullable ChunkLifecycleListener lifecycleListener() {
+        return this.lifecycleListener;
+    }
+
+    /**
+     * Tells the chunk that it has become part of its instance.
+     * <p>
+     * Separate from {@link #markLoaded()} because publishing and finishing a load are two different
+     * moments: a chunk is in the registry and has a tick partition before its loaded flag is set, and
+     * a listener that wants to see the world exactly as the instance does needs the first, not the
+     * second.
+     * </p>
+     *
+     * @since 0.4.0
+     */
+    public void notifyPublished() {
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onPublish(new ChunkLifecycleEvent(this, 0L));
+    }
+
+    /**
      * Tells the chunk that it has finished loading.
      * <p>
      * This is the reachable form of the {@code protected} {@code Chunk#onLoad()} hook.
@@ -347,6 +415,8 @@ public class FalcoChunk extends Chunk {
      */
     public void markLoaded() {
         onLoad();
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onLoad(new ChunkLifecycleEvent(this, 0L));
     }
 
     /**
@@ -360,6 +430,8 @@ public class FalcoChunk extends Chunk {
      */
     public void markUnloaded() {
         unload();
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onUnload(new ChunkLifecycleEvent(this, 0L));
     }
 
     /**
@@ -443,6 +515,11 @@ public class FalcoChunk extends Chunk {
         if (this.needsCompleteHeightmapRefresh) calculateFullHeightmap();
         motionBlockingHeightmap().refresh(sectionRelativeX, y, sectionRelativeZ, block);
         worldSurfaceHeightmap().refresh(sectionRelativeX, y, sectionRelativeZ, block);
+
+        // Last, so a listener reading this chunk sees the finished state rather than a chunk whose
+        // heightmaps still describe the block that was overwritten.
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onBlockChange(this, x, y, z, block);
     }
 
     /**
@@ -683,11 +760,21 @@ public class FalcoChunk extends Chunk {
      * is gone; the walk below is over {@link #entries}, so a chunk which does hold tickable blocks
      * pays for the block entities it holds beside them.
      * </p>
+     * <p>
+     * The listener is told before that early exit and not after it. A listener which wants a
+     * heartbeat has to get one from every chunk, and almost every chunk has no tickable block at all,
+     * so a notification behind the counter check would reach exactly the chunks that need it least.
+     * The event is built only once the field has been found non-null, which is what keeps the
+     * unheard case at the single comparison it was — {@code ChunkLifecycleAllocationTest} measures
+     * both halves of that.
+     * </p>
      *
      * @param time the time of the tick in milliseconds
      */
     @Override
     public void tick(long time) {
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onTick(new ChunkLifecycleEvent(this, time));
         if (this.tickableCount == 0) return;
         this.entries.int2ObjectEntrySet().fastForEach(entry -> {
             final Block block = entry.getValue();

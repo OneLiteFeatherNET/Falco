@@ -68,8 +68,18 @@ import java.util.function.Consumer;
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
+ *
+ * <h2>Where a listener of a chunk comes from</h2>
+ * <p>
+ * From here, through {@link #addListener(ChunkLifecycleListener)}, and it is handed to the chunk in
+ * {@link #create(int, int)} rather than kept and consulted by this class. Only one of the five
+ * transitions a {@link ChunkLifecycleListener} reports is driven by this class at all — the publish;
+ * the tick and the block write reach a chunk without ever passing through a lifecycle, and a design
+ * which notified from here would have to leave those two out.
+ * </p>
+ *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -135,6 +145,22 @@ public final class ChunkLifecycle {
      * @see #chunkLoaded
      */
     private volatile @Nullable Consumer<Chunk> chunkUnloaded;
+
+    /**
+     * What every chunk of this instance is told about its own transitions, null while nobody listens.
+     * <p>
+     * This is the instance-wide half of US-3.03; the per-chunk half is
+     * {@link FalcoChunk#addLifecycleListener(ChunkLifecycleListener)}. What is kept here is only the
+     * registration: {@link #create(int, int)} hands this listener to every chunk it builds, and every
+     * notification is then made by the chunk itself. A lifecycle which notified on behalf of its
+     * chunks would have to be reachable from a tick, and a tick has a chunk and no lifecycle.
+     * </p>
+     * <p>
+     * Volatile for the same reason as {@link #chunkSupplier}: a caller object written by a public
+     * setter and read on the load path from another thread.
+     * </p>
+     */
+    private volatile @Nullable ChunkLifecycleListener listener;
 
     /**
      * Creates the lifecycle of the chunks of one instance.
@@ -271,8 +297,12 @@ public final class ChunkLifecycle {
      * @return true if the chunk is now part of this instance, false if the load was claimed
      */
     public boolean publish(long index, Chunk chunk, CompletableFuture<Chunk> future) {
-        return this.registry.publish(index, chunk, future,
-                published -> MinecraftServer.process().dispatcher().createPartition(published));
+        final boolean published = this.registry.publish(index, chunk, future,
+                inLock -> MinecraftServer.process().dispatcher().createPartition(inLock));
+        // Outside the step and therefore outside the position lock: a listener may call back into
+        // the instance, and the registry forbids exactly that from inside.
+        if (published && chunk instanceof FalcoChunk falcoChunk) falcoChunk.notifyPublished();
+        return published;
     }
 
     /**
@@ -316,6 +346,12 @@ public final class ChunkLifecycle {
         final Chunk chunk = this.chunkSupplier.createChunk(this.owner, chunkX, chunkZ);
         if (chunk == null) {
             throw new FalcoInstanceException("the chunk supplier returned null for chunk " + chunkX + ":" + chunkZ);
+        }
+        final ChunkLifecycleListener installed = this.listener;
+        // Before the generator runs, not after it: generation writes the blocks which carry a
+        // handler through Chunk#setBlock, and a listener registered afterwards would miss them.
+        if (installed != null && chunk instanceof FalcoChunk falcoChunk) {
+            falcoChunk.addLifecycleListener(installed);
         }
         final Generator current = this.generation.generator();
         if (current != null && chunk.shouldGenerate()) {
@@ -389,6 +425,42 @@ public final class ChunkLifecycle {
      */
     public ChunkGeneration generation() {
         return this.generation;
+    }
+
+    /**
+     * Adds a listener every chunk this lifecycle creates from now on is given.
+     * <p>
+     * A second listener composes with the first through {@link ChunkLifecycleListener#of}, so two
+     * extensions can live beside each other on the same chunk, which is what US-3.03 asks for and
+     * what a superclass could never provide.
+     * </p>
+     * <p>
+     * Chunks which already exist are deliberately not touched. A listener is handed over in
+     * {@link #create(int, int)}, before the generator runs, so a chunk either had the listener for
+     * its whole life or never had it — a chunk that received one halfway through would report a
+     * transition whose counterpart the listener never saw. A caller which wants a listener on a chunk
+     * that is already loaded adds it to that chunk through
+     * {@link FalcoChunk#addLifecycleListener(ChunkLifecycleListener)} and knows what it is asking for.
+     * </p>
+     *
+     * @param listener the listener every chunk created from now on is given
+     * @throws NullPointerException if the listener is null
+     * @since 0.4.0
+     */
+    public void addListener(ChunkLifecycleListener listener) {
+        final ChunkLifecycleListener current = this.listener;
+        this.listener = current == null ? Objects.requireNonNull(listener,
+                "the listener cannot be null") : ChunkLifecycleListener.of(current, listener);
+    }
+
+    /**
+     * Hands out what every chunk created by this lifecycle is given.
+     *
+     * @return the listener of this lifecycle, or null if nothing listens
+     * @since 0.4.0
+     */
+    public @Nullable ChunkLifecycleListener listener() {
+        return this.listener;
     }
 
     /**

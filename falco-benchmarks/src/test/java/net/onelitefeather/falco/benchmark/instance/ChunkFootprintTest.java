@@ -224,6 +224,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * asked about.
  * </p>
  *
+ * <h2>Where that padding went, and why stage 3 changed no number here</h2>
+ * <p>
+ * Task 8 of stage 3 gave {@code FalcoChunk} a reference field, the lifecycle listener of US-3.03, and
+ * every figure of this class survived it untouched: same object counts, same bytes, same shallow size
+ * on both sides. That is a measurement rather than a coincidence, and the arithmetic behind it is
+ * worth writing down. On the pinned build without compact headers a chunk object is {@code 80} bytes
+ * on either side. Twelve of those are the header and thirty-nine are the fields of {@code Chunk}
+ * itself; then {@code DynamicChunk} adds six references and a {@code boolean}, which is twenty-five,
+ * against the five references, one {@code int} and one {@code boolean} of {@code FalcoChunk}, which
+ * was also twenty-five. Seventy-six rounded up to the alignment of eight leaves four bytes of padding
+ * on both sides, and one compressed reference is exactly four.
+ * </p>
+ * <p>
+ * The eighth injected defect above and this field are therefore the same phenomenon, and this field is
+ * the last one that can hide in it: {@code FalcoChunk} now fills its eighty bytes exactly, with
+ * nothing left over. That was verified rather than assumed. A second reference field injected next to
+ * the listener turns both measuring cases of this class red, on the shallow size and on the chunk
+ * class post — which is what the paragraph above predicts, and what makes the unchanged tables below a
+ * result rather than a blind spot.
+ * </p>
+ *
  * <h2>Why the equivalence check runs after the measurement and not before</h2>
  * <p>
  * A probe that writes to its specimen is not a probe. {@code MinestomChunks#assertSameBlocks} used to
@@ -272,7 +293,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 2.1.0
+ * @version 2.1.1
  * @since 0.4.0
  */
 @DisplayName("The retained size of a chunk, measured with JOL")
@@ -817,10 +838,12 @@ class ChunkFootprintTest {
      * {@code CachedPacket} — those carry a generated name which need not even be stable between two
      * runs of the same build. Everything whose class name starts with the name of the chunk class is
      * consequently compared as a single post: same object count, same bytes. That is where a field
-     * added to {@code FalcoChunk} shows up first, and it is why {@code startsWith} is used rather
-     * than an equality that would let the lambda escape the comparison entirely. It is checked twice
-     * over, once by class name and once through {@code ClassLayout}, because a field that fits into
-     * the padding of the object grows neither.
+     * added to {@code FalcoChunk} shows up first — once it costs a byte at all — and it is why
+     * {@code startsWith} is used rather than an equality that would let the lambda escape the
+     * comparison entirely. It is checked twice over, once by class name and once through
+     * {@code ClassLayout}, and neither of the two sees a field that fits into the padding the object
+     * already carries: the lifecycle listener of task 8 is such a field, and the class documentation
+     * says which four bytes it consumed and what proves that the next one will not fit.
      * </p>
      *
      * @param minestom      the footprint of the Minestom side
