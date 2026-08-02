@@ -43,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.3.0
  * @since 0.1.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -177,11 +177,37 @@ class FalcoChunkTest {
     }
 
     /**
+     * Builds a handler which counts the ticks it receives without ever asking for one.
+     * <p>
+     * The counterpart of {@link #tickingHandler(AtomicInteger)}, and the only way to observe a tick
+     * that should not have happened. It counts in {@code tick} precisely because it must never be
+     * called, so a chunk which ticks it leaves the evidence itself.
+     * </p>
+     *
+     * @param ticks the counter which is incremented once per tick, and which must stay at zero
+     * @return a handler which is not tickable
+     */
+    private static BlockHandler quietHandler(AtomicInteger ticks) {
+        return new BlockHandler() {
+
+            @Override
+            public Key getKey() {
+                return Key.key("falco", "quiet");
+            }
+
+            @Override
+            public void tick(Tick tick) {
+                ticks.incrementAndGet();
+            }
+        };
+    }
+
+    /**
      * Builds a handler which asks to be ticked and counts the ticks it receives.
      * <p>
-     * A counting handler is the only way the two cases below can observe ticking at all: whether a
-     * chunk ticks a block is not readable from the chunk, it is only visible in whether the handler
-     * of that block ran.
+     * A counting handler is the only way the cases below can observe ticking at all: whether a chunk
+     * ticks a block is not readable from the chunk, it is only visible in whether the handler of that
+     * block ran.
      * </p>
      *
      * @param ticks the counter which is incremented once per tick
@@ -274,5 +300,116 @@ class FalcoChunkTest {
         assertEquals(1, ticks.get(),
                 "DynamicChunk#copy carries only the entries, which stops a copied chunk from ticking; "
                         + "that omission was corrected before the storage moved and stays corrected");
+    }
+
+    /**
+     * Holds the tickable counter to being a count and not a flag.
+     * <p>
+     * The two cases above cannot do it. Since the tick walks the entries and skips what is not
+     * tickable, a counter that is merely too high changes nothing a caller can observe — it only
+     * costs a walk. The direction that is observable is a counter that is too low: it makes the tick
+     * take its early exit while a tickable block is still there, and that block silently stops
+     * ticking. That is the failure this case exists for, and it is the failure the map this counter
+     * replaced could not have.
+     * </p>
+     * <p>
+     * Two blocks, because one is not enough to tell a count from a flag: a chunk which stores whether
+     * it has any tickable block rather than how many gets the first block right and drops the second
+     * the moment the first one leaves.
+     * </p>
+     *
+     * @param env the environment which provides the server process
+     */
+    @Test
+    @DisplayName("keeps ticking the tickable blocks that are left when one of them leaves")
+    void testOneBlockLeavingDoesNotSilenceTheOthers(Env env) {
+        final FalcoInstance instance = registered(env);
+        final FalcoChunk chunk = new FalcoChunk(instance, 0, 0);
+        final AtomicInteger first = new AtomicInteger();
+        final AtomicInteger second = new AtomicInteger();
+
+        chunk.lockWriteLock();
+        try {
+            chunk.setBlock(0, 0, 0, Block.STONE.withHandler(tickingHandler(first)));
+            chunk.setBlock(1, 0, 0, Block.STONE.withHandler(tickingHandler(second)));
+            chunk.setBlock(0, 0, 0, Block.STONE);
+        } finally {
+            chunk.unlockWriteLock();
+        }
+        chunk.tick(0L);
+
+        assertEquals(0, first.get(), "the block that was replaced must not tick");
+        assertEquals(1, second.get(), "the block that stayed must still tick");
+    }
+
+    /**
+     * Holds the counter to never going below the truth on the way up.
+     * <p>
+     * A write which was never tickable and is still not tickable must leave the counter alone. One
+     * that pays a decrement for every such write drives the counter negative on an ordinary chunk
+     * full of ordinary blocks, and the tickable block placed afterwards is then paid for out of that
+     * debt instead of lifting the counter off zero — the chunk takes its early exit and the block
+     * never ticks.
+     * </p>
+     * <p>
+     * Exactly one plain write, and not two, because the early exit tests for zero rather than for a
+     * non-positive count: after two plain writes such a counter would sit at {@code -1} and the tick
+     * would still walk, so the defect would pass unnoticed. One plain write followed by one tickable
+     * write is the arrangement that lands the counter back on zero with a tickable block in the
+     * chunk, and it is the only arrangement in which this defect is visible from the outside at all.
+     * </p>
+     *
+     * @param env the environment which provides the server process
+     */
+    @Test
+    @DisplayName("ticks a tickable block placed after a plain one")
+    void testPlainWritesDoNotOwePastTheirTurn(Env env) {
+        final FalcoInstance instance = registered(env);
+        final FalcoChunk chunk = new FalcoChunk(instance, 0, 0);
+        final AtomicInteger ticks = new AtomicInteger();
+
+        chunk.lockWriteLock();
+        try {
+            chunk.setBlock(0, 0, 0, Block.STONE);
+            chunk.setBlock(1, 0, 0, Block.STONE.withHandler(tickingHandler(ticks)));
+        } finally {
+            chunk.unlockWriteLock();
+        }
+        chunk.tick(0L);
+
+        assertEquals(1, ticks.get(), "a tickable block must tick regardless of what was written before it");
+    }
+
+    /**
+     * Holds the tick to the blocks which asked for it.
+     * <p>
+     * This is the case the second map used to make impossible. That map held only tickable blocks, so
+     * walking it could not reach anything else; the walk now goes over the entries, which hold every
+     * block worth keeping as an object, and the only thing between a block entity that never asked to
+     * be ticked and a tick is the filter inside the loop. A filter is easier to lose than a map is,
+     * so what it does is written down here rather than left to the shape of the data.
+     * </p>
+     *
+     * @param env the environment which provides the server process
+     */
+    @Test
+    @DisplayName("does not tick a handler which did not ask to be ticked")
+    void testTickSkipsHandlersThatAreNotTickable(Env env) {
+        final FalcoInstance instance = registered(env);
+        final FalcoChunk chunk = new FalcoChunk(instance, 0, 0);
+        final AtomicInteger tickable = new AtomicInteger();
+        final AtomicInteger quiet = new AtomicInteger();
+
+        chunk.lockWriteLock();
+        try {
+            chunk.setBlock(0, 0, 0, Block.STONE.withHandler(tickingHandler(tickable)));
+            chunk.setBlock(1, 0, 0, Block.STONE.withHandler(quietHandler(quiet)));
+        } finally {
+            chunk.unlockWriteLock();
+        }
+        chunk.tick(0L);
+
+        assertEquals(1, tickable.get(), "the handler which asked to be ticked must be ticked");
+        assertEquals(0, quiet.get(), "a handler which is not tickable must not be ticked");
     }
 }
