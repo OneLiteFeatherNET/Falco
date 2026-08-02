@@ -1644,9 +1644,12 @@ deliberate — see *What may be quoted*.
 | `:falco-benchmarks:` | 38 | **42** | +4 |
 | `:falco-archunit:` | — | **46** | new module |
 
-The divergence is accounted for rather than accepted. Stage 4 touched exactly one module: every
-commit of this stage changes `falco-instance`, `README.md` and the plan, and nothing else — `git log
-6936472..HEAD --name-only` is the check. Of the +39 in `falco-instance`, **30 are this stage**
+The divergence is accounted for rather than accepted. Stage 4 touched **ten files** and no others:
+six in `falco-instance` (`FalcoSharedInstance`, `package-info`, four test classes), one in
+`falco-archunit` (`ForeignWritePathTest`, added by the review follow-up), `README.md` and this plan —
+the union of `git show --name-only` over the stage's own commits is the check, and it has to be taken
+per commit rather than over a range, because the branch merged `feat/block-storage` and `main`
+mid-stage. Of the +39 in `falco-instance`, **30 are this stage**
 (`FalcoSharedInstanceTest` 7, `FalcoSharedInstanceResendTest` 3, `FalcoSharedInstanceStateTest` 12,
 `FalcoSharedInstanceSaveTest` 5, `FalcoSharedInstanceWriteTest` 3). The remaining 9, and the whole of
 the other four columns, arrived with the two merges this branch took mid-stage — `feat/block-storage`
@@ -1658,7 +1661,7 @@ added to classes that already existed. `:falco-archunit:` is a module `main` bro
 **One test is skipped, and it is not this stage's.** `EmptySectionCensusTest
 #testTheEmptySectionShareOfARealWorld` opens with an `Assumptions.assumeTrue` on an Anvil world being
 present on disk and there is none in CI or in this worktree. It has been skipped since stage 2 and is
-recorded here rather than rounded into "42 green".
+recorded here rather than rounded into "`:falco-benchmarks:` 42 green".
 
 `./gradlew build -x test` — **BUILD SUCCESSFUL**. Re-run with `--rerun-tasks` so that the verdict is
 not an up-to-date check: `javadoc` genuinely executed for all four published modules and emitted no
