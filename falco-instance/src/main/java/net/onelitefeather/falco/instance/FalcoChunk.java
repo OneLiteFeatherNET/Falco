@@ -158,9 +158,17 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * overriding it, which meant being the superclass of this chunk, of which there can be exactly one.
  * A listener is a field, so two of them fit where one subclass did.
  * </p>
+ * <p>
+ * Four of the five transitions are reported from where they happen and the fifth, the publish, from
+ * {@link #notifyPublished()}, because nothing on a chunk marks it. The load and the unload report
+ * from the {@code protected} hooks {@link #onLoad()} and {@link #unload()} rather than from the
+ * public {@link #markLoaded()} and {@link #markUnloaded()} that widen them: a chunk of this type is
+ * driven by {@link FalcoInstance} through the public pair and by an {@code InstanceContainer}
+ * through the hooks, and a report on the wrong one of the two would be silent for half the callers.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 3.7.0
+ * @version 3.8.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -179,10 +187,10 @@ public class FalcoChunk extends Chunk {
      * </p>
      * <p>
      * Private, where {@code DynamicChunk} has it {@code protected}. That modifier was inherited along
-     * with everything else this class copied while it still extended {@code DynamicChunk}, and it
-     * stopped meaning anything the moment the superclass went: no type in this project extends
-     * {@link FalcoChunk}, and the seam a subclass is meant to use is {@link BlockStorage}, which is a
-     * constructor argument rather than a field to reach into.
+     * with everything else this class copied while it still extended {@code DynamicChunk}, and
+     * narrowing it costs nothing even now that a subclass exists: {@code FalcoLightingChunk} carries
+     * a packet cache and needs no block object, and the seam a subclass is meant to use is
+     * {@link BlockStorage}, which is a constructor argument rather than a field to reach into.
      * </p>
      * <p>
      * What {@code protected} would still cost is real. {@code final} on a map protects the reference
@@ -420,9 +428,30 @@ public class FalcoChunk extends Chunk {
      * {@link ChunkLifecycle} calls it once, after the chunk has been put into the registry of the
      * instance and after its tick partition exists, which is the order Minestom uses as well.
      * </p>
+     * <p>
+     * It carries no notification of its own; the hook it widens does. See {@link #onLoad()} for why
+     * the two are that way round.
+     * </p>
      */
     public void markLoaded() {
         onLoad();
+    }
+
+    /**
+     * Reports the finished load to the listener of this chunk.
+     * <p>
+     * The notification sits on the {@code protected} hook rather than on {@link #markLoaded()},
+     * because this chunk is reached through two doors and only one of them is that method.
+     * {@link FalcoInstance} drives {@link #markLoaded()}, but an {@code InstanceContainer} calls this
+     * hook directly from {@code retrieveChunk} — it lives in the Minestom package and does not need
+     * the widening. A chunk in a container would otherwise report its tick and its block writes and
+     * stay silent about the one transition a light engine cannot do without, which is exactly the
+     * shape of defect Task 8 already found on the loader arm: two doors, one report.
+     * </p>
+     */
+    @Override
+    protected void onLoad() {
+        super.onLoad();
         final ChunkLifecycleListener listener = this.lifecycleListener;
         if (listener != null) listener.onLoad(new ChunkLifecycleEvent(this, 0L));
     }
@@ -438,6 +467,18 @@ public class FalcoChunk extends Chunk {
      */
     public void markUnloaded() {
         unload();
+    }
+
+    /**
+     * Reports the departure to the listener of this chunk, and clears the loaded flag.
+     * <p>
+     * On the hook and not on {@link #markUnloaded()}, for the reason given on {@link #onLoad()}: an
+     * {@code InstanceContainer} calls this one directly.
+     * </p>
+     */
+    @Override
+    protected void unload() {
+        super.unload();
         final ChunkLifecycleListener listener = this.lifecycleListener;
         if (listener != null) listener.onUnload(new ChunkLifecycleEvent(this, 0L));
     }

@@ -28,9 +28,12 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noCodeUnits;
  * Guards the promise that {@code falco-anvil}, {@code falco-light} and {@code falco-instance} are
  * three separately pullable artefacts, each of which can be taken without the other two.
  *
- * <p>Nothing in the build enforces this. None of the three modules declares a {@code project}
- * dependency on another, so the compiler never sees a cross-module import and cannot reject one; a
- * single {@code import} plus a single line in a build file would silently turn three artefacts into
+ * <p>Nothing in the build enforces this. Exactly one {@code project} dependency between the three
+ * exists — {@code falco-light} sees {@code falco-instance}, {@code compileOnly}, so that
+ * {@code FalcoLightingChunk} can be a {@code FalcoChunk}; see
+ * {@link #onlyTheChunkOfTheLightModuleKnowsTheInstanceModule} for what keeps it from spreading. Every
+ * other direction is unenforced by the compiler, so a single {@code import} plus a single line in a
+ * build file would silently turn three artefacts into
  * one. The same holds for the surface towards third parties: Minestom, adventure-nbt, annotations
  * and fastutil are {@code compileOnly} everywhere and never reach the published POM, so an
  * accidental new {@code implementation} dependency is invisible inside this repository and lands on
@@ -84,10 +87,9 @@ class ModuleBoundaryTest {
      *
      * <p>{@code Installation.md:14} promises "take one without the other if that is all you need",
      * and the build backs that up only by omission: no module declares a {@code project} dependency
-     * on another, so the first cross-module import compiles happily and breaks the promise
-     * silently. The independence costs something and is paid anyway, see
-     * {@code ServerStack.java:27-40}, which argues at length why {@code FalcoInstance} and
-     * {@code FalcoLightingChunk} cannot be combined instead of marrying the two modules.
+     * on {@code falco-anvil}, so the first cross-module import compiles happily and breaks the
+     * promise silently. The loader is the one of the three that genuinely needs nothing from the
+     * other two: a world is read the same way whether the chunks it fills are Minestom's or Falco's.
      *
      * <p>{@code .demo} and {@code .benchmark} are forbidden targets as well: a published module
      * reaching into unpublished code would not even resolve for a consumer.
@@ -96,16 +98,59 @@ class ModuleBoundaryTest {
     static final ArchRule anvilIsStandalone = isolated(ANVIL, LIGHT, INSTANCE, DEMO, BENCH);
 
     /**
-     * M1: {@code falco-light} knows neither of the other modules.
+     * M1: {@code falco-light} knows neither {@code falco-anvil} nor the unpublished modules.
      *
-     * <p>This is the concrete temptation of the three. {@code LightUpdateAware} and
-     * {@code ChunkLightScheduler} form an interface that {@code FalcoChunk} could serve, and a
-     * single import of {@code FalcoChunk} in {@code ChunkLightArea} would force the instance module
-     * onto every user of the light engine, for a convenience that has an interface-shaped
-     * alternative.
+     * <p>{@code falco-instance} is no longer among the forbidden targets, and that is US-3.06 rather
+     * than a relaxation of M1. {@code FalcoLightingChunk} is a {@code FalcoChunk} now, because the
+     * alternative was the state this repository was in for three stages: two chunk types with one
+     * superclass slot between them, so Falco's light and Falco's lifecycle could be copied together
+     * but never built together. A chunk cannot be a {@code FalcoChunk} without the module that
+     * defines it, so one of the two modules had to see the other, and this is the direction that
+     * costs a consumer nothing they did not ask for.
+     *
+     * <p>What replaces the blanket ban is {@link #onlyTheChunkOfTheLightModuleKnowsTheInstanceModule}
+     * below, which keeps the engine itself free of it. The dependency is {@code compileOnly} in
+     * {@code falco-light/build.gradle.kts}, so it reaches no published POM and no consumer of the
+     * bare engine.
      */
     @ArchTest
-    static final ArchRule lightIsStandalone = isolated(LIGHT, ANVIL, INSTANCE, DEMO, BENCH);
+    static final ArchRule lightIsStandalone = isolated(LIGHT, ANVIL, DEMO, BENCH);
+
+    /**
+     * The two classes of {@code falco-light} whose job is to be, or to serve, a {@code FalcoChunk}.
+     *
+     * <p>Named rather than derived, because the point of the rule is that this list stays at two.
+     * The trailing {@code (\$.*)?} covers an anonymous or nested class either of them may grow, which
+     * javac emits under the outer name.
+     */
+    private static final DescribedPredicate<JavaClass> THE_CHUNK_SIDE_OF_THE_LIGHT_MODULE =
+            nameMatching("net\\.onelitefeather\\.falco\\.light\\."
+                       + "(FalcoLightingChunk|ChunkLightListener)(\\$.*)?")
+                    .as("the chunk side of the light module")
+                    .forSubtype();
+
+    /**
+     * M1b: inside {@code falco-light}, only the chunk and its listener may see {@code falco-instance}.
+     *
+     * <p>This is the concrete temptation the old blanket rule guarded against, and it survives the
+     * edge unchanged. {@code LightUpdateAware} and {@code ChunkLightScheduler} form an interface that
+     * {@code FalcoChunk} could serve directly, and a single import of {@code FalcoChunk} in
+     * {@code ChunkLightArea} or {@code ChunkLightService} would put the instance module on the
+     * classpath of every user of the light engine — including the ones running a plain
+     * {@code InstanceContainer}, for whom {@code compileOnly} means the class is simply not there.
+     *
+     * <p>{@code ChunkLightScheduler} is deliberately not exempt even though its {@code supplier()}
+     * hands out a {@code FalcoLightingChunk}: a method reference to a constructor is a dependency on
+     * that class alone, not on its supertype, which is what keeps the scheduler loadable without
+     * {@code falco-instance} present.
+     */
+    @ArchTest
+    static final ArchRule onlyTheChunkOfTheLightModuleKnowsTheInstanceModule = noClasses()
+            .that().resideInAPackage(LIGHT)
+            .and(not(THE_CHUNK_SIDE_OF_THE_LIGHT_MODULE))
+            .should().dependOnClassesThat().resideInAPackage(INSTANCE)
+            .because("falco-instance is compileOnly here, so every other class of this module has to "
+                   + "keep loading and running on a server that never pulled it");
 
     /**
      * M1: {@code falco-instance} knows neither of the other modules.

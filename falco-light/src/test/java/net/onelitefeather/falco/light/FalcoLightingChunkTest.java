@@ -4,13 +4,21 @@ import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.batch.AbsoluteBlockBatch;
 import net.minestom.server.instance.block.Block;
+import net.minestom.server.world.DimensionType;
 import net.minestom.testing.Env;
 import net.minestom.testing.extension.MicrotusExtension;
+import net.onelitefeather.falco.instance.ChunkLifecycleEvent;
+import net.onelitefeather.falco.instance.ChunkLifecycleListener;
+import net.onelitefeather.falco.instance.FalcoChunk;
+import net.onelitefeather.falco.instance.FalcoInstance;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -32,9 +40,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * must not inherit or rebuild that. And {@code AbsoluteBlockBatch#apply} resends light only for a
  * {@code LightingChunk}, so a batch has to be covered here rather than assumed to work.
  * </p>
+ * <p>
+ * The four cases at the end are US-3.06 and they are the reason this module now sees
+ * {@code falco-instance}. Everything above them drives the chunk through an
+ * {@code InstanceContainer}, which is the arm that reaches the {@code protected} hooks directly;
+ * those four add the {@code FalcoInstance} arm, the second listener beside the light, and the proof
+ * that the storage stayed lazy when the superclass changed.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 2.0.0
  * @since 0.1.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -277,5 +292,137 @@ class FalcoLightingChunkTest {
         chunk.tick(2L);
 
         assertFalse(scheduler.isDirty(0, 0), "and the following tick has to clear it again");
+    }
+
+    @Test
+    @DisplayName("is a Falco chunk, so a Falco instance can hold it")
+    void testTheLightingChunkIsAFalcoChunk(Env env) {
+        final ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService(), Runnable::run, 16);
+        final FalcoInstance instance = new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD);
+        env.process().instance().registerInstance(instance);
+        instance.setChunkSupplier(scheduler.supplier());
+
+        final Chunk chunk = instance.loadChunk(0, 0).join();
+
+        assertInstanceOf(FalcoLightingChunk.class, chunk);
+        assertInstanceOf(FalcoChunk.class, chunk,
+                "the whole point of US-3.06: one chunk instance serves the lifecycle and the light");
+        assertTrue(chunk.isLoaded());
+        instance.unloadChunk(chunk);
+        assertFalse(chunk.isLoaded(), "a Falco instance can reach the unload hook of this chunk");
+    }
+
+    @Test
+    @DisplayName("keeps its storage lazy, so it costs what stage 2 measured")
+    void testTheLightingChunkHoldsNoSections(Env env) {
+        final ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService(), Runnable::run, 16);
+        final FalcoInstance instance = new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD);
+        env.process().instance().registerInstance(instance);
+
+        final FalcoChunk chunk = new FalcoLightingChunk(scheduler, instance, 0, 0);
+
+        assertEquals(0, chunk.storage().materialisedSections(),
+                "a lighting chunk is a Falco chunk now, so it starts with no section of its own either");
+        assertFalse(chunk.hasHeightmaps());
+    }
+
+    @Test
+    @DisplayName("lets a second extension sit beside the light")
+    void testASecondListenerFitsBesideTheLight(Env env) {
+        final ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService(), Runnable::run, 16);
+        final FalcoInstance instance = new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD);
+        env.process().instance().registerInstance(instance);
+        final AtomicInteger ticks = new AtomicInteger();
+        final FalcoChunk chunk = new FalcoLightingChunk(scheduler, instance, 0, 0);
+
+        chunk.markLoaded();
+
+        assertTrue(scheduler.isDirty(0, 0), "the light is on this chunk before the second listener is");
+
+        chunk.addLifecycleListener(new ChunkLifecycleListener() {
+
+            @Override
+            public void onTick(ChunkLifecycleEvent event) {
+                ticks.incrementAndGet();
+            }
+        });
+        chunk.tick(1L);
+
+        assertEquals(1, ticks.get(),
+                "before this stage the light occupied the only extension point a chunk had");
+        assertFalse(scheduler.isDirty(0, 0),
+                "and the same tick still drove the light pass, so the two sit beside each other");
+    }
+
+    /**
+     * Both extensions arrive on a chunk the instance built, not only on one built by hand.
+     * <p>
+     * The listener of the light comes from the constructor of the chunk and the second one from
+     * {@code ChunkLifecycle#addListener}, so this is the case where the two registrations meet
+     * without either knowing about the other — which is the whole of US-3.06 in one method.
+     * </p>
+     */
+    @Test
+    @DisplayName("carries the light and an instance-wide listener on the same loaded chunk")
+    void testAnInstanceWideListenerArrivesBesideTheLight(Env env) {
+        final ChunkLightService service = new ChunkLightService();
+        final ChunkLightScheduler scheduler = new ChunkLightScheduler(service, Runnable::run, 16);
+        final FalcoInstance instance = new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD);
+        env.process().instance().registerInstance(instance);
+        instance.setChunkSupplier(scheduler.supplier());
+        final AtomicInteger loads = new AtomicInteger();
+        final AtomicInteger writes = new AtomicInteger();
+        instance.lifecycle().addListener(new ChunkLifecycleListener() {
+
+            @Override
+            public void onLoad(ChunkLifecycleEvent event) {
+                loads.incrementAndGet();
+            }
+
+            @Override
+            public void onBlockChange(FalcoChunk chunk, int x, int y, int z, Block block) {
+                writes.incrementAndGet();
+            }
+        });
+
+        final Chunk chunk = instance.loadChunk(0, 0).join();
+        place(chunk, 8, 40, 8, Block.GLOWSTONE);
+        chunk.tick(1L);
+
+        assertEquals(1, loads.get(), "the foreign listener heard the load");
+        assertEquals(1, writes.get(), "and the block write");
+        assertEquals(15, service.blockLightAt(chunk, 8, 40, 8),
+                "while the light of the same chunk was computed by the listener it did not displace");
+    }
+
+    /**
+     * The load report survives a plain {@code InstanceContainer}, which drives another hook.
+     * <p>
+     * {@code InstanceContainer#retrieveChunk} calls the {@code protected Chunk#onLoad()} of the chunk
+     * directly, while {@code FalcoInstance} goes through {@code FalcoChunk#markLoaded()}. Two arms,
+     * one report: a lighting chunk which only heard the second would leave every world running on a
+     * container black, and that container is what the rest of this suite is built on.
+     * </p>
+     */
+    @Test
+    @DisplayName("reports its load through both instance implementations")
+    void testTheLoadReportReachesTheSchedulerFromEitherInstance(Env env) {
+        final ChunkLightScheduler container = new ChunkLightScheduler(new ChunkLightService(), Runnable::run, 16);
+        final Instance plain = env.createEmptyInstance();
+        plain.setChunkSupplier(container.supplier());
+
+        plain.loadChunk(4, 4).join();
+
+        assertTrue(container.isDirty(4, 4),
+                "an InstanceContainer reaches the protected onLoad hook, and that has to report too");
+
+        final ChunkLightScheduler falco = new ChunkLightScheduler(new ChunkLightService(), Runnable::run, 16);
+        final FalcoInstance instance = new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD);
+        env.process().instance().registerInstance(instance);
+        instance.setChunkSupplier(falco.supplier());
+
+        instance.loadChunk(4, 4).join();
+
+        assertTrue(falco.isDirty(4, 4), "and a FalcoInstance reaches markLoaded, which has to report as well");
     }
 }

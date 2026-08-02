@@ -1,13 +1,11 @@
 package net.onelitefeather.falco.light;
 
-import net.minestom.server.instance.DynamicChunk;
 import net.minestom.server.instance.Instance;
-import net.minestom.server.instance.block.Block;
-import net.minestom.server.instance.block.BlockHandler;
 import net.minestom.server.network.packet.server.CachedPacket;
 import net.minestom.server.network.packet.server.play.UpdateLightPacket;
+import net.onelitefeather.falco.instance.FalcoChunk;
+import net.onelitefeather.falco.instance.FalcoInstance;
 import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.Nullable;
 
 
 /**
@@ -23,26 +21,33 @@ import org.jetbrains.annotations.Nullable;
  * different chunk gets none at all.
  * </p>
  * <p>
- * <b>Why this lives in {@code falco-light} and not in {@code falco-instance}.</b> A replacement for
- * {@code LightingChunk} needs the light engine and nothing else — it holds no computation logic of
- * its own, it only reports what changed and when the tick happened. Putting it next to
- * {@code FalcoInstance} would create a dependency from one published module to another for a type
- * that has no relationship to an instance implementation, while putting it here creates no new
- * coupling at all. A {@code FalcoInstance} does not need a lighting chunk, and this chunk does not
- * need a {@code FalcoInstance}: it works on any {@code Instance}, including the plain
- * {@code InstanceContainer} the server ships with.
+ * <b>Why this needs {@code falco-instance} on the compile path.</b> It used to need nothing but the
+ * light engine, and that argument stopped holding the moment this class became a
+ * {@link FalcoChunk}: a chunk cannot be one without the module that defines it. The dependency is
+ * {@code compileOnly}, so the light engine itself — {@link ChunkLightService},
+ * {@code ChunkLightPropagator}, {@link ChunkLightScheduler}, the nibble handling — keeps compiling
+ * and running with {@code falco-instance} absent, and only this class and {@link ChunkLightListener}
+ * need it. A consumer who calls {@link ChunkLightScheduler#supplier()} therefore has to put both
+ * modules on the classpath, which {@code falco-bom} publishes next to one another; a consumer of the
+ * bare light engine needs neither. An {@code api} dependency was rejected for exactly that
+ * asymmetry, since it would push {@code falco-instance} onto every server running a plain
+ * {@code InstanceContainer}.
  * </p>
  * <p>
- * <b>This class holds no computation logic on purpose.</b> Three overrides, and every one of them
- * only reports something to the scheduler. Everything else — the dirty set, the areas, the executor,
- * the back pressure — lives in {@link ChunkLightScheduler}, so a reader looking for the behaviour
- * finds it in one place rather than spread across a chunk and a scheduler.
+ * <b>This class holds no computation logic on purpose.</b> Two overrides now, and both of them are
+ * about a packet rather than about light: everything the chunk used to report — the block change,
+ * the load, the tick — moved into {@link ChunkLightListener}, and the dirty set, the areas, the
+ * executor and the back pressure live in {@link ChunkLightScheduler}. A reader looking for the
+ * behaviour finds it in one place rather than spread across a chunk and a scheduler.
  * </p>
  * <p>
- * <b>What it reports is a position, not just a chunk.</b> {@code setBlock} knows exactly which block
- * moved, and handing that on is what lets the engine replay one position instead of searching nine
- * chunks. A chunk that arrives from a generator or a loader has no such position to offer, so
- * {@code onLoad} reports the change as one of unknown extent and pays for one search of the chunk.
+ * <b>What the change of superclass bought.</b> A {@link FalcoChunk} allocates no section until
+ * something writes into one and builds its two heightmaps on the first question rather than in a
+ * field initialiser, so a fresh chunk of this class retains {@code 840} bytes in 25 objects where
+ * the {@code DynamicChunk} it used to extend retains {@code 6 848} in 192 — the figures
+ * {@code ChunkFootprintTest} measures with jol 0.17 on OpenJDK 25.0.3 over an overworld chunk of 24
+ * sections. The light itself is unaffected: writing light materialises the sections it writes into,
+ * exactly as before.
  * </p>
  * <p>
  * <b>{@code createLightData} is deliberately not overridden.</b> It reads the sections, and those
@@ -56,40 +61,48 @@ import org.jetbrains.annotations.Nullable;
  * {@code super.isLoaded() && doneInit} and only sets {@code doneInit} in its {@code protected
  * onLoad()}, so a freshly constructed one reports itself unloaded. Both {@code ChunkBatch} and
  * {@code AbsoluteBlockBatch} begin with a check on exactly that and return with a warning about an
- * unloaded chunk, which makes a batch against such a chunk silently do nothing. Inheriting from
- * {@link DynamicChunk} avoids the trap, and rebuilding it here would be a defect, not a feature.
+ * unloaded chunk, which makes a batch against such a chunk silently do nothing. {@link FalcoChunk}
+ * has the same property {@code DynamicChunk} has — a freshly constructed chunk reports itself
+ * loaded — so inheriting from it avoids the trap, and rebuilding it here would be a defect, not a
+ * feature.
  * </p>
  * <p>
  * <b>The batch light gap is closed from this side.</b> {@code AbsoluteBlockBatch#apply} ends by
  * calling {@code sendLighting()} on every touched chunk that is a {@code LightingChunk} and skips
  * every other type, so this chunk would never be resent by it. It does not have to be: a batch
- * writes through {@code setBlock}, which marks the chunk dirty here, so the following tick computes
- * the light of the whole touched region and sends it through {@link #onLightUpdated()}. The result
- * arrives one tick later than Minestom's would, and it arrives for the ring around the batch as
- * well, which Minestom's path does not manage.
+ * writes through {@code setBlock}, which reports the position to {@link ChunkLightListener}, so the
+ * following tick computes the light of the whole touched region and sends it through
+ * {@link #onLightUpdated()}. The result arrives one tick later than Minestom's would, and it arrives
+ * for the ring around the batch as well, which Minestom's path does not manage.
  * </p>
  * <p>
  * <b>{@code copy} is deliberately not overridden.</b> Minestom copies a chunk into <em>another</em>
  * instance, and a scheduler serves exactly one. A copy that kept this binding would turn the first
  * block change placed into it into an {@link IllegalStateException}, because reporting that change
- * would try to bind a second instance. The inherited implementation returns a {@link DynamicChunk}
- * that carries the cloned sections and therefore the light as a snapshot, with nothing updating it
- * afterwards — which is the only correct answer here. Note that this is the opposite of
- * {@code FalcoChunk}, which does override {@code copy} so its instance can still unload the copy;
- * the two look inconsistent and are not.
+ * would try to bind a second instance. {@link FalcoChunk#copy(Instance, int, int)} returns a plain
+ * {@link FalcoChunk} carrying the copied storage and therefore the light as a snapshot, with nothing
+ * updating it afterwards and no listener on it — which is the only correct answer here, and which
+ * {@link FalcoInstance} can still unload, unlike the {@code DynamicChunk} the old superclass handed
+ * back.
+ * </p>
+ * <p>
+ * <b>Final, where it used to be open.</b> Nothing forced it open but the rule that let it be: a
+ * class extending a Minestom type is exempt from {@code PublicApiTest#publicClassesAreFinal}, and
+ * this one no longer extends one. Closing it is also the point of the stage. What a subclass of this
+ * chunk would have wanted — a second thing happening on a load, a tick or a block write — is exactly
+ * what {@code FalcoChunk#addLifecycleListener} now gives without a superclass slot, and a subclass
+ * would take back the one that was just freed.
  * </p>
  * <p>
  * This type is experimental. The light engine is new and its API may still change.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 2.0.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
-public class FalcoLightingChunk extends DynamicChunk implements LightUpdateAware {
-
-    private final ChunkLightScheduler scheduler;
+public final class FalcoLightingChunk extends FalcoChunk implements LightUpdateAware {
 
     /**
      * The light packet of this chunk, rebuilt only when somebody asks for it after an invalidation.
@@ -104,6 +117,11 @@ public class FalcoLightingChunk extends DynamicChunk implements LightUpdateAware
      * The scheduler comes first because {@code ChunkSupplier} fixes the trailing three parameters,
      * which lets {@link ChunkLightScheduler#supplier()} bind it with a method reference.
      * </p>
+     * <p>
+     * The listener is added here and not by whoever builds the instance, because a chunk which is
+     * handed out by a supplier has no other moment before its blocks arrive: a generator writes into
+     * the chunk immediately after this constructor returns.
+     * </p>
      *
      * @param scheduler the scheduler which decides when the light of this chunk is computed
      * @param instance  the instance this chunk belongs to
@@ -112,88 +130,14 @@ public class FalcoLightingChunk extends DynamicChunk implements LightUpdateAware
      */
     public FalcoLightingChunk(ChunkLightScheduler scheduler, Instance instance, int chunkX, int chunkZ) {
         super(instance, chunkX, chunkZ);
-        this.scheduler = scheduler;
+        addLifecycleListener(new ChunkLightListener(scheduler));
     }
 
     /**
-     * Tells the chunk that it has finished loading.
-     * <p>
-     * This is the reachable form of the {@code protected} {@code Chunk#onLoad()} hook, word for word
-     * what {@code FalcoChunk} offers in {@code falco-instance}. An instance implementation lives in
-     * another module and another package, so without this it cannot drive the lifecycle of a chunk
-     * it did not define — which is what kept a lighting chunk and {@code FalcoInstance} from being
-     * used together.
-     * </p>
-     * <p>
-     * Call it once, after the chunk is part of the instance and its tick partition exists. The
-     * light of the chunk is reported dirty from here, so calling it earlier would mark a chunk the
-     * instance cannot yet hand out.
-     * </p>
-     */
-    public void markLoaded() {
-        onLoad();
-    }
-
-    /**
-     * Tells the chunk that it is no longer part of its instance.
-     * <p>
-     * This is the reachable form of the {@code protected} {@code Chunk#unload()} hook. It clears the
-     * loaded flag that every {@code ChunkUtils#isLoaded} check in Minestom reads; a chunk that is
-     * never marked here stays alive for anyone holding a reference to it.
-     * </p>
-     */
-    public void markUnloaded() {
-        unload();
-    }
-
-    /**
-     * Reports the changed position, which is what lets the light be updated rather than searched.
-     * <p>
-     * The block is written first and reported afterwards, so a pass which reads the block states of
-     * this chunk between the two either sees the new block and the position, or neither, and never
-     * the block without the position.
-     * </p>
+     * Drops the cached light packet along with everything else this chunk derived from its blocks.
      *
-     * @param x         the x coordinate of the block
-     * @param y         the y coordinate of the block
-     * @param z         the z coordinate of the block
-     * @param block     the block to place
-     * @param placement the placement rule of the block, or null if there is none
-     * @param destroy   the destroy rule of the replaced block, or null if there is none
+     * @see FalcoChunk#invalidate()
      */
-    @Override
-    public void setBlock(int x, int y, int z, Block block,
-                         @Nullable BlockHandler.Placement placement,
-                         @Nullable BlockHandler.Destroy destroy) {
-        super.setBlock(x, y, z, block, placement, destroy);
-        this.scheduler.markChanged(this.instance, this.chunkX, this.chunkZ, x, y, z);
-    }
-
-    /**
-     * Reports this chunk dirty as soon as the instance has taken it.
-     * <p>
-     * Without this a world that is only ever read would stay black: no block ever changes, so
-     * nothing would ever ask for the light of a chunk that came straight from a loader or a
-     * generator. The neighbours are reported with it, because a chunk that appears next to an
-     * already lit one can send light into it that was not there when it was lit.
-     * </p>
-     * <p>
-     * The blocks of a freshly generated chunk arrive without passing {@code setBlock}, so this is
-     * reported as a change of an unknown extent and the chunk is lit from its block states once.
-     * </p>
-     */
-    @Override
-    protected void onLoad() {
-        super.onLoad();
-        this.scheduler.markChanged(this.instance, this.chunkX, this.chunkZ);
-    }
-
-    @Override
-    public void tick(long time) {
-        super.tick(time);
-        this.scheduler.onTick(this.instance, time);
-    }
-
     @Override
     public void invalidate() {
         super.invalidate();
@@ -203,12 +147,17 @@ public class FalcoLightingChunk extends DynamicChunk implements LightUpdateAware
     /**
      * Sends the freshly computed light of this chunk to everybody who is looking at it.
      * <p>
-     * This is the step Minestom has no hook for. {@code DynamicChunk#invalidate} drops the cached
-     * full chunk packet, which carries the light inside it, but that only reaches a player who
-     * receives the chunk afterwards — somebody already standing in it would see the old light until
-     * they reload. {@code LightingChunk} solves this with a resend timer and a private packet cache;
-     * the same result is reached here through the one piece of that machinery which is reachable
-     * from the outside, the {@code protected createLightData}.
+     * This is the step Minestom has no hook for. {@code Chunk#invalidate} drops the cached full chunk
+     * packet, which carries the light inside it, but that only reaches a player who receives the
+     * chunk afterwards — somebody already standing in it would see the old light until they reload.
+     * {@code LightingChunk} solves this with a resend timer and a private packet cache; the same
+     * result is reached here through the one piece of that machinery which is reachable from the
+     * outside, the {@code protected createLightData}.
+     * </p>
+     * <p>
+     * This is also why the packet cache stays on the chunk while the three reports moved to a
+     * listener: it is per chunk, and a listener registered once for a whole instance has nowhere to
+     * keep it.
      * </p>
      */
     @Override

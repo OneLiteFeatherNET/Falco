@@ -27,15 +27,16 @@ import java.util.stream.Collectors;
  * <p>
  * <b>Both stacks run on an {@code InstanceContainer}, and that is a decision rather than an
  * oversight.</b> {@link FalcoInstance} is the third published module of this repository and would be
- * the obvious third component of the Falco stack. It can now be combined with
- * {@link FalcoLightingChunk} — {@code FalcoInstance#setChunkLifecycle} lets a caller who owns both
- * types hand over the two {@code protected} hooks, which is what used to make the combination
- * impossible — but the demo still does not use it, for a reason that has nothing to do with whether
- * it works: this comparison is worth something only while the two servers differ in the loader and
- * the chunk type and in nothing else. What {@code FalcoInstance} buys, a clean unregister and a
- * block write guarded per chunk instead of per instance, is invisible to somebody flying through a
- * world nobody edits, and adding it to one side only would make the two stacks differ in three
- * things instead of one.
+ * the obvious third component of the Falco stack. Nothing stands in the way any more:
+ * {@link FalcoLightingChunk} is a {@code FalcoChunk} since US-3.06, so
+ * {@code instance.setChunkSupplier(scheduler.supplier())} on a {@code FalcoInstance} is the whole
+ * setup — no {@code setChunkLifecycle} pair and no cast, which is what the combination needed while
+ * the two chunk types still fought over one superclass. The demo still does not use it, for a reason
+ * that has nothing to do with whether it works: this comparison is worth something only while the two
+ * servers differ in the loader and the chunk type and in nothing else. What {@code FalcoInstance}
+ * buys, a clean unregister and a block write guarded per chunk instead of per instance, is invisible
+ * to somebody flying through a world nobody edits, and adding it to one side only would make the two
+ * stacks differ in three things instead of one.
  * </p>
  * <p>
  * The combination itself is covered by {@code FalcoStackIntegrationTest} in this module, which is
@@ -43,7 +44,7 @@ import java.util.stream.Collectors;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.3.0
  */
 public enum ServerStack {
@@ -206,9 +207,10 @@ public enum ServerStack {
             return "";
         }
 
-        return FalcoInstance.class.getName() + " is deliberately not part of this stack: it can hold a "
-                + "FalcoLightingChunk now, but adding it to one side only would make the two servers "
-                + "differ in three things instead of one, and its advantages do not show in a world "
-                + "nobody edits. See falco-demo/README.md.";
+        return FalcoInstance.class.getName() + " is deliberately not part of this stack: a "
+                + "FalcoLightingChunk is a FalcoChunk now and needs nothing but setChunkSupplier to "
+                + "run in one, but adding it to one side only would make the two servers differ in "
+                + "three things instead of one, and its advantages do not show in a world nobody "
+                + "edits. See falco-demo/README.md.";
     }
 }

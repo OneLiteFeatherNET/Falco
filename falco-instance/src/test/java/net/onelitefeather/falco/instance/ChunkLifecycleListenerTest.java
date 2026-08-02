@@ -1,6 +1,8 @@
 package net.onelitefeather.falco.instance;
 
+import net.minestom.server.MinecraftServer;
 import net.minestom.server.instance.Chunk;
+import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.block.Block;
 import net.minestom.server.world.DimensionType;
 import net.minestom.testing.Env;
@@ -26,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -157,5 +159,46 @@ class ChunkLifecycleListenerTest {
 
         assertEquals(List.of("own:tick:3"), log,
                 "the listener lives on the chunk, so a chunk outside a Falco instance can carry one");
+    }
+
+    /**
+     * The load and the unload are reported to a chunk of a plain {@code InstanceContainer} as well.
+     * <p>
+     * The two transitions are the ones a chunk is told about rather than ones it notices, and there
+     * are two doors into them. {@link FalcoInstance} drives {@link FalcoChunk#markLoaded()} and
+     * {@link FalcoChunk#markUnloaded()}; an {@code InstanceContainer} lives in the Minestom package
+     * and calls the {@code protected} {@code onLoad()} and {@code unload()} straight, from
+     * {@code retrieveChunk} and from {@code unloadChunk}. A report installed on the public pair would
+     * be silent for every chunk of a container, which is the same shape of defect the loader arm
+     * already produced once: two arms, one report.
+     * </p>
+     * <p>
+     * This case therefore drives the arm the rest of this class never touches. The publish is absent
+     * from the log on purpose — a container has no publish step, and nothing on a chunk marks one.
+     * </p>
+     */
+    @Test
+    @DisplayName("reports load and unload to a chunk a plain container drives")
+    void testAContainerReachesBothReportsThroughTheProtectedHooks() {
+        if (MinecraftServer.process() == null) MinecraftServer.init();
+        final InstanceContainer container = MinecraftServer.getInstanceManager().createInstanceContainer();
+        final List<String> log = new ArrayList<>();
+        container.setChunkSupplier((instance, chunkX, chunkZ) -> {
+            final FalcoChunk chunk = new FalcoChunk(instance, chunkX, chunkZ);
+            chunk.addLifecycleListener(new Recording("own", log));
+            return chunk;
+        });
+
+        final Chunk chunk = container.loadChunk(0, 0).join();
+
+        assertEquals(List.of("own:load"), log,
+                "InstanceContainer#retrieveChunk calls the protected onLoad, so the report has to sit there");
+
+        container.unloadChunk(chunk);
+
+        assertEquals(List.of("own:load", "own:unload"), log,
+                "and InstanceContainer#unloadChunk calls the protected unload, not markUnloaded");
+
+        MinecraftServer.getInstanceManager().unregisterInstance(container);
     }
 }

@@ -7,7 +7,9 @@ dependencies {
     compileOnly(libs.adventure.nbt)
     compileOnly(libs.annotations)
     compileOnly(libs.minestom)
+    compileOnly(project(":falco-instance"))
 
+    testImplementation(project(":falco-instance"))
     testImplementation(libs.adventure.nbt)
     testImplementation(libs.annotations)
     testImplementation(libs.minestom)
