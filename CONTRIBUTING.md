@@ -45,9 +45,9 @@ The scopes in use are `(anvil)`, `(light)`, `(instance)` and `(map)`, named by
 
 ## Pull requests
 
-Changes reach `main` through a pull request against `main`. The eleven most recent commits each name
-a pull request in their subject — `#10` through `#20` — and each of those pull requests was merged
-into `main` as the single commit that carries its number.
+Changes reach `main` through a pull request against `main`, and each is merged as the single squash
+commit that carries its number — `git log --oneline` on `main` shows a `(#n)` on every recent
+subject, which is what that history looks like from the outside.
 
 Opening one fills `.github/pull_request_template.md`, whose checklist is the shortest statement of
 what review looks for: the pull-request title is the Conventional Commit, a test was written first
