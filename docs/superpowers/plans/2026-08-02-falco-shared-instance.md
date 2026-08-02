@@ -1724,6 +1724,15 @@ A result that lists only what was gained is not a result.
   container serialises it on its own monitor. That is US-4.04 rather than an omission, and it is now
   pinned by a test instead of only asserted in prose.
 
+### One claim of this plan that the sources did not support
+
+Task 7's README text listed tags beside the generator, the chunk supplier and the auto-load flag as a
+fourth value the stock `SharedInstance` writes through to its container. It is not one. `Instance`
+declares `protected TagHandler tagHandler = TagHandler.newHandler()` at `Instance.java:127` and
+`SharedInstance` never overrides `tagHandler()`, so a view's tags were always the view's. What was
+broken is narrower and was repaired in Task 6: `saveInstance()` handed the loader the container, so
+the view's own tags were never written. The README says that instead.
+
 ### Two acceptance items that could not be met as written
 
 - The plan's Definition of done names `docs/research/shared-instances-and-batches.md`. That file no
