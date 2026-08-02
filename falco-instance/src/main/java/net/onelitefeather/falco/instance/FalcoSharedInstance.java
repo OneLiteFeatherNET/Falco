@@ -78,7 +78,7 @@ import java.util.concurrent.CompletableFuture;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.8.0
+ * @version 1.9.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -214,6 +214,13 @@ public class FalcoSharedInstance extends SharedInstance {
      * documentation.
      * </p>
      * <p>
+     * The separation holds in the other direction too, and that half is the one that surprises:
+     * calling this on the container no longer reaches a view which already exists, because the view
+     * read the setting once, in its constructor. Turning chunk loading off for a whole world
+     * therefore means calling this method on every view of it — what a view does while the
+     * container's flag is off is written out at {@link #loadOptionalChunk(int, int)}.
+     * </p>
+     * <p>
      * One method is not a small reach. Minestom routes the player view, entity spawns, entity
      * teleports and player instance changes through {@link #loadOptionalChunk(int, int)}, and most
      * of those callers do not survive the {@code null} it hands back once this is off — the list is
@@ -289,10 +296,21 @@ public class FalcoSharedInstance extends SharedInstance {
      * </p>
      * <p>
      * The flag consulted is this view's alone, which has a consequence in the other direction: a view
-     * whose flag is on loads a chunk even where the container's own flag is off, because an explicit
-     * {@code loadChunk} was never governed by that flag either. It takes a deliberate act to get
-     * there — a fresh view is seeded from the container, so the setting has to be turned back on at
-     * the view after the container refused it.
+     * whose flag is on loads a chunk even where the container's own flag is off, because the load
+     * itself is delegated to {@code InstanceContainer#loadChunk} and an explicit load was never
+     * governed by that flag either.
+     * </p>
+     * <p>
+     * Reaching that state takes no deliberate act, and this is the ordering to read twice. The value
+     * is a snapshot taken in the constructor, so a container which turns its own flag off
+     * <em>after</em> its views exist stops none of them: every view keeps the {@code true} it was
+     * seeded with, and each of them goes on pulling chunks into the container that the container is
+     * refusing to pull for itself — where the container and every sibling view then see them. Stock
+     * {@link SharedInstance} could not produce that, because it asked the container on every call:
+     * the container's off switch was authoritative for every view the instant it was thrown. Here it
+     * governs the container's own {@link #loadOptionalChunk(int, int)} and the views constructed
+     * after it, and nothing else. A shutdown or save path which stops chunks arriving by calling
+     * {@code container.enableAutoChunkLoad(false)} therefore has to call it on every view as well.
      * </p>
      *
      * @param chunkX the chunk X

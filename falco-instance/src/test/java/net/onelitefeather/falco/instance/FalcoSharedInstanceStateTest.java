@@ -31,14 +31,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Covers the three pieces of configuration which Minestom's shared instance writes through to the
  * container it borrows from.
  * <p>
- * Every case here uses <em>two</em> shared instances over one container and inspects the one which
- * was not touched. A case that only looked at the instance it had just configured would be green
- * with the defect in place, because the defect is not that the value is lost — it is that the value
- * lands somewhere else as well.
+ * The aliasing cases here use <em>two</em> shared instances over one container and inspect the one
+ * which was not touched. A case that only looked at the instance it had just configured would be
+ * green with the defect in place, because the defect is not that the value is lost — it is that the
+ * value lands somewhere else as well.
+ * </p>
+ * <p>
+ * The three snapshot cases run the same relation backwards, with one view and the container: they
+ * change the container <em>after</em> the view exists and assert that the view does not follow. That
+ * direction is the one the class documentation asserts three times over — "never a read of the
+ * container as it stands now" — and it is not implied by the aliasing cases, which all configure
+ * before or without a container change. The auto-load one goes as far as a chunk, because there the
+ * divergence is not an answer but a chunk pulled into a container which was refusing to load one.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.3.0
+ * @version 1.4.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -94,6 +102,22 @@ class FalcoSharedInstanceStateTest {
     }
 
     @Test
+    @DisplayName("does not follow the container's generator once it has been constructed")
+    void testTheGeneratorIsTheSnapshotOfConstruction(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        final Generator seeded = unit -> unit.modifier().fill(Block.STONE);
+        container.setGenerator(seeded);
+        final FalcoSharedInstance shared = registered(env, container);
+
+        final Generator later = unit -> unit.modifier().fill(Block.DIRT);
+        container.setGenerator(later);
+
+        assertSame(seeded, shared.generator(),
+                "the view answers what it was seeded with, never the container as it stands now");
+        assertSame(later, container.generator(), "while the container keeps the value it was given");
+    }
+
+    @Test
     @DisplayName("starts with the chunk supplier its container had")
     void testTheChunkSupplierIsSeededFromTheContainer(Env env) {
         final InstanceContainer container = env.process().instance().createInstanceContainer();
@@ -128,6 +152,21 @@ class FalcoSharedInstanceStateTest {
 
         assertThrows(NullPointerException.class, () -> shared.setChunkSupplier(null));
         assertSame(container.getChunkSupplier(), shared.getChunkSupplier());
+    }
+
+    @Test
+    @DisplayName("does not follow the container's chunk supplier once it has been constructed")
+    void testTheChunkSupplierIsTheSnapshotOfConstruction(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        final ChunkSupplier stock = container.getChunkSupplier();
+        final FalcoSharedInstance shared = registered(env, container);
+
+        final ChunkSupplier later = FalcoChunk::new;
+        container.setChunkSupplier(later);
+
+        assertSame(stock, shared.getChunkSupplier(),
+                "the view answers what it was seeded with, never the container as it stands now");
+        assertSame(later, container.getChunkSupplier(), "while the container keeps the value it was given");
     }
 
     @Test
@@ -198,6 +237,26 @@ class FalcoSharedInstanceStateTest {
                 "the view owns this decision, so turning it back on at the view is enough");
         assertFalse(container.hasEnabledAutoChunkLoad(),
                 "and the container is still refusing loads asked of it directly");
+    }
+
+    @Test
+    @DisplayName("goes on loading after the container turned its own flag off, and pulls chunks into it")
+    void testTheContainerCannotStopAViewItAlreadyHas(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        final FalcoSharedInstance shared = registered(env, container);
+
+        container.enableAutoChunkLoad(false);
+
+        assertTrue(shared.hasEnabledAutoChunkLoad(),
+                "the flag is the snapshot of construction, so the container's later call misses the view");
+        assertNull(container.loadOptionalChunk(9, 9).join(),
+                "and the container is genuinely refusing the loads asked of itself");
+
+        final Chunk pulled = shared.loadOptionalChunk(4, 4).join();
+
+        assertNotNull(pulled, "while the view carries on loading, with no act at the view at all");
+        assertSame(pulled, container.getChunk(4, 4),
+                "and the chunk lands in the container that had just refused to load one");
     }
 
     @Test
