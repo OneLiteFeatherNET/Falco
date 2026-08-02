@@ -1623,10 +1623,12 @@ Carry these to the project owner rather than deciding them silently in code.
 
 ## Stage 4 result
 
-Run 2026-08-02 on branch `feat/shared-instance` at `e9c5cce`, JDK 25.0.3 (Temurin), Minestom as
-pinned by the build. The machine carried an IntelliJ session and a parallel worktree throughout;
-`/proc/loadavg` read 11.77 during the suite. Nothing below is a timing figure, and that is deliberate
-— see *What may be quoted*.
+Run 2026-08-02 on branch `feat/shared-instance`, JDK 25.0.3 (Temurin), Minestom as pinned by the
+build. First taken at `e9c5cce` at a `/proc/loadavg` of 11.77, then taken again in full at `9271642`
+after the review follow-up of Task 7 had added a module's worth of rules — that second run is the one
+the numbers below report, and it read 33.75 before the suite and 44.81 after it. The machine carried
+an IntelliJ session and a parallel worktree throughout. Nothing below is a timing figure, and that is
+deliberate — see *What may be quoted*.
 
 ### Tests
 
@@ -1640,7 +1642,7 @@ pinned by the build. The machine carried an IntelliJ session and a parallel work
 | `:falco-anvil:` | 193 | **217** | +24 |
 | `:falco-demo:` | 139 | **166** | +27 |
 | `:falco-benchmarks:` | 38 | **42** | +4 |
-| `:falco-archunit:` | — | **42** | new module |
+| `:falco-archunit:` | — | **46** | new module |
 
 The divergence is accounted for rather than accepted. Stage 4 touched exactly one module: every
 commit of this stage changes `falco-instance`, `README.md` and the plan, and nothing else — `git log
@@ -1649,15 +1651,18 @@ commit of this stage changes `falco-instance`, `README.md` and the plan, and not
 `FalcoSharedInstanceSaveTest` 5, `FalcoSharedInstanceWriteTest` 3). The remaining 9, and the whole of
 the other four columns, arrived with the two merges this branch took mid-stage — `feat/block-storage`
 (stage 3) and `main` — six of the nine being the new `FalcoInstanceBuilderTest` and three being cases
-added to classes that already existed. `:falco-archunit:` is a module `main` brought with it; its 42
-rules run against this code and pass.
+added to classes that already existed. `:falco-archunit:` is a module `main` brought with it; it held
+42 rules on arrival and holds **46** after this stage, the four added ones being `ForeignWritePathTest`
+— the only column stage 4 moved outside `falco-instance`, and it moved it on purpose.
 
 **One test is skipped, and it is not this stage's.** `EmptySectionCensusTest
 #testTheEmptySectionShareOfARealWorld` opens with an `Assumptions.assumeTrue` on an Anvil world being
 present on disk and there is none in CI or in this worktree. It has been skipped since stage 2 and is
 recorded here rather than rounded into "42 green".
 
-`./gradlew build -x test` — **BUILD SUCCESSFUL**, Javadoc included, `checkApiCompatibility` included.
+`./gradlew build -x test` — **BUILD SUCCESSFUL**. Re-run with `--rerun-tasks` so that the verdict is
+not an up-to-date check: `javadoc` genuinely executed for all four published modules and emitted no
+warning and no error, `checkApiCompatibility` genuinely executed and passed.
 
 ### The stories, and the method that carries each
 
@@ -1684,6 +1689,22 @@ each injection was reverted and re-run.
 | 7 | `getChunk` overridden to return `chunk.copy(this, chunkX, chunkZ)` | `testTheChunkIsTheContainersChunk` at the first `assertSame` and `testAWriteReachesEveryView` at the first `assertEquals`; the auto-load case stayed green, because it asserts the container's state |
 | 7, review follow-up | four separately, one per rule of `ForeignWritePathTest`: the guarded method name pointed at `setBlock`; `breakBlock` swapped for `loadChunk` in the expected caller set; the forward demanded to go to `Chunk`; an override of `setBlock` added to `FalcoSharedInstance` that only calls `super` | W1 twice (not private, not synchronized), W2 with one missing and one unexpected caller, W3 three times (one per forwarded method), W4 at `FalcoSharedInstance.java:355`. The fourth mutation left all three cases of `FalcoSharedInstanceWriteTest` green, which is why the rule exists |
 
+### What the acceptance re-proved for itself
+
+Rows in a table above are a report of what an earlier session did. An acceptance that only copies them
+forward checks nothing, so two of them were injected again from scratch at `9271642`, by a session
+that had not written them.
+
+- **`setGenerator` delegating to `super` again.** `FalcoSharedInstanceStateTest` reports 12 tests, 2
+  failed: *keeps a generator to itself* and *does not lose the container's generator when it clears
+  its own*. The ten others stay green, the seeding case among them — which is the point of the
+  two-view construction, since a test looking at one instance would have passed with the defect in
+  place. Reverted, 12 of 12 green, tree verified clean.
+- **A `super`-only `setBlock` override on `FalcoSharedInstance` again.** `ForeignWritePathTest`'s
+  W4 is the single failure in 46 archunit rules, and with the very same override in the tree all
+  three cases of `FalcoSharedInstanceWriteTest` still pass. That is the gap the rule was written for,
+  re-measured rather than quoted. Reverted, both modules green, tree verified clean.
+
 ### What may be quoted
 
 A **packet count**, and nothing else. A player moving from the container into a view at the same
@@ -1695,7 +1716,9 @@ from a deterministic packet collector, so the machine's load does not touch them
 resend) is the measurement that motivated the architecture and remains a scouting number from a
 machine at load 4.4 to 7.0; it is not requoted here, in the README or in the wiki. Nothing citable in
 wall-clock terms can be produced until `docs/benchmarks/full-run.sh` has run on an idle machine, and
-it still never has. The load during this stage's own suite was 11.77.
+it still never has. The load during this stage's own suites was 11.77 the first time and 33.75 to
+44.81 the second — a machine on which the packet counts are still exact and a millisecond would be
+fiction.
 
 ### What stage 4 did not reach
 
@@ -1741,9 +1764,10 @@ mean opposite things), W3 that `SharedInstance` forwards `setBlock`, `placeBlock
 the container, W4 that `FalcoSharedInstance` overrides none of the three. Three of the four fail on a
 Minestom upgrade rather than on a Falco commit, which is intended: what they report is not that
 Minestom is wrong but that the paragraph has to be rewritten and the decision not to override
-`setBlock` has to be taken again. The module runs **46** rules after this, not the 42 the table
-above records; `falco-instance` stays at 182, because nothing there was added — the gap was never a
-missing case, it was a case that could not exist in a module which does not read foreign bytecode.
+`setBlock` has to be taken again. The four rules are the whole of the module's move from 42 to the
+**46** in the table above; `falco-instance` stays at 182, because nothing there was added — the gap
+was never a missing case, it was a case that could not exist in a module which does not read foreign
+bytecode.
 
 Its structural limit is the one `ConcurrencyTest` already names: ArchUnit sees `ACC_SYNCHRONIZED` on
 a method, never a `synchronized` block. A lock moved into the body of `UNSAFE_setBlock` would turn W1
