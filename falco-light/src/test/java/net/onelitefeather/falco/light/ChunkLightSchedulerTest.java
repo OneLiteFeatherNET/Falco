@@ -8,6 +8,7 @@ import net.minestom.testing.extension.MicrotusExtension;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
@@ -247,6 +248,49 @@ class ChunkLightSchedulerTest {
         List<Throwable> reported = new CopyOnWriteArrayList<>();
         env.process().exception().setExceptionHandler(reported::add);
         return reported;
+    }
+
+    /**
+     * A chunk whose area is still being computed is not submitted a second time.
+     * <p>
+     * This is what the class javadoc of {@code ChunkLightService} points at when it says the
+     * scheduler keeps neighbourhoods disjoint. The service is safe for two threads only while their
+     * neighbourhoods do not overlap; the mark that survives a submission is what keeps a second
+     * thread off the same chunks, and until now that promise had no test.
+     * </p>
+     */
+    @Test
+    void testAChunkUnderComputationIsNotSubmittedASecondTime(Env env) {
+        Instance instance = env.createEmptyInstance();
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        place(chunk, 8, 40, 8, Block.GLOWSTONE);
+
+        List<Runnable> pending = new ArrayList<>();
+        AtomicInteger submissions = new AtomicInteger();
+        // Holds every area instead of running it, so the first one is still in flight when the
+        // second tick arrives — which is exactly the window a direct caller of the service has to
+        // stay out of by itself.
+        Executor deferring = task -> {
+            submissions.incrementAndGet();
+            pending.add(task);
+        };
+
+        ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService(), deferring, 16);
+        scheduler.markDirty(instance, 0, 0);
+        scheduler.onTick(instance, 1L);
+
+        assertEquals(1, submissions.get(), "the first tick submits the marked chunk");
+
+        scheduler.markDirty(instance, 0, 0);
+        scheduler.onTick(instance, 2L);
+
+        assertEquals(1, submissions.get(), "a chunk under computation is not submitted again");
+
+        pending.forEach(Runnable::run);
+        scheduler.markDirty(instance, 0, 0);
+        scheduler.onTick(instance, 3L);
+
+        assertEquals(2, submissions.get(), "and is submitted again once its area finished");
     }
 
     @Test
