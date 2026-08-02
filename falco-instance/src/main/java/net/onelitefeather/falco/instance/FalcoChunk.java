@@ -87,6 +87,13 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * rewriting the bookkeeping would be indistinguishable from a difference that came from the
  * storage.
  * </p>
+ * <p>
+ * The heightmaps are the one place where that copying stops at the {@code when} rather than the
+ * {@code what}. They are built on the first question instead of in a field initialiser — see
+ * {@link #motionBlockingHeightmap()} — because they are the second largest post of a fresh chunk
+ * after the sections. What they contain, and the order in which {@link #setBlock} refreshes them,
+ * is unchanged, which is what keeps the comparison against {@code DynamicChunk} honest.
+ * </p>
  *
  * <h2>Where the coordinates are folded</h2>
  * <p>
@@ -134,7 +141,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 3.1.0
+ * @version 3.2.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -167,14 +174,19 @@ public class FalcoChunk extends Chunk {
     private volatile boolean needsCompleteHeightmapRefresh = true;
 
     /**
-     * The highest block per column which stops movement.
+     * The highest block per column which stops movement, built when something first asks for it.
+     * <p>
+     * Volatile because the creation below is a double-checked lock, and a non-volatile field would
+     * let a second thread see a partly constructed {@code MotionBlockingHeightmap} — which carries a
+     * {@code short[256]} of its own that would then be read before it exists.
+     * </p>
      */
-    protected Heightmap motionBlocking = new MotionBlockingHeightmap(this);
+    private volatile Heightmap motionBlocking;
 
     /**
-     * The highest block per column which is not air.
+     * The highest block per column which is not air, built when something first asks for it.
      */
-    protected Heightmap worldSurface = new WorldSurfaceHeightmap(this);
+    private volatile Heightmap worldSurface;
 
     /**
      * The serialised chunk, kept until something invalidates it.
@@ -342,8 +354,8 @@ public class FalcoChunk extends Chunk {
 
         // UpdateHeightMaps
         if (this.needsCompleteHeightmapRefresh) calculateFullHeightmap();
-        this.motionBlocking.refresh(sectionRelativeX, y, sectionRelativeZ, block);
-        this.worldSurface.refresh(sectionRelativeX, y, sectionRelativeZ, block);
+        motionBlockingHeightmap().refresh(sectionRelativeX, y, sectionRelativeZ, block);
+        worldSurfaceHeightmap().refresh(sectionRelativeX, y, sectionRelativeZ, block);
     }
 
     /**
@@ -455,23 +467,74 @@ public class FalcoChunk extends Chunk {
     }
 
     /**
-     * Hands out the heightmap of the highest movement-blocking block per column.
+     * Hands out the heightmap of the highest movement-blocking block per column, building it if this
+     * chunk does not have one yet.
+     * <p>
+     * A heightmap is a {@code short[256]} plus its carrier, and both heightmaps together are one sixth
+     * of everything a fresh chunk retains. Minestom builds them in a field initialiser, so a chunk
+     * pays for them whether or not anybody ever reads a height. Most chunks do get asked eventually —
+     * a chunk that is sent to a client hands both of them to the packet, and a chunk that is written
+     * to refreshes both — but the window between construction and that first question is exactly the
+     * window a chunk loader and a generator work in, and a chunk that is loaded, read and never sent
+     * never leaves it.
+     * </p>
+     * <p>
+     * The creation is a double-checked lock over the monitor of this chunk rather than a plain lazy
+     * field. The read lock and the write lock of a chunk do not cover this method — a caller may reach
+     * it without either — and two threads which both created a heightmap would leave one of them
+     * holding heights that the chunk then throws away.
+     * </p>
      *
      * @return the motion blocking heightmap
      */
     @Override
     public Heightmap motionBlockingHeightmap() {
-        return this.motionBlocking;
+        Heightmap heightmap = this.motionBlocking;
+
+        if (heightmap != null) return heightmap;
+        synchronized (this) {
+            heightmap = this.motionBlocking;
+            if (heightmap == null) {
+                heightmap = new MotionBlockingHeightmap(this);
+                this.motionBlocking = heightmap;
+            }
+            return heightmap;
+        }
     }
 
     /**
-     * Hands out the heightmap of the highest non-air block per column.
+     * Hands out the heightmap of the highest non-air block per column, building it if this chunk does
+     * not have one yet.
      *
      * @return the world surface heightmap
      */
     @Override
     public Heightmap worldSurfaceHeightmap() {
-        return this.worldSurface;
+        Heightmap heightmap = this.worldSurface;
+
+        if (heightmap != null) return heightmap;
+        synchronized (this) {
+            heightmap = this.worldSurface;
+            if (heightmap == null) {
+                heightmap = new WorldSurfaceHeightmap(this);
+                this.worldSurface = heightmap;
+            }
+            return heightmap;
+        }
+    }
+
+    /**
+     * Reports whether this chunk has built its heightmaps yet.
+     * <p>
+     * Exposed because a property nothing can observe is a property nothing can assert, and the whole
+     * value of building them on demand is the claim that a chunk which was only loaded holds none.
+     * </p>
+     *
+     * @return whether either heightmap exists
+     * @since 0.4.0
+     */
+    public boolean hasHeightmaps() {
+        return this.motionBlocking != null || this.worldSurface != null;
     }
 
     /**
@@ -722,9 +785,11 @@ public class FalcoChunk extends Chunk {
     protected Map<Heightmap.Type, long[]> getHeightmaps() {
         assertReadLock();
         if (this.needsCompleteHeightmapRefresh) calculateFullHeightmap();
+        final Heightmap motion = motionBlockingHeightmap();
+        final Heightmap surface = worldSurfaceHeightmap();
         return Map.of(
-                this.motionBlocking.type(), this.motionBlocking.getNBT(),
-                this.worldSurface.type(), this.worldSurface.getNBT()
+                motion.type(), motion.getNBT(),
+                surface.type(), surface.getNBT()
         );
     }
 
@@ -783,8 +848,8 @@ public class FalcoChunk extends Chunk {
     private void calculateFullHeightmap() {
         assertWriteLock();
         final int startY = highestBlockSection();
-        this.motionBlocking.refresh(startY);
-        this.worldSurface.refresh(startY);
+        motionBlockingHeightmap().refresh(startY);
+        worldSurfaceHeightmap().refresh(startY);
         this.needsCompleteHeightmapRefresh = false;
     }
 }

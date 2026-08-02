@@ -65,7 +65,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.3.0
  * @since 0.4.0
  */
 @DisplayName("What a caller of a Falco chunk makes it allocate")
@@ -168,6 +168,51 @@ class SectionMaterialisationTest {
             chunk.unlockReadLock();
         }
         assertEquals(0, owned(chunk));
+    }
+
+    /**
+     * Prices the on-demand heightmap, which is the one saving that could plausibly be paid for twice.
+     * <p>
+     * A heightmap that is built later is only cheaper if building it later does not build everything
+     * else with it. The two numbers below separate the two halves of that question: creating the
+     * carrier costs nothing at all, and the sections are owed to whoever asks the heightmap for a
+     * height, exactly as before. The remaining cases of this class are the proof that the second half
+     * did not move — they are unchanged, and a descent that had shifted into the accessor would have
+     * changed every one of them.
+     * </p>
+     */
+    @Test
+    @DisplayName("building a heightmap owns nothing, asking it a height owns what the descent walks")
+    void testTheOnDemandHeightmapOwnsNothingUntilItIsAskedAHeight() {
+        final FalcoChunk fresh = chunk();
+
+        assertNotNull(fresh.motionBlockingHeightmap());
+        assertNotNull(fresh.worldSurfaceHeightmap());
+
+        assertEquals(0, owned(fresh),
+                "a Heightmap is a short[256] and two ints; its constructor reads the dimension of the "
+                        + "instance and touches no section. Building both on demand therefore moves "
+                        + "nothing into the accessor, which is the risk this case exists to rule out");
+
+        final FalcoChunk asked = chunk();
+
+        asked.lockReadLock();
+        try {
+            asked.motionBlockingHeightmap().getHeight(0, 0);
+        } finally {
+            asked.unlockReadLock();
+        }
+
+        assertEquals(SECTIONS, owned(asked),
+                "and this is what a height costs on a chunk nothing has refreshed: Heightmap#getHeight "
+                        + "falls back to the static Heightmap#getHighestBlockSection, which walks every "
+                        + "section of the chunk through Chunk#getSection until it finds a non-empty "
+                        + "palette - on an empty chunk, all twenty-four. FalcoChunk never takes that "
+                        + "route itself; calculateFullHeightmap starts from highestBlockSection(), "
+                        + "which reads through BlockStorage#view(int). The number is stated so that a "
+                        + "caller which reaches for getHeight on a fresh chunk knows it is buying the "
+                        + "eager layout, and it is unchanged by the heightmaps becoming lazy: the "
+                        + "eager field carried needsRefresh just as the built one does");
     }
 
     @Test
