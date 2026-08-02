@@ -1,6 +1,7 @@
 package net.onelitefeather.falco.anvil;
 
 import net.kyori.adventure.key.Key;
+import net.kyori.adventure.nbt.BinaryTagIO;
 import net.kyori.adventure.nbt.CompoundBinaryTag;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.Instance;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -186,6 +188,73 @@ class FalcoAnvilLoaderBuilderTest {
         }
 
         assertEquals(1, reported.size(), "the failure reaches the configured sink");
+    }
+
+    /**
+     * A biome resolver given to the builder is the one the loader decodes with.
+     * <p>
+     * The mirror of the block resolver test. Both defaults are built from the effective diagnostics,
+     * and both slots are equally able to break a load, so both are pinned rather than one of them
+     * being trusted to behave like the other.
+     * </p>
+     */
+    @Test
+    void testAGivenBiomeResolverIsTheOneTheLoaderDecodesWith(Env env) throws IOException {
+        Instance instance = env.createEmptyInstance();
+        saveOneChunk(env, instance);
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .biomeResolver(new RefusingResolver())
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+
+            assertThrows(AnvilChunkException.class, () -> loader.loadChunk(instance, 0, 0));
+        }
+    }
+
+    /**
+     * The configured data version is what ends up in the chunk on disk.
+     * <p>
+     * The slot exists because the default is bound to Falco's compile time: {@code DATA_VERSION} is
+     * a constant of the Minestom that Falco was built against, inlined by the compiler, and not
+     * necessarily the one the caller runs against. Writing a world for a divergent Minestom is the
+     * only reason the slot exists, so the value has to reach the file rather than a field.
+     * </p>
+     */
+    @Test
+    void testAConfiguredDataVersionReachesTheChunkOnDisk(Env env) throws IOException {
+        Instance instance = env.createEmptyInstance();
+        Chunk chunk = instance.loadChunk(0, 0).join();
+
+        chunk.lockWriteLock();
+        try {
+            chunk.setBlock(1, 41, 2, Block.GOLD_BLOCK);
+        } finally {
+            chunk.unlockWriteLock();
+        }
+
+        final Path regionDirectory;
+
+        try (FalcoAnvilLoader writer = FalcoAnvilLoader.builder()
+                .dataVersion(1234)
+                .build(this.worldRoot, OVERWORLD)) {
+            writer.saveChunk(chunk);
+            regionDirectory = writer.regionDirectory();
+        }
+
+        Path regionFile = regionDirectory.resolve("r.0.0.mca");
+
+        try (RegionFile region = RegionFile.open(regionFile)) {
+            RegionFile.RawChunk raw = region.readRaw(0, 0);
+
+            assertNotNull(raw, "the chunk was written");
+
+            byte[] nbt = raw.compression().decompress(raw.payload());
+            CompoundBinaryTag tag = BinaryTagIO.unlimitedReader().read(new ByteArrayInputStream(nbt));
+
+            assertEquals(1234, tag.getInt("DataVersion"), "the value from the slot, not the compiled-in one");
+        }
     }
 
     /**
