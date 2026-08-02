@@ -54,15 +54,12 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
@@ -116,7 +113,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.3.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -149,32 +146,20 @@ public class FalcoInstance extends Instance {
     private static final int UNREGISTER_PASSES = 4;
 
     /**
-     * The loaded chunks, keyed by the chunk index of their position.
+     * Which chunk sits at which position, and which position is busy.
      * <p>
-     * A plain concurrent hash map rather than the synchronised long map of the container: chunk
-     * streaming is a lookup-dominated access pattern, and the copy-on-write map underneath the
-     * container pays for every load and unload instead.
+     * The two maps behind this and the four transitions between them used to be fields and
+     * {@code private} methods of this class. They are a responsibility rather than a detail of the
+     * instance, and {@link ChunkRegistry} carries both the answer and the state it needs to give it,
+     * so nothing of the chunk map is left here to be shared with anything else.
+     * </p>
+     * <p>
+     * That the map of running loads is also the lock of a position is stated where the transitions
+     * are, in {@link ChunkRegistry}, and the steps this class hands to
+     * {@link ChunkRegistry#publish} and {@link ChunkRegistry#remove} are what it contributes to them.
      * </p>
      */
-    private final Map<Long, Chunk> chunks = new ConcurrentHashMap<>();
-
-    /**
-     * The chunks which are being loaded right now, keyed by chunk index.
-     * <p>
-     * Holding the future rather than a flag is what makes two concurrent requests for the same
-     * chunk share one load instead of racing into two chunk objects.
-     * </p>
-     * <p>
-     * This map is also the lock of a chunk position. Every transition of a position — starting a
-     * load, publishing its result, unloading the chunk again — happens inside a
-     * {@link ConcurrentHashMap#compute} on the index of that position, which serialises them without
-     * putting a monitor over the whole instance. That is what the entry of a position is worth far
-     * more than the future it holds: without it, an unload and the load it races can both believe
-     * they went first, and the chunk which loses ends up in the instance with its loaded flag
-     * already cleared, where nothing will ever unload it again.
-     * </p>
-     */
-    private final Map<Long, CompletableFuture<Chunk>> loadingChunks = new ConcurrentHashMap<>();
+    private final ChunkRegistry registry = new ChunkRegistry();
 
     /**
      * The section modifiers a generator produced for chunks which were not loaded at the time,
@@ -413,9 +398,9 @@ public class FalcoInstance extends Instance {
     public void unregister(InstanceManager instanceManager) {
         if (isRegistered()) instanceManager.unregisterInstance(this);
         for (int pass = 0; pass < UNREGISTER_PASSES; pass++) {
-            for (Long index : List.copyOf(this.loadingChunks.keySet())) discardRunningLoad(index);
-            for (Chunk chunk : List.copyOf(this.chunks.values())) unloadChunk(chunk);
-            if (this.loadingChunks.isEmpty() && this.chunks.isEmpty()) {
+            for (Long index : this.registry.loadingPositions()) discardRunningLoad(index);
+            for (Chunk chunk : this.registry.snapshot()) unloadChunk(chunk);
+            if (this.registry.idle()) {
                 // A fork whose target chunk was never requested waits forever, and after this there
                 // is nothing left it could wait for.
                 this.generationForks.clear();
@@ -424,7 +409,7 @@ public class FalcoInstance extends Instance {
         }
         this.generationForks.clear();
         LOGGER.warn("chunks kept arriving while the instance {} was unregistered; {} chunks and {} loads are left behind",
-                getUuid(), this.chunks.size(), this.loadingChunks.size());
+                getUuid(), this.registry.size(), this.registry.loading());
     }
 
     /**
@@ -440,7 +425,7 @@ public class FalcoInstance extends Instance {
      * @param index the chunk index of the position whose load is claimed
      */
     private void discardRunningLoad(long index) {
-        final CompletableFuture<Chunk> running = this.loadingChunks.remove(index);
+        final CompletableFuture<Chunk> running = this.registry.discard(index);
         if (running == null) return;
         running.completeExceptionally(new FalcoInstanceException("the chunk "
                 + CoordConversion.chunkIndexGetX(index) + ":" + CoordConversion.chunkIndexGetZ(index)
@@ -630,18 +615,15 @@ public class FalcoInstance extends Instance {
     /**
      * Hands back the chunk at the given position, loading it if it is not there yet.
      * <p>
-     * Two callers asking for the same chunk at the same time share one load: the first one to put
-     * its future into the map of loading chunks performs the work, everyone else receives that same
-     * future. The decision is taken inside a {@link ConcurrentHashMap#compute} on the position, and
-     * the chunk map is read a second time in there. Without that second read a caller which looked
-     * at the chunk map just before a load published, and reached this point just after that load
-     * removed its entry, would start a second load for a position which already has a chunk. The
-     * second chunk then replaces the first one in the map and the first one is orphaned: still
-     * marked as loaded, still holding its tick partition and its viewers, and no longer reachable.
+     * Two callers asking for the same chunk at the same time share one load: the first one to offer
+     * its future to {@link ChunkRegistry#acquire} performs the work, everyone else receives that
+     * same future. Which of the three cases a caller is in is the registry's decision and is
+     * explained there; this method only acts on the answer.
      * </p>
      * <p>
      * The work itself starts after the decision, never inside it. A loader without parallel support
-     * runs on the calling thread, and a nested {@code compute} on the same map would deadlock.
+     * runs on the calling thread, and starting it inside the decision would run it while the
+     * position is held, where a nested transition of the same position would deadlock.
      * </p>
      * <p>
      * A failure completes the returned future exceptionally and stops there. It is deliberately not
@@ -655,33 +637,30 @@ public class FalcoInstance extends Instance {
      */
     private CompletableFuture<Chunk> retrieveChunk(int chunkX, int chunkZ) {
         final long index = CoordConversion.chunkIndex(chunkX, chunkZ);
-        final Chunk loaded = this.chunks.get(index);
+        final Chunk loaded = this.registry.chunk(index);
         if (loaded != null) return CompletableFuture.completedFuture(loaded);
 
         final CompletableFuture<Chunk> own = new CompletableFuture<>();
-        final AtomicReference<Chunk> published = new AtomicReference<>();
-        final CompletableFuture<Chunk> slot = this.loadingChunks.compute(index, (_, running) -> {
-            if (running != null) return running;
-            final Chunk cached = this.chunks.get(index);
-            if (cached != null) {
-                published.set(cached);
-                return null;
+        final ChunkRegistry.LoadSlot slot = this.registry.acquire(index, own);
+        switch (slot) {
+            case ChunkRegistry.LoadSlot.Loaded(Chunk cached) -> {
+                return CompletableFuture.completedFuture(cached);
             }
-            return own;
-        });
-        final Chunk cached = published.get();
-        if (cached != null) return CompletableFuture.completedFuture(cached);
-        if (slot != own) return slot;
-
-        final ChunkLoader loader = this.chunkLoader;
-        if (loader.supportsParallelLoading()) {
-            Thread.startVirtualThread(() -> completeLoad(index, chunkX, chunkZ, loader, own));
-        } else {
-            // A loader without parallel support is read on the calling thread, which keeps a
-            // `loadChunk(…).join()` from a tick free of a thread hand-off it would only wait for.
-            completeLoad(index, chunkX, chunkZ, loader, own);
+            case ChunkRegistry.LoadSlot.Running(CompletableFuture<Chunk> running) -> {
+                return running;
+            }
+            case ChunkRegistry.LoadSlot.Claimed ignored -> {
+                final ChunkLoader loader = this.chunkLoader;
+                if (loader.supportsParallelLoading()) {
+                    Thread.startVirtualThread(() -> completeLoad(index, chunkX, chunkZ, loader, own));
+                } else {
+                    // A loader without parallel support is read on the calling thread, which keeps a
+                    // `loadChunk(…).join()` from a tick free of a thread hand-off it would only wait for.
+                    completeLoad(index, chunkX, chunkZ, loader, own);
+                }
+                return own;
+            }
         }
-        return own;
     }
 
     /**
@@ -709,7 +688,7 @@ public class FalcoInstance extends Instance {
             }
             falcoChunk = requireManagedChunk(chunk);
         } catch (Throwable throwable) {
-            this.loadingChunks.remove(index, future);
+            this.registry.release(index, future);
             future.completeExceptionally(throwable);
             return;
         }
@@ -748,15 +727,8 @@ public class FalcoInstance extends Instance {
      * @return true if the chunk is now part of this instance, false if the load was claimed
      */
     private boolean publishChunk(long index, Chunk chunk, CompletableFuture<Chunk> future) {
-        final AtomicBoolean published = new AtomicBoolean();
-        this.loadingChunks.compute(index, (_, running) -> {
-            if (running != future) return running;
-            this.chunks.put(index, chunk);
-            MinecraftServer.process().dispatcher().createPartition(chunk);
-            published.set(true);
-            return null;
-        });
-        return published.get();
+        return this.registry.publish(index, chunk, future,
+                published -> MinecraftServer.process().dispatcher().createPartition(published));
     }
 
     /**
@@ -896,16 +868,11 @@ public class FalcoInstance extends Instance {
         final int chunkX = falcoChunk.getChunkX();
         final int chunkZ = falcoChunk.getChunkZ();
         final long index = CoordConversion.chunkIndex(chunkX, chunkZ);
-        final AtomicBoolean removed = new AtomicBoolean();
-        this.loadingChunks.compute(index, (_, running) -> {
-            if (this.chunks.remove(index, falcoChunk)) {
-                notifyUnloaded(falcoChunk);
-                MinecraftServer.process().dispatcher().deletePartition(falcoChunk);
-                removed.set(true);
-            }
-            return running;
+        final boolean removed = this.registry.remove(index, falcoChunk, unloaded -> {
+            notifyUnloaded(unloaded);
+            MinecraftServer.process().dispatcher().deletePartition(unloaded);
         });
-        if (!removed.get()) return;
+        if (!removed) return;
         falcoChunk.sendPacketToViewers(new UnloadChunkPacket(chunkX, chunkZ));
         EventDispatcher.call(new InstanceChunkUnloadEvent(this, falcoChunk));
         getEntityTracker().chunkEntities(chunkX, chunkZ, EntityTracker.Target.ENTITIES).forEach(Entity::remove);
@@ -914,12 +881,12 @@ public class FalcoInstance extends Instance {
 
     @Override
     public @Nullable Chunk getChunk(int chunkX, int chunkZ) {
-        return this.chunks.get(CoordConversion.chunkIndex(chunkX, chunkZ));
+        return this.registry.chunk(chunkX, chunkZ);
     }
 
     @Override
     public @UnmodifiableView Collection<Chunk> getChunks() {
-        return Collections.unmodifiableCollection(this.chunks.values());
+        return this.registry.chunks();
     }
 
     @Override
@@ -937,7 +904,7 @@ public class FalcoInstance extends Instance {
     @Override
     public CompletableFuture<Void> saveChunksToStorage() {
         final ChunkLoader loader = this.chunkLoader;
-        final List<Chunk> snapshot = List.copyOf(this.chunks.values());
+        final List<Chunk> snapshot = this.registry.snapshot();
         return runSave(loader.supportsParallelSaving(), () -> loader.saveChunks(snapshot));
     }
 
