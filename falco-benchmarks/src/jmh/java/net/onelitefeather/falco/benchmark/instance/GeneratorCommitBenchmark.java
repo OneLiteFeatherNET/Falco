@@ -90,7 +90,8 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * The chunk this class fills is filled through {@code Chunk#setBlock}, and the palettes that come out
  * of it are not the palettes Task 6 will optimise.
- * {@link #widthAGeneratorWouldLeave(Palette)} states the difference and reproduces it, and it is worth
+ * {@link #asAGeneratorWouldHaveWrittenIt(Palette)} states the difference and removes it by rewriting
+ * the content through {@code Palette#setAll}, the method a generator's commit ends in. It is worth
  * naming in one line here as well: a palette grown one block at a time carries at most a bit of slack,
  * while a palette a generator wrote is at the direct width whatever it holds. Measuring the first and
  * reporting it as the second would have understated both what the optimisation costs and what it
@@ -112,7 +113,7 @@ import java.util.concurrent.TimeUnit;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @State(Scope.Thread)
@@ -177,10 +178,7 @@ public class GeneratorCommitBenchmark {
             final Palette alreadyPacked = blocks.clone();
             alreadyPacked.optimize(Palette.Optimization.SIZE);
 
-            final Palette stagedPalette = blocks.clone();
-            stagedPalette.optimize(widthAGeneratorWouldLeave(alreadyPacked));
-
-            this.staged.add(stagedPalette);
+            this.staged.add(asAGeneratorWouldHaveWrittenIt(blocks));
             this.packed.add(alreadyPacked);
             this.target[index] = new Section();
         }
@@ -188,7 +186,7 @@ public class GeneratorCommitBenchmark {
     }
 
     /**
-     * Answers which width a generator would have left a section of this content at.
+     * Rewrites the content of a section into a fresh palette the way a generator writes it.
      * <p>
      * The fixture is built through {@code Chunk#setBlock}, because that is the only write path every
      * chunk type of this module shares, and a palette grown one block at a time is never much wider
@@ -204,20 +202,25 @@ public class GeneratorCommitBenchmark {
      * </p>
      * <p>
      * Staging the fixture at the width {@code setBlock} produced would measure the optimisation on
-     * input Task 6 will never hand it. The two branches are reproduced here through the only public
-     * door to them: {@code Optimization.SPEED} is {@code makeDirect}, and {@code Optimization.SIZE} on
-     * a single valued palette is the {@code fill} the constant branch performs.
+     * input Task 6 will never hand it. So this method does not imitate either branch — it takes the
+     * same door the generator takes. {@code Palette#setAll(EntrySupplier)} is public API, the fresh
+     * {@code Palette.blocks()} below is the palette an unwritten section carries, and the supplier is
+     * the content of the fixture section. Which of the two branches runs is Minestom's decision here,
+     * not this class's, and that is what makes {@link #verifyTheFixtureIsStagedLikeAGenerator()} a
+     * real guard rather than a restatement of a constant: were {@code setAll} to stop calling
+     * {@code makeDirect}, the staged width would follow it and the guard would say so. Re-enacting the
+     * branches through {@code Optimization.SPEED} and {@code Optimization.SIZE} — the shape this method
+     * had before — would have produced the same two widths by construction and could not have noticed.
      * </p>
      *
-     * @param alreadyPacked the same content already reduced to its minimum width, which is in the
-     *                      single value mode exactly when a generator's constant branch would have been
-     * @return {@link Palette.Optimization#SIZE} for a section a generator would have filled with one
-     *         value, {@link Palette.Optimization#SPEED} for every section it would have made direct
+     * @param generated the palette of the fixture section, read and never written
+     * @return a new palette holding the same content at the width {@code PaletteImpl#setAll} leaves it
      */
-    private static Palette.Optimization widthAGeneratorWouldLeave(Palette alreadyPacked) {
-        return alreadyPacked.bitsPerEntry() == 0
-                ? Palette.Optimization.SIZE
-                : Palette.Optimization.SPEED;
+    private static Palette asAGeneratorWouldHaveWrittenIt(Palette generated) {
+        final Palette written = Palette.blocks();
+
+        written.setAll(generated::get);
+        return written;
     }
 
     @TearDown(Level.Trial)
@@ -284,9 +287,19 @@ public class GeneratorCommitBenchmark {
      * What a generator leaves is not a range but two values. {@code PaletteImpl#setAll} sends a
      * constant supplier to {@code fill} and everything else to {@code makeDirect}, so every staged
      * palette must be either in the single value mode or at the direct width, and any third width means
-     * the staging in {@link #widthAGeneratorWouldLeave(Palette)} stopped reproducing Minestom — either
-     * because it broke or because {@code setAll} changed. Both are silent failures that turn every
-     * number of this class back into a measurement of the wrong input, so both stop the run here.
+     * the staging stopped producing what a generator produces. Because
+     * {@link #asAGeneratorWouldHaveWrittenIt(Palette)} calls {@code setAll} itself rather than
+     * re-enacting its two arms, that covers both ways this can happen: the staging call being dropped,
+     * and {@code setAll} in a future Minestom no longer widening what it is handed. Both are silent
+     * failures that turn every number of this class back into a measurement of the wrong input, so both
+     * stop the run here.
+     * </p>
+     * <p>
+     * One blind spot is left and is named rather than papered over: at {@code 1024} distinct states the
+     * fixture is already at the direct width before it is staged, so the two shapes coincide and no
+     * width can tell them apart. The guard therefore speaks at {@code 1} and at {@code 64} and is
+     * silent at {@code 1024}. That is enough — a staging that stopped widening would be caught at the
+     * two lower points of the same run — but it is not the same as a guard that watches every point.
      * </p>
      *
      * @throws IllegalStateException if a staged palette is at neither the single value mode nor the
