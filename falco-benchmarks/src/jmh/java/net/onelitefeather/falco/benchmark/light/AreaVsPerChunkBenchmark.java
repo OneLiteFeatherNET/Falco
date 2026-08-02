@@ -40,9 +40,16 @@ import java.util.concurrent.TimeUnit;
  * of this class: it is a decision, not a report.
  * </p>
  * <p>
- * Both sides run on the same chunks and write into them, which is what the real code does. The
- * chunks are rebuilt per iteration so neither side benefits from the light the other one left
- * behind.
+ * Both sides run on the same chunks and write into them, which is what the real code does. Neither
+ * side benefits from the light the other one left behind, because JMH gives each measured method its
+ * own trial and {@code @Setup(Level.Trial)} builds the chunks afresh for it.
+ * </p>
+ * <p>
+ * Within one trial the chunks are <em>not</em> rebuilt between iterations, and both methods write
+ * light into them, so every iteration after the first measures a re-light of already lit chunks
+ * rather than a first light. Whether that moves the number is untested: raising the setup to
+ * {@link Level#Iteration} would answer it, at the cost of leaving the configuration the published
+ * table was measured under.
  * </p>
  *
  * @author TheMeinerLP
