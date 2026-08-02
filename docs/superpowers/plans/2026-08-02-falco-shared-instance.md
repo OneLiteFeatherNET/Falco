@@ -517,6 +517,20 @@ git commit -m "test(instance): pin that a move into a shared instance sends no c
 
 ### Task 3: A generator of its own
 
+> **Decided by the owner, after the open question was put to them.** The setter **stores per instance
+> and the getter returns what was stored** — the aliasing is repaired. The alternative, throwing and
+> pointing at the container, was considered and rejected.
+>
+> The consequence must be written where a caller will see it, because this is a value with no reader:
+> chunks are created by the container, which asks *its* generator, so a generator set on a view never
+> generates anything. The javadoc of `setGenerator` and `getGenerator` has to say both halves in plain
+> words — what it fixes (two views no longer overwrite each other's setting) and what it does not do
+> (it does not make this view generate). A setter that silently has no effect is precisely the kind of
+> trap this project spends its reviews hunting. Stating it is the whole difference between a
+> documented limitation and a defect.
+>
+> The same applies to `setChunkSupplier` in Task 4.
+
 **Files:**
 - Modify: `falco-instance/src/main/java/net/onelitefeather/falco/instance/FalcoSharedInstance.java`
 - Test: `falco-instance/src/test/java/net/onelitefeather/falco/instance/FalcoSharedInstanceStateTest.java`
