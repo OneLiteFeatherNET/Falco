@@ -63,6 +63,40 @@ class ChunkLightAreaTest {
         assertEquals(14, service.blockLightAt(right, 0, 40, 8), "light has to reach across the border");
     }
 
+    /**
+     * A source in a chunk that touches the area only at a corner still reaches it.
+     * <p>
+     * The ring is built from the face neighbours of every chunk in the area, so a diagonal chunk is
+     * never read. Its light does arrive through the chunk between the two — but that chunk is a ring
+     * chunk, and a ring chunk's state is computed from its own block states alone, so what it
+     * received from its diagonal neighbour is not in it. The source is simply missing from the
+     * result.
+     * </p>
+     * <p>
+     * Invisible in every other test here, because they all place their sources inside the area or on
+     * a face. {@code calculateWithNeighbours} reads the full 3×3 and does not have the gap, which is
+     * why it is still the more accurate of the two for a single chunk.
+     * </p>
+     */
+    @Test
+    void testASourceInADiagonalChunkReachesTheArea(Env env) {
+        Instance instance = env.createEmptyInstance();
+        Chunk middle = instance.loadChunk(0, 0).join();
+        instance.loadChunk(1, 0).join();
+        instance.loadChunk(0, 1).join();
+        Chunk diagonal = instance.loadChunk(1, 1).join();
+
+        // The corner of the diagonal chunk closest to the area: two blocks from the corner of the
+        // middle chunk, so a level of 15 arrives as 13 if it arrives at all.
+        place(diagonal, 0, 40, 0, Block.GLOWSTONE);
+
+        ChunkLightService service = new ChunkLightService();
+        new ChunkLightArea(service).compute(instance, List.of(new ChunkArea(0, 0)), false);
+
+        assertEquals(13, service.blockLightAt(middle, 15, 40, 15),
+                "a source one chunk away diagonally still lights the corner of the area");
+    }
+
     @Test
     void testChunksOutsideTheAreaKeepTheirLight(Env env) {
         // The ring is read so the area's edge is correct, but it must never be written —
