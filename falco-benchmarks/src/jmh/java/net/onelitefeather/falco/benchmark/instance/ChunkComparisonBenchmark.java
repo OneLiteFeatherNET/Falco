@@ -104,8 +104,10 @@ import java.util.concurrent.TimeUnit;
  * <h2>The four operations, and why these four</h2>
  * <p>
  * A chunk is written to, read from, copied and asked for its heightmaps, and those four paths have
- * four different cost structures. {@code setBlock} is a palette write plus two hash probes plus two
- * incremental heightmap updates. {@code getBlock} is a palette read behind a guard over the block
+ * four different cost structures. {@code setBlock} is a palette write plus a hash probe per block
+ * map plus two incremental heightmap updates — two probes on the Minestom arm, which keeps a second
+ * map of its tickable blocks, and one on the Falco arm, which keeps a counter instead.
+ * {@code getBlock} is a palette read behind a guard over the block
  * entity map. {@code copy} clones every section, which is the one operation whose cost is dominated
  * by allocation rather than by work. The full heightmap refresh is a top-down palette scan over all
  * {@code 256} columns and is the most expensive of the four by a wide margin. A candidate storage
@@ -281,7 +283,7 @@ import java.util.concurrent.TimeUnit;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.3.0
+ * @version 1.4.0
  * @since 0.4.0
  */
 @State(Scope.Thread)
@@ -453,8 +455,9 @@ public class ChunkComparisonBenchmark {
      * grows for the length of the trial. {@link #falcoCopy()} does not pay it, for the sole reason
      * that a {@code FalcoInstance} is not an {@code InstanceContainer} and is handed the
      * {@code List.of()} singleton instead, whose identity is stable. The two implementations differ
-     * only in that the Falco one additionally copies {@code tickableMap}, so on the code alone this
-     * arm should be the faster of the two, not slower by more than an order of magnitude.
+     * only in that the Falco one additionally carries over its tickable counter, one {@code int}
+     * assignment, so on the code alone this arm should be the faster of the two, not slower by more
+     * than an order of magnitude.
      * </p>
      * <p>
      * {@code ChunkViewerCacheLeakTest} establishes the mechanism and its linearity.
@@ -543,10 +546,13 @@ public class ChunkComparisonBenchmark {
      * Measures a full copy of a {@code FalcoChunk} into an instance that is not a container.
      * <p>
      * The counterpart of {@link #minestomCopyIsolated()}, against which it is comparable. On the
-     * code alone this arm is expected to be the slower of the two by a small margin, because
-     * {@code FalcoChunk#copy} additionally copies {@code tickableMap} while
-     * {@code DynamicChunk#copy} copies only {@code entries}. A result in the other direction, or a
-     * margin that is not small, means this pair is measuring something other than the copy as well.
+     * code alone this arm is expected to be the slower of the two by a margin too small to resolve,
+     * because {@code FalcoChunk#copy} additionally carries over its tickable counter — one
+     * {@code int} assignment — while {@code DynamicChunk#copy} copies only {@code entries}. Until
+     * this task the extra work was a whole {@code Int2ObjectOpenHashMap} copy, which is why this
+     * paragraph used to expect a small but real margin rather than none. A result in the other
+     * direction by more than noise means this pair is measuring something other than the copy as
+     * well.
      * </p>
      *
      * @return the created copy

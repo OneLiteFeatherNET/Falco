@@ -20,7 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code ChunkComparisonBenchmark} reported {@code FalcoChunk#copy} as twenty to forty times faster
  * than {@code DynamicChunk#copy} while every other measured operation of the two agreed to the
  * decimal, which cannot be true of the code: the two implementations differ only in that the Falco
- * one additionally copies {@code tickableMap}, so it does strictly more work. A difference of that
+ * one carries over its tickable bookkeeping as well, so it does strictly more work — at the time a
+ * whole {@code Int2ObjectOpenHashMap} copy, today the single {@code int} that replaced it, which
+ * makes the argument weaker in magnitude and no different in direction. A difference of that
  * size with no cause in the code means the two arms are not measuring the same thing, and the
  * benchmark had to be disqualified until the cause was named. This is the cause.
  * </p>
@@ -73,7 +75,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * }</pre>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.0.1
  * @since 0.4.0
  */
 @DisplayName("The viewer cache an instance keeps for its chunks")
