@@ -29,6 +29,7 @@ import java.util.Arrays;
 public final class LightPropagator {
 
     private static final BlockFace[] FACES = BlockFace.values();
+    private static final int MASK = LightNibbles.DIMENSION - 1;
 
     /**
      * The opposite of every face, in the order of {@link #FACES}.
@@ -39,6 +40,46 @@ public final class LightPropagator {
      * </p>
      */
     private static final BlockFace[] OPPOSITES = opposites();
+
+    /**
+     * The index into {@link #FACES} of the opposite of every face.
+     * <p>
+     * A queued position remembers the face that points back at whoever queued it, and a face is
+     * cheaper to carry as its index than as a reference. This is that index.
+     * </p>
+     */
+    private static final int[] OPPOSITE_INDEX = oppositeIndexes();
+
+    /**
+     * The amount of bits a queued position occupies, leaving the ones above it for the face.
+     * A section holds 4096 positions, so twelve bits carry every one of them.
+     */
+    private static final int POSITION_BITS = 12;
+
+    /**
+     * The bits of a queue entry which carry the position.
+     */
+    private static final int POSITION_MASK = (1 << POSITION_BITS) - 1;
+
+    /**
+     * The face value of an entry which nobody queued, so no direction may be skipped for it.
+     * Six faces occupy the indexes zero to five, which leaves this one free.
+     */
+    private static final int NO_FACE = 7;
+
+    /**
+     * Resolves the index of the opposite of every face once.
+     *
+     * @return the index of the opposite of every face, indexed like {@link #FACES}
+     */
+    private static int[] oppositeIndexes() {
+        int[] indexes = new int[FACES.length];
+
+        for (int index = 0; index < FACES.length; index++) {
+            indexes[index] = OPPOSITES[index].ordinal();
+        }
+        return indexes;
+    }
 
     /**
      * Resolves the opposite of every face once.
@@ -53,7 +94,6 @@ public final class LightPropagator {
         }
         return opposites;
     }
-    private static final int MASK = LightNibbles.DIMENSION - 1;
 
     private final byte[] levels;
     private int[] queue;
@@ -98,7 +138,9 @@ public final class LightPropagator {
         int head = 0;
 
         while (head < tail) {
-            int index = this.queue[head++];
+            int entry = this.queue[head++];
+            int index = entry & POSITION_MASK;
+            int arrivedFrom = entry >>> POSITION_BITS;
             int level = this.levels[index];
 
             if (level <= 1) {
@@ -111,6 +153,12 @@ public final class LightPropagator {
             int next = level - 1;
 
             for (int faceIndex = 0; faceIndex < FACES.length; faceIndex++) {
+                // Whoever queued this position sits on the far side of that face and already holds
+                // a level one higher, so the test below could never pass for it. Skipping the face
+                // outright is the same result for a sixth less work.
+                if (faceIndex == arrivedFrom) {
+                    continue;
+                }
                 BlockFace face = FACES[faceIndex];
                 int neighbourX = x + face.offsetX();
                 int neighbourY = y + face.offsetY();
@@ -119,21 +167,23 @@ public final class LightPropagator {
                 if (isOutside(neighbourX, neighbourY, neighbourZ)) {
                     continue;
                 }
+                int neighbourIndex = index(neighbourX, neighbourY, neighbourZ);
+
+                // The level is one array read, the occlusion is two and a branch, and the level
+                // rejects far more often — a position is reached from up to six directions and only
+                // the first of them raises it. Cheapest and most selective test first.
+                if (this.levels[neighbourIndex] >= next) {
+                    continue;
+                }
                 // Only the face light enters decides whether it can pass. Testing the face it
                 // leaves as well would keep every emitting block that is opaque itself dark, and a
                 // glowstone block is exactly that.
                 if (opacity.blocksFace(neighbourX, neighbourY, neighbourZ, OPPOSITES[faceIndex])) {
                     continue;
                 }
-
-                int neighbourIndex = index(neighbourX, neighbourY, neighbourZ);
-
-                if (this.levels[neighbourIndex] >= next) {
-                    continue;
-                }
                 this.levels[neighbourIndex] = (byte) next;
                 ensureRoom(tail);
-                this.queue[tail++] = neighbourIndex;
+                this.queue[tail++] = neighbourIndex | (OPPOSITE_INDEX[faceIndex] << POSITION_BITS);
             }
         }
         return collect();
@@ -159,7 +209,7 @@ public final class LightPropagator {
                     int index = index(x, y, z);
                     this.levels[index] = (byte) emission;
                     ensureRoom(tail);
-                    this.queue[tail++] = index;
+                    this.queue[tail++] = index | (NO_FACE << POSITION_BITS);
                 }
             }
         }
