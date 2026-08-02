@@ -12,12 +12,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -64,6 +67,11 @@ class FalcoInstancePersistenceTest {
          * How often a chunk save reached this loader.
          */
         private final AtomicInteger chunkSaves = new AtomicInteger();
+
+        /**
+         * How often a chunk was reported as having left the instance.
+         */
+        private final AtomicInteger unloads = new AtomicInteger();
 
         /**
          * The thread the last save ran on.
@@ -118,6 +126,11 @@ class FalcoInstancePersistenceTest {
             this.lastThread.set(Thread.currentThread());
             this.chunkSaves.addAndGet(chunks.size());
             if (this.failure != null) throw this.failure;
+        }
+
+        @Override
+        public void unloadChunk(Chunk chunk) {
+            this.unloads.incrementAndGet();
         }
     }
 
@@ -214,5 +227,42 @@ class FalcoInstancePersistenceTest {
         instance.saveChunkToStorage(chunk).join();
         assertEquals(0, first.chunkSaves.get(), "the old loader must not see the save");
         assertEquals(1, second.chunkSaves.get(), "the new loader has to");
+    }
+
+    @Test
+    @DisplayName("tells the loader that a chunk left the instance")
+    void testAnUnloadReachesTheLoader(Env env) {
+        final CountingLoader loader = new CountingLoader(false, null);
+        final FalcoInstance instance = registered(env, loader);
+        final Chunk chunk = instance.loadChunk(0, 0).join();
+
+        instance.unloadChunk(chunk);
+
+        assertEquals(1, loader.unloads.get(),
+                "the loader may hold bookkeeping for the chunk and has to hear that it left");
+    }
+
+    @Test
+    @DisplayName("is usable on its own, without an instance driving it")
+    void testThePartRunsWithoutTheFacade(Env env) {
+        final CountingLoader loader = new CountingLoader(false, null);
+        final FalcoInstance instance = registered(env, loader);
+        final ChunkPersistence persistence = new ChunkPersistence(loader);
+
+        persistence.saveInstance(instance).join();
+        persistence.saveChunks(List.of()).join();
+
+        assertEquals(1, loader.instanceSaves.get());
+        assertSame(loader, persistence.loader());
+    }
+
+    @Test
+    @DisplayName("uses a loader which saves and loads nothing when it is given none")
+    void testTheDefaultLoaderIsTheNoopOne(Env env) {
+        registered(env, ChunkLoader.noop());
+        final ChunkPersistence persistence = new ChunkPersistence(null);
+
+        assertNotNull(persistence.loader(), "a null loader has to become the noop loader, not stay null");
+        assertNull(persistence.read(null, 0, 0), "the noop loader reads nothing");
     }
 }
