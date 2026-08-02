@@ -3,6 +3,7 @@ package net.onelitefeather.falco.instance;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.SharedInstance;
 import net.minestom.server.instance.generator.Generator;
+import net.minestom.server.utils.chunk.ChunkSupplier;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
@@ -35,7 +36,7 @@ import java.util.UUID;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -51,6 +52,15 @@ public class FalcoSharedInstance extends SharedInstance {
     private volatile @Nullable Generator generator;
 
     /**
+     * The chunk supplier of this instance, which is deliberately not the one of the container.
+     * <p>
+     * Volatile for the same reason the generator is: the thread which configures a view is not the
+     * thread which reads it back.
+     * </p>
+     */
+    private volatile ChunkSupplier chunkSupplier;
+
+    /**
      * Creates a view over the chunks of a container.
      * <p>
      * The configuration of the container is copied once, here. That is what makes a fresh view
@@ -64,6 +74,7 @@ public class FalcoSharedInstance extends SharedInstance {
     public FalcoSharedInstance(UUID uuid, InstanceContainer instanceContainer) {
         super(uuid, Objects.requireNonNull(instanceContainer, "a shared instance needs a container to share"));
         this.generator = instanceContainer.generator();
+        this.chunkSupplier = instanceContainer.getChunkSupplier();
     }
 
     /**
@@ -99,5 +110,44 @@ public class FalcoSharedInstance extends SharedInstance {
     @Override
     public void setGenerator(@Nullable Generator generator) {
         this.generator = generator;
+    }
+
+    /**
+     * Gets the chunk supplier of this instance.
+     * <p>
+     * The answer is what {@link #setChunkSupplier(ChunkSupplier)} last stored on this view, or the
+     * supplier the container carried when this view was created — never a read of the container as it
+     * stands now. Two views over one container therefore answer independently instead of overwriting
+     * each other. The value is also inert: no chunk is ever created from it, because chunks are
+     * created by the container, which asks its own supplier, and a chunk loader is handed the
+     * container rather than the view. Ask {@code getInstanceContainer().getChunkSupplier()} for the
+     * one the world is actually built from.
+     * </p>
+     *
+     * @return the chunk supplier of this instance
+     */
+    @Override
+    public ChunkSupplier getChunkSupplier() {
+        return this.chunkSupplier;
+    }
+
+    /**
+     * Sets the chunk supplier of this instance, and of nothing else.
+     * <p>
+     * Minestom's shared instance forwards this call to its container, so configuring one view
+     * changes what type of chunk the whole world is made of, for every other view along with it.
+     * That is the defect repaired here, and the repair has the same consequence the generator has:
+     * no chunk is created from this value, because chunks are created by the container and the
+     * container asks its own supplier — as does a chunk loader, which is handed the container rather
+     * than the view. Use {@code getInstanceContainer().setChunkSupplier(FalcoChunk::new)} to decide
+     * what the world is built from.
+     * </p>
+     *
+     * @param chunkSupplier the chunk supplier of this instance
+     * @throws NullPointerException if {@code chunkSupplier} is null
+     */
+    @Override
+    public void setChunkSupplier(ChunkSupplier chunkSupplier) {
+        this.chunkSupplier = Objects.requireNonNull(chunkSupplier, "the chunk supplier cannot be null");
     }
 }

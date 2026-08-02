@@ -3,6 +3,7 @@ package net.onelitefeather.falco.instance;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.block.Block;
 import net.minestom.server.instance.generator.Generator;
+import net.minestom.server.utils.chunk.ChunkSupplier;
 import net.minestom.testing.Env;
 import net.minestom.testing.extension.MicrotusExtension;
 import org.junit.jupiter.api.DisplayName;
@@ -11,8 +12,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Covers the three pieces of configuration which Minestom's shared instance writes through to the
@@ -25,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -78,5 +81,42 @@ class FalcoSharedInstanceStateTest {
         assertNull(shared.generator());
         assertSame(generator, container.generator(),
                 "clearing a view must not empty the world it looks at");
+    }
+
+    @Test
+    @DisplayName("starts with the chunk supplier its container had")
+    void testTheChunkSupplierIsSeededFromTheContainer(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+
+        final FalcoSharedInstance shared = registered(env, container);
+
+        assertSame(container.getChunkSupplier(), shared.getChunkSupplier());
+    }
+
+    @Test
+    @DisplayName("keeps a chunk supplier to itself: neither the sibling nor the container sees it")
+    void testTheChunkSupplierDoesNotAlias(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        final ChunkSupplier stock = container.getChunkSupplier();
+        final FalcoSharedInstance first = registered(env, container);
+        final FalcoSharedInstance second = registered(env, container);
+        final ChunkSupplier supplier = FalcoChunk::new;
+
+        first.setChunkSupplier(supplier);
+
+        assertSame(supplier, first.getChunkSupplier());
+        assertSame(stock, second.getChunkSupplier(), "a sibling view must not be reconfigured by this call");
+        assertSame(stock, container.getChunkSupplier(), "the container must not be reconfigured by this call");
+        assertNotSame(supplier, container.getChunkSupplier());
+    }
+
+    @Test
+    @DisplayName("refuses a null chunk supplier instead of storing it")
+    void testTheChunkSupplierIsNotNullable(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        final FalcoSharedInstance shared = registered(env, container);
+
+        assertThrows(NullPointerException.class, () -> shared.setChunkSupplier(null));
+        assertSame(container.getChunkSupplier(), shared.getChunkSupplier());
     }
 }
