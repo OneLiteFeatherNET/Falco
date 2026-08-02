@@ -6,7 +6,6 @@ import net.minestom.server.coordinate.Point;
 import net.minestom.server.entity.Player;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.ChunkLoader;
-import net.minestom.server.instance.DynamicChunk;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.InstanceManager;
 import net.minestom.server.instance.block.Block;
@@ -141,7 +140,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 2.0.1
+ * @version 2.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -764,22 +763,28 @@ public class FalcoInstance extends Instance {
      * Without this the instance manages {@link FalcoChunk} and nothing else, for a reason that is
      * not a preference: {@code Chunk#onLoad()} and {@code Chunk#unload()} are {@code protected}, so
      * this package can drive them only on a type it defines itself. A caller who owns another chunk
-     * type can reach both hooks and connects them here — which is how a chunk from another module,
-     * a lighting chunk for instance, becomes usable in this instance without either module having
-     * to know the other.
+     * type can reach both hooks — the type is theirs, so the {@code protected} pair is in reach of
+     * its own package — and connects them here, without either module having to know the other.
      * </p>
      * <pre>{@code
-     * instance.setChunkSupplier(scheduler.supplier());
+     * instance.setChunkSupplier(MyChunk::new);
      * instance.setChunkLifecycle(
-     *         chunk -> ((FalcoLightingChunk) chunk).markLoaded(),
-     *         chunk -> ((FalcoLightingChunk) chunk).markUnloaded());
+     *         chunk -> ((MyChunk) chunk).markLoaded(),
+     *         chunk -> ((MyChunk) chunk).markUnloaded());
      * }</pre>
+     * <p>
+     * The lighting chunk of {@code falco-light} used to be the worked example here and is one no
+     * longer: since US-3.06 {@code FalcoLightingChunk} extends {@link FalcoChunk}, so
+     * {@code instance.setChunkSupplier(scheduler.supplier())} is the whole setup and this method has
+     * nothing left to do for it. What remains for this pair is the case it was always the general
+     * answer to — a chunk type this repository never sees.
+     * </p>
      * <p>
      * Both halves are one call so the pair cannot be set half way. Set them before the first chunk
      * is loaded; a chunk that was published under one lifecycle is not told about a later change.
      * The instance stops checking for {@link FalcoChunk} from here on and requires only a
-     * {@code DynamicChunk}, so an unsuitable supplier now fails on the cast inside your own
-     * function rather than with a message from this class.
+     * {@link Chunk}, so an unsuitable supplier now fails on the cast inside your own function rather
+     * than with a message from this class.
      * </p>
      * <p>
      * The two halves are not called under the same conditions, and the difference matters for what
