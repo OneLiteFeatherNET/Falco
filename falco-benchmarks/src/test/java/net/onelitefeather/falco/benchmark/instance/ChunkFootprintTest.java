@@ -309,9 +309,12 @@ class ChunkFootprintTest {
      * What a fresh {@code FalcoChunk} is allowed to differ from a fresh {@code DynamicChunk} in.
      * <p>
      * Every row was derived from the tasks of this stage before it was compared with a measurement,
-     * and the three rows where the two disagreed are marked as such, because a table that is edited
-     * until it matches the measurement asserts nothing. Sixteen rows, and a class outside them still
-     * has to be equal on both its object count and its bytes.
+     * because a table that is edited until the measurement fits it asserts nothing. Six of the
+     * fifteen rows came back different, and where the plan and the measurement disagree it is the
+     * measurement that stands: the five rows of the shared section, which the plan put at zero for
+     * the reason the row of {@link #SECTION} corrects, and the {@code int[]} row, which the plan did
+     * not have at all. A class outside these fifteen still has to be equal to the Minestom side on
+     * both its object count and its bytes.
      * </p>
      */
     private static final Map<String, Declared> FRESH_DIFFERENCE = Map.ofEntries(
