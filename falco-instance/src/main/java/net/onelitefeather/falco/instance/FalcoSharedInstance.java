@@ -52,6 +52,16 @@ import java.util.concurrent.CompletableFuture;
  * the chunk layer gained. A world that needs write throughput and does not need to be shared uses
  * {@code FalcoInstance}, which holds the lock of the chunk it touches instead.
  * </p>
+ * <p>
+ * Both paragraphs are statements about a foreign class, so they have a guard of their own:
+ * {@code ForeignWritePathTest} in {@code falco-archunit} reads the bytecode of
+ * {@code InstanceContainer} and fails if {@code UNSAFE_setBlock} stops being private, stops carrying
+ * {@code ACC_SYNCHRONIZED}, or is reached from anywhere but those four methods; it also fails if
+ * this class ever overrides one of the write entry points after all. Without it the reasoning here
+ * would rest on a reading of Minestom taken on a single day, because every case of
+ * {@code FalcoSharedInstanceWriteTest} observes blocks and chunks and stays green through all four
+ * of those changes.
+ * </p>
  * <h2>What the per-instance state reaches, and what it does not</h2>
  * <p>
  * {@code enableAutoChunkLoad} reaches {@link #loadOptionalChunk(int, int)}, which is the method a
@@ -68,7 +78,7 @@ import java.util.concurrent.CompletableFuture;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.7.0
+ * @version 1.8.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental

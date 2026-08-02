@@ -24,9 +24,17 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  * over one chunk, one of them unsynchronised. This class asserts the consequences of not doing that,
  * so that the documentation which states them cannot quietly stop being true.
  * </p>
+ * <p>
+ * It pins the observable half only, and the distinction matters: these three cases look at blocks
+ * and chunks, so they stay green if Minestom drops the {@code synchronized}, opens
+ * {@code UNSAFE_setBlock} up or gives it a fifth caller — and they stayed green when an override of
+ * {@code setBlock} was added to {@code FalcoSharedInstance} as a mutation. The premise itself is
+ * pinned by {@code ForeignWritePathTest} in {@code falco-archunit}, which reads the modifiers and
+ * the caller set out of Minestom's bytecode. Neither class replaces the other.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)

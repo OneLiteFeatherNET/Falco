@@ -1666,7 +1666,7 @@ recorded here rather than rounded into "42 green".
 | US-4.01 | `FalcoSharedInstanceResendTest#testTheFastPathSendsNothing`, with `#testTheSlowPathSendsTheMarkers` as the control and `FalcoSharedInstanceTest#testLinkedToItsContainer`, `#testLinkedToASibling`, `#testLinkedToAStockSharedInstance`, `#testUnlinkedAcrossContainers` beneath it | met |
 | US-4.02 | `FalcoSharedInstanceStateTest#testTheGeneratorDoesNotAlias` and `#testClearingTheGeneratorDoesNotClearTheContainer`, plus the same shape for the chunk supplier and the auto-load flag | met, with the reservation below |
 | US-4.03 | `FalcoSharedInstanceSaveTest#testTheViewSavesItsOwnTags`, with `#testTheContainerStillSavesItself`, `#testAParallelSaveStillGetsThisInstance`, `#testAFailureIsReturnedOnceOnBothBranches` and `#testAFreshViewHasNothingToWrite` | met, with the reservation below |
-| US-4.04 | the two `<h2>` sections of `FalcoSharedInstance`, the paragraph in `package-info.java`, the *Shared worlds* section of `README.md`, and `FalcoSharedInstanceWriteTest` (3 cases) | met |
+| US-4.04 | the two `<h2>` sections of `FalcoSharedInstance`, the paragraph in `package-info.java`, the *Shared worlds* section of `README.md`, `FalcoSharedInstanceWriteTest` (3 cases) for the observable half and `ForeignWritePathTest` (4 rules) for the premise | met |
 
 ### Every mutation that was injected, and what went red
 
@@ -1682,6 +1682,7 @@ each injection was reverted and re-run.
 | 5 | `enableAutoChunkLoad` delegates to `super`; separately, the `loadOptionalChunk` override deleted | the alias case and the load case at its first assertion; the deletion additionally took the entity-spawn case |
 | 6 | body replaced by `super.saveInstance()`; separately, the synchronous branch forced; separately, `handleException` added next to `failedFuture`; separately, the constructor copying the container's tag compound | the view case at `assertSame`; the parallel case; the failure case; `testAFreshViewHasNothingToWrite` |
 | 7 | `getChunk` overridden to return `chunk.copy(this, chunkX, chunkZ)` | `testTheChunkIsTheContainersChunk` at the first `assertSame` and `testAWriteReachesEveryView` at the first `assertEquals`; the auto-load case stayed green, because it asserts the container's state |
+| 7, review follow-up | four separately, one per rule of `ForeignWritePathTest`: the guarded method name pointed at `setBlock`; `breakBlock` swapped for `loadChunk` in the expected caller set; the forward demanded to go to `Chunk`; an override of `setBlock` added to `FalcoSharedInstance` that only calls `super` | W1 twice (not private, not synchronized), W2 with one missing and one unexpected caller, W3 three times (one per forwarded method), W4 at `FalcoSharedInstance.java:355`. The fourth mutation left all three cases of `FalcoSharedInstanceWriteTest` green, which is why the rule exists |
 
 ### What may be quoted
 
@@ -1723,6 +1724,31 @@ A result that lists only what was gained is not a result.
 - **The write path is unchanged, on purpose.** `setBlock` on a view reaches the container and the
   container serialises it on its own monitor. That is US-4.04 rather than an omission, and it is now
   pinned by a test instead of only asserted in prose.
+
+### The premise of US-4.04, guarded after review
+
+Review of Task 7 found the documentation's load-bearing sentence unguarded: "`UNSAFE_setBlock` is
+`private synchronized`, four callers, so every shared write pays the instance monitor" is a claim
+about *Minestom's* bytecode, and all three cases of `FalcoSharedInstanceWriteTest` observe blocks and
+chunks only. Every one of them stays green if Minestom drops the `synchronized`, opens the method up
+or grows a fifth caller — and all three stayed green under an override of `setBlock` in
+`FalcoSharedInstance`, which was measured, not assumed.
+
+`falco-archunit` now carries `ForeignWritePathTest`, four rules with an `@AnalyzeClasses` scope of
+its own over `net.minestom.server.instance` and `net.onelitefeather.falco.instance`: W1 the two
+modifiers, W2 the caller set as an exact set (missing and unexpected reported apart, because they
+mean opposite things), W3 that `SharedInstance` forwards `setBlock`, `placeBlock` and `breakBlock` to
+the container, W4 that `FalcoSharedInstance` overrides none of the three. Three of the four fail on a
+Minestom upgrade rather than on a Falco commit, which is intended: what they report is not that
+Minestom is wrong but that the paragraph has to be rewritten and the decision not to override
+`setBlock` has to be taken again. The module runs **46** rules after this, not the 42 the table
+above records; `falco-instance` stays at 182, because nothing there was added — the gap was never a
+missing case, it was a case that could not exist in a module which does not read foreign bytecode.
+
+Its structural limit is the one `ConcurrencyTest` already names: ArchUnit sees `ACC_SYNCHRONIZED` on
+a method, never a `synchronized` block. A lock moved into the body of `UNSAFE_setBlock` would turn W1
+red although nothing changed for a caller — a false alarm on the safe side, since the paragraph would
+have to be re-read either way.
 
 ### One claim of this plan that the sources did not support
 
