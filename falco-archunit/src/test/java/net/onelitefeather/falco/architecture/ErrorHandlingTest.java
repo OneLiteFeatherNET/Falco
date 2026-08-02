@@ -117,6 +117,36 @@ class ErrorHandlingTest {
                    + "chunk data error; a generic throw disappears into that translation");
 
     /**
+     * E2a &mdash; the anvil package does not construct a bare {@code IOException} any more.
+     * <p>
+     * It used to throw one at fourteen sites, for two unrelated kinds of failure: bytes that are
+     * wrong, and IO that failed. A caller could tell them apart only by reading the message, and the
+     * catch in {@code saveChunk} swallowed both alike. Twelve of those became a
+     * {@code RegionFormatException} or a {@code ChunkDataException} with a reason; the remaining two
+     * are the honest ones and are not thrown here at all &mdash; {@code Files} and {@code FileChannel}
+     * produce them, which rule 4 of the design leaves untouched.
+     * </p>
+     * <p>
+     * The rule is scoped to the four format classes rather than to the whole package, and that is the
+     * honest cut: {@code RegionFile} and {@code FalcoAnvilLoader} touch the file system and still
+     * throw a real {@code IOException} at two sites &mdash; a region file that cannot be created, and
+     * a file that is already closed. Those are not format faults and rule 4 leaves them alone. The
+     * classes named here read bytes and nothing else, so an {@code IOException} from one of them was
+     * always a format fault wearing the wrong type.
+     * </p>
+     */
+    @ArchTest
+    static final ArchRule formatClassesDoNotThrowBareIoExceptions = noClasses()
+            .that().resideInAPackage(ANVIL)
+            .and().haveSimpleNameEndingWith("Codec")
+            .or().haveSimpleNameEndingWith("Reads")
+            .or().haveSimpleNameEndingWith("PaletteData")
+            .or().haveSimpleNameEndingWith("ChunkCompression")
+            .should().callConstructorWhere(target(owner(nameMatching("java\\.io\\.IOException"))))
+            .because("a failure of the stored bytes and a failure of the file system are different "
+                   + "things, and the bare throws made them indistinguishable");
+
+    /**
      * E1a &mdash; a checked Falco exception is allowed only inside the anvil fault hierarchy.
      * <p>
      * {@link #ownExceptionsAreUncheckedAndCarryACause} no longer covers checked types, and this is

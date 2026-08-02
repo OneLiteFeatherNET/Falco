@@ -53,7 +53,7 @@ class FalcoAnvilLoaderBuilderTest {
     private Path worldRoot;
 
     @Test
-    void testTheBuilderResolvesTheSameRegionDirectoryAsTheConstructor() throws IOException {
+    void testTheBuilderResolvesTheSameRegionDirectoryAsTheConstructor() throws Exception {
         try (FalcoAnvilLoader constructed = new FalcoAnvilLoader(this.worldRoot, OVERWORLD);
              FalcoAnvilLoader built = FalcoAnvilLoader.builder().build(this.worldRoot, OVERWORLD)) {
 
@@ -63,7 +63,7 @@ class FalcoAnvilLoaderBuilderTest {
     }
 
     @Test
-    void testABuiltLoaderWritesAChunkTheConstructedOneReadsBack(Env env) throws IOException {
+    void testABuiltLoaderWritesAChunkTheConstructedOneReadsBack(Env env) throws Exception {
         Instance instance = env.createEmptyInstance();
         Chunk chunk = instance.loadChunk(0, 0).join();
 
@@ -118,7 +118,7 @@ class FalcoAnvilLoaderBuilderTest {
     }
 
     @Test
-    void testEveryBuildGetsItsOwnDiagnostics() throws IOException {
+    void testEveryBuildGetsItsOwnDiagnostics() throws Exception {
         FalcoAnvilLoader.Builder builder = FalcoAnvilLoader.builder();
 
         try (FalcoAnvilLoader first = builder.build(this.worldRoot, OVERWORLD);
@@ -130,7 +130,7 @@ class FalcoAnvilLoaderBuilderTest {
     }
 
     @Test
-    void testAGivenDiagnosticsInstanceIsTheOneTheLoaderUses() throws IOException {
+    void testAGivenDiagnosticsInstanceIsTheOneTheLoaderUses() throws Exception {
         AnvilDiagnostics shared = new AnvilDiagnostics();
 
         try (FalcoAnvilLoader loader =
@@ -150,7 +150,7 @@ class FalcoAnvilLoaderBuilderTest {
      * </p>
      */
     @Test
-    void testAGivenBlockResolverIsTheOneTheLoaderDecodesWith(Env env) throws IOException {
+    void testAGivenBlockResolverIsTheOneTheLoaderDecodesWith(Env env) throws Exception {
         Instance instance = env.createEmptyInstance();
         saveOneChunk(env, instance);
 
@@ -173,7 +173,7 @@ class FalcoAnvilLoaderBuilderTest {
      * </p>
      */
     @Test
-    void testAConfiguredExceptionHandlerReceivesALoadFailure(Env env) throws IOException {
+    void testAConfiguredExceptionHandlerReceivesALoadFailure(Env env) throws Exception {
         Instance instance = env.createEmptyInstance();
         saveOneChunk(env, instance);
 
@@ -199,7 +199,7 @@ class FalcoAnvilLoaderBuilderTest {
      * </p>
      */
     @Test
-    void testAGivenBiomeResolverIsTheOneTheLoaderDecodesWith(Env env) throws IOException {
+    void testAGivenBiomeResolverIsTheOneTheLoaderDecodesWith(Env env) throws Exception {
         Instance instance = env.createEmptyInstance();
         saveOneChunk(env, instance);
 
@@ -223,7 +223,7 @@ class FalcoAnvilLoaderBuilderTest {
      * </p>
      */
     @Test
-    void testAConfiguredDataVersionReachesTheChunkOnDisk(Env env) throws IOException {
+    void testAConfiguredDataVersionReachesTheChunkOnDisk(Env env) throws Exception {
         Instance instance = env.createEmptyInstance();
         Chunk chunk = instance.loadChunk(0, 0).join();
 
@@ -264,7 +264,7 @@ class FalcoAnvilLoaderBuilderTest {
      * @param instance the instance the chunk belongs to
      * @throws IOException if the loader cannot be closed
      */
-    private void saveOneChunk(Env env, Instance instance) throws IOException {
+    private void saveOneChunk(Env env, Instance instance) throws Exception {
         Chunk chunk = instance.loadChunk(0, 0).join();
 
         chunk.lockWriteLock();
@@ -296,7 +296,7 @@ class FalcoAnvilLoaderBuilderTest {
     }
 
     @Test
-    void testTheBuilderCanBeReusedAfterASlotChanged() throws IOException {
+    void testTheBuilderCanBeReusedAfterASlotChanged() throws Exception {
         FalcoAnvilLoader.Builder builder = FalcoAnvilLoader.builder().openRegionLimit(8);
 
         try (FalcoAnvilLoader first = builder.build(this.worldRoot, OVERWORLD)) {
@@ -317,7 +317,7 @@ class FalcoAnvilLoaderBuilderTest {
      * </p>
      */
     @Test
-    void testASlotLeavesTheBuilderItWasCalledOnUnchanged() throws IOException {
+    void testASlotLeavesTheBuilderItWasCalledOnUnchanged() throws Exception {
         AnvilDiagnostics mine = new AnvilDiagnostics();
         FalcoAnvilLoader.Builder base = FalcoAnvilLoader.builder();
         FalcoAnvilLoader.Builder derived = base.diagnostics(mine);

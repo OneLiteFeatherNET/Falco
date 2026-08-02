@@ -33,7 +33,7 @@ class NbtReadsLongArrayTest {
     }
 
     @Test
-    void testBothLongArrayReadsAnswerTheSame() throws IOException {
+    void testBothLongArrayReadsAnswerTheSame() throws Exception {
         LongArrayBinaryTag tag = LongArrayBinaryTag.longArrayBinaryTag(-1L, 0L, Long.MAX_VALUE, Long.MIN_VALUE);
         CompoundBinaryTag compound = CompoundBinaryTag.builder().put("data", tag).build();
 

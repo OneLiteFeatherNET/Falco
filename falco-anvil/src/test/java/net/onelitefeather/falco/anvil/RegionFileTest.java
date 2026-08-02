@@ -47,7 +47,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testOpeningAMissingFileCreatesTheHeader() throws IOException {
+    void testOpeningAMissingFileCreatesTheHeader() throws Exception {
         try (RegionFile _ = RegionFile.open(regionPath())) {
             assertTrue(Files.exists(regionPath()));
         }
@@ -55,7 +55,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testReadReturnsNullForAnAbsentChunk() throws IOException {
+    void testReadReturnsNullForAnAbsentChunk() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             assertNull(region.readRaw(0, 0));
             assertFalse(region.hasChunk(0, 0));
@@ -63,7 +63,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testWrittenChunkCanBeReadBack() throws IOException {
+    void testWrittenChunkCanBeReadBack() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(3, 7, ChunkCompression.ZLIB, PAYLOAD);
 
@@ -77,7 +77,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testChunksSurviveAReopen() throws IOException {
+    void testChunksSurviveAReopen() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(1, 1, ChunkCompression.ZLIB, PAYLOAD);
         }
@@ -91,7 +91,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testDifferentChunksDoNotOverwriteEachOther() throws IOException {
+    void testDifferentChunksDoNotOverwriteEachOther() throws Exception {
         byte[] other = "a completely different payload".getBytes(StandardCharsets.UTF_8);
 
         try (RegionFile region = RegionFile.open(regionPath())) {
@@ -104,7 +104,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testRewritingAChunkWithALargerPayloadKeepsTheNeighbourIntact() throws IOException {
+    void testRewritingAChunkWithALargerPayloadKeepsTheNeighbourIntact() throws Exception {
         byte[] large = new byte[RegionConstants.SECTOR_SIZE * 3];
         RandomGenerator.getDefault().nextBytes(large);
         byte[] neighbour = "the neighbour must stay readable".getBytes(StandardCharsets.UTF_8);
@@ -120,7 +120,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testTheFileStaysAlignedToTheSectorSize() throws IOException {
+    void testTheFileStaysAlignedToTheSectorSize() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(0, 0, ChunkCompression.ZLIB, PAYLOAD);
             region.writeRaw(5, 5, ChunkCompression.ZLIB, new byte[RegionConstants.SECTOR_SIZE + 17]);
@@ -130,7 +130,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testTheLengthFieldFollowsTheSpecification() throws IOException {
+    void testTheLengthFieldFollowsTheSpecification() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(0, 0, ChunkCompression.ZLIB, PAYLOAD);
         }
@@ -141,7 +141,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testDeletingAChunkClearsItsEntry() throws IOException {
+    void testDeletingAChunkClearsItsEntry() throws Exception {
         try (RegionFile region = RegionFile.open(regionPath())) {
             region.writeRaw(2, 2, ChunkCompression.ZLIB, PAYLOAD);
             region.delete(2, 2);
@@ -152,7 +152,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testAnOversizedChunkIsStoredInAnExternalFile() throws IOException {
+    void testAnOversizedChunkIsStoredInAnExternalFile() throws Exception {
         byte[] oversized = new byte[RegionConstants.MAX_SECTORS_PER_CHUNK * RegionConstants.SECTOR_SIZE + 1];
         RandomGenerator.getDefault().nextBytes(oversized);
 
@@ -165,7 +165,7 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testShrinkingAnExternalChunkRemovesTheExternalFile() throws IOException {
+    void testShrinkingAnExternalChunkRemovesTheExternalFile() throws Exception {
         byte[] oversized = new byte[RegionConstants.MAX_SECTORS_PER_CHUNK * RegionConstants.SECTOR_SIZE + 1];
         RandomGenerator.getDefault().nextBytes(oversized);
 
@@ -179,22 +179,25 @@ class RegionFileTest extends FileTestBase {
     }
 
     @Test
-    void testAFileWithATruncatedHeaderIsRejected() throws IOException {
+    void testAFileWithATruncatedHeaderIsRejected() throws Exception {
         Files.write(regionPath(), new byte[RegionConstants.SECTOR_SIZE]);
 
-        assertThrows(IOException.class, () -> RegionFile.open(regionPath()).close());
+        assertThrows(RegionFormatException.class, () -> RegionFile.open(regionPath()).close());
     }
 
     @Test
-    void testAUsageAfterCloseIsRejected() throws IOException {
+    void testAUsageAfterCloseIsRejected() throws Exception {
         RegionFile region = RegionFile.open(regionPath());
         region.close();
 
+        // Still an IOException, and deliberately so: "already closed" is a lifecycle failure of the
+        // caller, not something the stored bytes got wrong. Rule 4 of the design keeps real IO and
+        // lifecycle refusals on java.io.IOException.
         assertThrows(IOException.class, () -> region.readRaw(0, 0));
     }
 
     @Test
-    void testConcurrentWritesNeverCorruptEachOther() throws IOException, InterruptedException, ExecutionException {
+    void testConcurrentWritesNeverCorruptEachOther() throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         int chunkCount = 64;
         List<byte[]> payloads = new ArrayList<>(chunkCount);
 
@@ -231,7 +234,7 @@ class RegionFileTest extends FileTestBase {
      * @return the value of the length field
      * @throws IOException if the region file cannot be read
      */
-    private int readChunkLengthField() throws IOException {
+    private int readChunkLengthField() throws Exception {
         try (FileChannel channel = FileChannel.open(regionPath(), StandardOpenOption.READ)) {
             ByteBuffer buffer = ByteBuffer.allocate(Integer.BYTES);
             channel.read(buffer, RegionConstants.HEADER_SIZE);

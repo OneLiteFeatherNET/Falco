@@ -7,6 +7,7 @@ import net.onelitefeather.falco.benchmark.support.ChunkColumn;
 import net.onelitefeather.falco.benchmark.support.ChunkPayloads;
 import net.onelitefeather.falco.benchmark.support.FakePaletteEntryResolver;
 import net.onelitefeather.falco.anvil.ChunkCompression;
+import net.onelitefeather.falco.anvil.RegionFormatException;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -138,7 +139,7 @@ public class RegionFileComparisonBenchmark {
      * @throws IOException if the region files cannot be prepared
      */
     @Setup(Level.Trial)
-    public void setUp() throws IOException {
+    public void setUp() throws IOException, RegionFormatException {
         this.directory = Files.createTempDirectory("falco-region-comparison");
 
         ChunkColumn column = ChunkColumn.of(BenchmarkConstants.OVERWORLD_SECTIONS, this.distinctStates);
@@ -166,7 +167,7 @@ public class RegionFileComparisonBenchmark {
      * @throws IOException if the directory cannot be removed
      */
     @TearDown(Level.Trial)
-    public void tearDown() throws IOException {
+    public void tearDown() throws IOException, RegionFormatException {
         this.minestomRegion.close();
         this.falcoRegion.close();
 
@@ -190,7 +191,7 @@ public class RegionFileComparisonBenchmark {
      * @throws IOException if the chunk cannot be read
      */
     @Benchmark
-    public CompoundBinaryTag minestomRead(ThreadSlot slot) throws IOException {
+    public CompoundBinaryTag minestomRead(ThreadSlot slot) throws IOException, RegionFormatException {
         return this.minestomRegion.readChunkData(slot.chunkX, slot.chunkZ);
     }
 
@@ -203,7 +204,7 @@ public class RegionFileComparisonBenchmark {
      * @throws IOException if the chunk cannot be read
      */
     @Benchmark
-    public CompoundBinaryTag falcoRead(ThreadSlot slot) throws IOException {
+    public CompoundBinaryTag falcoRead(ThreadSlot slot) throws IOException, RegionFormatException {
         net.onelitefeather.falco.anvil.RegionFile.RawChunk raw =
                 this.falcoRegion.readRaw(slot.chunkX, slot.chunkZ);
         return TAG_READER.read(new ByteArrayInputStream(raw.decompress()), BinaryTagIO.Compression.NONE);
@@ -216,7 +217,7 @@ public class RegionFileComparisonBenchmark {
      * @throws IOException if the chunk cannot be written
      */
     @Benchmark
-    public void minestomWrite(ThreadSlot slot) throws IOException {
+    public void minestomWrite(ThreadSlot slot) throws IOException, RegionFormatException {
         this.minestomRegion.writeChunkData(slot.chunkX, slot.chunkZ, this.chunkData);
     }
 
@@ -232,7 +233,7 @@ public class RegionFileComparisonBenchmark {
      * @throws IOException if the chunk cannot be written
      */
     @Benchmark
-    public void falcoWrite(ThreadSlot slot) throws IOException {
+    public void falcoWrite(ThreadSlot slot) throws IOException, RegionFormatException {
         ByteArrayOutputStream target = new ByteArrayOutputStream(64 * 1024);
         TAG_WRITER.writeNamed(Map.entry("", this.chunkData), target, BinaryTagIO.Compression.ZLIB);
         this.falcoRegion.writeRaw(slot.chunkX, slot.chunkZ, ChunkCompression.ZLIB, target.toByteArray());

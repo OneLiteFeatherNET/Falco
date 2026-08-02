@@ -229,7 +229,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
     }
 
     @Test
-    void testConcurrentWritesToDistinctChunksKeepEverySectorRangeDisjoint() throws IOException, InterruptedException, ExecutionException {
+    void testConcurrentWritesToDistinctChunksKeepEverySectorRangeDisjoint() throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
             writeDistinctChunksConcurrently(regionPath(attempt));
         }
@@ -243,7 +243,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
      * @throws InterruptedException if the waiting thread is interrupted
      * @throws ExecutionException   if a writer failed
      */
-    private void writeDistinctChunksConcurrently(Path path) throws IOException, InterruptedException, ExecutionException {
+    private void writeDistinctChunksConcurrently(Path path) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // A lost update inside the sector allocator hands the same sectors to two chunks. The
         // payloads then overwrite each other, which the marker bytes expose, and the location table
         // ends up with two entries pointing into the same range, which the disjointness check
@@ -286,7 +286,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
     }
 
     @Test
-    void testConcurrentReadersNeverObserveATornPayload() throws IOException, InterruptedException, ExecutionException {
+    void testConcurrentReadersNeverObserveATornPayload() throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
             readWhileTheChunksAreRewritten(regionPath(attempt));
         }
@@ -300,7 +300,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
      * @throws InterruptedException if the waiting thread is interrupted
      * @throws ExecutionException   if a worker failed
      */
-    private void readWhileTheChunksAreRewritten(Path path) throws IOException, InterruptedException, ExecutionException {
+    private void readWhileTheChunksAreRewritten(Path path) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Every byte of a payload encodes the chunk and the version it belongs to. A reader which
         // observes a mix of two versions therefore sees two different byte values in one payload,
         // which is exactly what an in place update of a chunk would produce. The readers are
@@ -405,7 +405,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
     }
 
     @Test
-    void testReadersNeverObserveASectorWhichWasRecycledWhileTheyRead() throws IOException, InterruptedException, ExecutionException {
+    void testReadersNeverObserveASectorWhichWasRecycledWhileTheyRead() throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         for (int attempt = 0; attempt < RECYCLE_ATTEMPTS; attempt++) {
             readWhileTheSectorsAreRecycled(regionPath(attempt));
         }
@@ -427,7 +427,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
      * @throws InterruptedException if the waiting thread is interrupted
      * @throws ExecutionException   if a worker failed
      */
-    private void readWhileTheSectorsAreRecycled(Path path) throws IOException, InterruptedException, ExecutionException {
+    private void readWhileTheSectorsAreRecycled(Path path) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         byte[] large = marked(RECYCLE_LARGE_SECTORS * RegionConstants.SECTOR_SIZE - 5, RECYCLE_LARGE_MARKER);
         byte[] small = marked(RECYCLE_SMALL_SECTORS * RegionConstants.SECTOR_SIZE - 5, RECYCLE_SMALL_MARKER);
         Queue<String> failures = new ConcurrentLinkedQueue<>();
@@ -499,7 +499,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
     }
 
     @Test
-    void testConcurrentStorageSwitchesKeepTheExternalFileAndTheHeaderInSync() throws IOException, InterruptedException, ExecutionException {
+    void testConcurrentStorageSwitchesKeepTheExternalFileAndTheHeaderInSync() throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
             switchStorageConcurrently(regionPath(attempt), attempt);
         }
@@ -522,7 +522,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
      * @throws InterruptedException if the waiting thread is interrupted
      * @throws ExecutionException   if a worker failed
      */
-    private void switchStorageConcurrently(Path path, int chunkZ) throws IOException, InterruptedException, ExecutionException {
+    private void switchStorageConcurrently(Path path, int chunkZ) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         byte[] external = marked(EXTERNAL_PAYLOAD_LENGTH, EXTERNAL_MARKER);
         byte[] inline = marked(INLINE_PAYLOAD_LENGTH, INLINE_MARKER);
         Queue<String> failures = new ConcurrentLinkedQueue<>();
@@ -596,7 +596,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
     }
 
     @Test
-    void testConcurrentGrowAndShrinkCyclesKeepTheFileConsistent() throws IOException, InterruptedException, ExecutionException {
+    void testConcurrentGrowAndShrinkCyclesKeepTheFileConsistent() throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
             growAndShrinkConcurrently(regionPath(attempt), attempt);
         }
@@ -613,7 +613,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
      * @throws InterruptedException if the waiting thread is interrupted
      * @throws ExecutionException   if a writer failed
      */
-    private void growAndShrinkConcurrently(Path path, int chunkZ) throws IOException, InterruptedException, ExecutionException {
+    private void growAndShrinkConcurrently(Path path, int chunkZ) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Every chunk is owned by exactly one thread, so the order of its own writes is defined
         // while the writes of the different chunks overlap. The sizes cross both a sector boundary
         // and the limit of an inline chunk, so the allocator has to free and reuse ranges of very
@@ -661,7 +661,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
     }
 
     @Test
-    void testClosingDuringConcurrentAccessFailsCleanlyAndKeepsTheFileReadable() throws IOException, InterruptedException, ExecutionException {
+    void testClosingDuringConcurrentAccessFailsCleanlyAndKeepsTheFileReadable() throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
             closeDuringConcurrentAccess(regionPath(attempt));
         }
@@ -675,7 +675,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
      * @throws InterruptedException if the waiting thread is interrupted
      * @throws ExecutionException   if a worker failed for an unexpected reason
      */
-    private void closeDuringConcurrentAccess(Path path) throws IOException, InterruptedException, ExecutionException {
+    private void closeDuringConcurrentAccess(Path path) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Closing a file while other threads work on it must never leave a header entry which
         // points at a range the file does not hold. Every worker has to report the shutdown as an
         // IOException, because any other exception type would reach a caller that only expects an
@@ -868,7 +868,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
 
         try {
             chunk = region.readRaw(0, 0);
-        } catch (IOException exception) {
+        } catch (IOException | RegionFormatException exception) {
             failures.add("the observed chunk could not be read: " + exception);
             return;
         }
@@ -913,7 +913,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
 
         try {
             chunk = region.readRaw(0, chunkZ);
-        } catch (IOException exception) {
+        } catch (IOException | RegionFormatException exception) {
             failures.add("the chunk could not be read: " + exception);
             return;
         }
@@ -955,7 +955,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
      * @return the scheme byte of the chunk including the external flag
      * @throws IOException if the region file cannot be read
      */
-    private static int storedScheme(Path path, int chunkX, int chunkZ) throws IOException {
+    private static int storedScheme(Path path, int chunkX, int chunkZ) throws IOException, RegionFormatException {
         byte[] bytes = Files.readAllBytes(path);
         int location = ByteBuffer.wrap(bytes).getInt(RegionConstants.locationOffset(RegionConstants.index(chunkX, chunkZ)));
 
@@ -983,7 +983,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
      * @return the payload of the chunk
      * @throws IOException if the chunk cannot be read
      */
-    private static byte[] read(RegionFile region, int chunkX, int chunkZ) throws IOException {
+    private static byte[] read(RegionFile region, int chunkX, int chunkZ) throws IOException, RegionFormatException {
         RegionFile.RawChunk chunk = region.readRaw(chunkX, chunkZ);
 
         assertNotNull(chunk, "the chunk " + chunkX + "/" + chunkZ + " is missing");
@@ -1000,7 +1000,7 @@ class RegionFileConcurrencyTest extends FileTestBase {
      * @param path the path of the region file to inspect
      * @throws IOException if the region file cannot be read
      */
-    private static void assertSectorTableIsDisjoint(Path path) throws IOException {
+    private static void assertSectorTableIsDisjoint(Path path) throws IOException, RegionFormatException {
         byte[] bytes = Files.readAllBytes(path);
 
         assertEquals(0, bytes.length % RegionConstants.SECTOR_SIZE, "the region file is not aligned to the sector size");

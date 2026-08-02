@@ -618,7 +618,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         // event of the caller rather than a chunk which could not be read.
         try {
             handle = acquireRegion(chunkX, chunkZ, false);
-        } catch (IOException exception) {
+        } catch (IOException | AnvilFormatException exception) {
             throw failedLoad(chunkX, chunkZ, exception);
         }
 
@@ -684,7 +684,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             trackChunk(chunkX, chunkZ);
             this.diagnostics.countChunkLoaded();
             return chunk;
-        } catch (IOException | RuntimeException exception) {
+        } catch (IOException | RuntimeException | AnvilFormatException exception) {
             throw failedLoad(chunkX, chunkZ, exception);
         }
     }
@@ -703,13 +703,30 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @return the exception the caller has to throw
      */
     private AnvilChunkException failedLoad(int chunkX, int chunkZ, Throwable exception) {
+        ChunkLocation location = locationOf(chunkX, chunkZ);
+        // A format fault is told where it happened before it is reported. The classes that detect
+        // one read bytes and have never been told which world those bytes belong to, so this is the
+        // first point at which the context exists at all.
+        Throwable located = exception instanceof AnvilFormatException fault ? fault.at(location) : exception;
+
         this.diagnostics.countError();
         LOGGER.error(
                 "Failed to load the chunk chunk=[{},{}] region={} dim={}",
-                chunkX, chunkZ, this.regionDirectory, this.dimensionLabel, exception
+                chunkX, chunkZ, this.regionDirectory, this.dimensionLabel, located
         );
-        reportException(exception);
-        return new AnvilChunkException("The chunk " + chunkX + "/" + chunkZ + " could not be loaded", exception);
+        reportException(located);
+        return new AnvilChunkException("The chunk " + chunkX + "/" + chunkZ + " could not be loaded", location, located);
+    }
+
+    /**
+     * Describes where a failure of the given chunk happened.
+     *
+     * @param chunkX the absolute chunk x coordinate
+     * @param chunkZ the absolute chunk z coordinate
+     * @return the location the loader attaches to a fault of that chunk
+     */
+    private ChunkLocation locationOf(int chunkX, int chunkZ) {
+        return new ChunkLocation(chunkX, chunkZ, this.regionDirectory.toString(), this.dimensionLabel);
     }
 
     /**
@@ -746,7 +763,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             // The loader was closed while this save was running. Counting that as a failed chunk
             // would hide the reason behind a data error, so the refusal reaches the caller as it is.
             throw exception;
-        } catch (IOException | RuntimeException exception) {
+        } catch (IOException | RuntimeException | AnvilFormatException exception) {
             this.diagnostics.countError();
             LOGGER.error(
                     "Failed to save the chunk chunk=[{},{}] region={} dim={}",
@@ -1128,9 +1145,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @param chunkX  the absolute chunk x coordinate
      * @param chunkZ  the absolute chunk z coordinate
      * @param payload the compressed payload of the chunk
-     * @throws IOException if the chunk cannot be written
+     * @throws IOException           if the chunk cannot be written
+     * @throws RegionFormatException if the region file it belongs to is malformed
      */
-    private void writeToRegion(int chunkX, int chunkZ, byte[] payload) throws IOException {
+    private void writeToRegion(int chunkX, int chunkZ, byte[] payload) throws IOException, RegionFormatException {
         RegionHandle handle = acquireRegion(chunkX, chunkZ, true);
 
         if (handle == null) {
@@ -1165,7 +1183,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @throws IOException           if the file cannot be opened
      * @throws IllegalStateException if the loader was closed while the file was being opened
      */
-    private @Nullable RegionHandle acquireRegion(int chunkX, int chunkZ, boolean create) throws IOException {
+    private @Nullable RegionHandle acquireRegion(int chunkX, int chunkZ, boolean create) throws IOException, RegionFormatException {
         int regionX = RegionConstants.chunkToRegion(chunkX);
         int regionZ = RegionConstants.chunkToRegion(chunkZ);
         long index = CoordConversion.regionIndex(regionX, regionZ);
@@ -1364,7 +1382,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @return the converted sections
      * @throws IOException if a section is malformed
      */
-    private List<DecodedSection> decodeSections(Chunk chunk, CompoundBinaryTag data) throws IOException {
+    private List<DecodedSection> decodeSections(Chunk chunk, CompoundBinaryTag data) throws ChunkDataException {
         ListBinaryTag sections = NbtReads.optionalList(data, SECTIONS_KEY, BinaryTagTypes.COMPOUND);
         List<DecodedSection> decoded = new ArrayList<>(sections.size());
 
@@ -1433,9 +1451,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * The caller has to hold the write lock of the chunk.
          *
          * @param chunk the chunk which receives the content
-         * @throws IOException if a palette holds an index outside of its palette
+         * @throws ChunkDataException if a palette holds an index outside of its palette
          */
-        private void applyTo(Chunk chunk) throws IOException {
+        private void applyTo(Chunk chunk) throws ChunkDataException {
             Section section = chunk.getSection(this.sectionY);
 
             if (this.skyLight != null) {
@@ -1460,7 +1478,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @param data    the palette representation to transfer
      * @throws IOException if the representation holds an index outside of its palette
      */
-    private static void apply(Palette palette, PaletteData data) throws IOException {
+    private static void apply(Palette palette, PaletteData data) throws ChunkDataException {
         if (data.isSingleValue()) {
             palette.fill(data.singleValue());
             return;
@@ -1497,7 +1515,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @param data  the chunk data to read
      * @throws IOException if a block entity is malformed
      */
-    private void applyBlockEntities(Chunk chunk, CompoundBinaryTag data) throws IOException {
+    private void applyBlockEntities(Chunk chunk, CompoundBinaryTag data) throws ChunkDataException {
         ListBinaryTag entities = NbtReads.optionalList(data, BLOCK_ENTITIES_KEY, BinaryTagTypes.COMPOUND);
 
         for (int index = 0; index < entities.size(); index++) {

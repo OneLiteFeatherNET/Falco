@@ -2,6 +2,7 @@ package net.onelitefeather.falco.benchmark.anvil;
 
 import net.onelitefeather.falco.benchmark.support.BenchmarkConstants;
 import net.onelitefeather.falco.benchmark.support.SectionStates;
+import net.onelitefeather.falco.anvil.ChunkDataException;
 import net.onelitefeather.falco.anvil.PaletteData;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -91,7 +92,7 @@ public class PaletteDataBenchmark {
      * @throws IOException if a packed index does not address a palette entry
      */
     @Benchmark
-    public int[] unpack() throws IOException {
+    public int[] unpack() throws ChunkDataException {
         return this.encoded.unpack();
     }
 
@@ -102,7 +103,7 @@ public class PaletteDataBenchmark {
      * @throws IOException if a packed index does not address a palette entry
      */
     @Benchmark
-    public int[] roundTrip() throws IOException {
+    public int[] roundTrip() throws ChunkDataException {
         return PaletteData.encode(this.values, BenchmarkConstants.BLOCK_PALETTE_MIN_BITS).unpack();
     }
 }

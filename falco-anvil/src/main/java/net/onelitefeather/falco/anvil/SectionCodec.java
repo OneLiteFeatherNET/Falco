@@ -51,13 +51,14 @@ public final class SectionCodec {
      * @param entryCount      the amount of entries the section holds
      * @param minBitsPerEntry the smallest amount of bits the palette type allows
      * @return the palette representation of the container
-     * @throws IOException if the container is malformed
+     * @throws ChunkDataException if the container is malformed
      */
-    public static PaletteData decode(CompoundBinaryTag container, PaletteEntryResolver resolver, int entryCount, int minBitsPerEntry) throws IOException {
+    public static PaletteData decode(CompoundBinaryTag container, PaletteEntryResolver resolver, int entryCount, int minBitsPerEntry) throws ChunkDataException {
         ListBinaryTag entries = NbtReads.list(container, PALETTE_KEY, BinaryTagTypes.COMPOUND);
 
         if (entries.size() == 0) {
-            throw new IOException("The palette container holds an empty palette");
+            throw new ChunkDataException(ChunkDataException.Reason.EMPTY_PALETTE,
+                    "The palette container holds an empty palette");
         }
 
         int[] palette = new int[entries.size()];
@@ -76,7 +77,8 @@ public final class SectionCodec {
             return PaletteData.read(palette, null, entryCount, minBitsPerEntry);
         }
         if (!(data instanceof LongArrayBinaryTag packed)) {
-            throw new IOException("The palette container holds a data entry which is not a long array");
+            throw new ChunkDataException(ChunkDataException.Reason.PALETTE_DATA_NOT_LONG_ARRAY,
+                    "The palette container holds a data entry which is not a long array");
         }
         return PaletteData.read(palette, NbtReads.longArray(packed), entryCount, minBitsPerEntry);
     }
@@ -93,13 +95,14 @@ public final class SectionCodec {
      * @param entryCount      the amount of entries the section holds
      * @param minBitsPerEntry the smallest amount of bits the palette type allows
      * @return the palette representation of the container
-     * @throws IOException if the container is malformed
+     * @throws ChunkDataException if the container is malformed
      */
-    public static PaletteData decodeBiomes(CompoundBinaryTag container, PaletteEntryResolver resolver, int entryCount, int minBitsPerEntry) throws IOException {
+    public static PaletteData decodeBiomes(CompoundBinaryTag container, PaletteEntryResolver resolver, int entryCount, int minBitsPerEntry) throws ChunkDataException {
         ListBinaryTag entries = NbtReads.list(container, PALETTE_KEY, BinaryTagTypes.STRING);
 
         if (entries.size() == 0) {
-            throw new IOException("The biome palette container holds an empty palette");
+            throw new ChunkDataException(ChunkDataException.Reason.EMPTY_PALETTE,
+                    "The biome palette container holds an empty palette");
         }
 
         int[] palette = new int[entries.size()];
@@ -114,7 +117,8 @@ public final class SectionCodec {
             return PaletteData.read(palette, null, entryCount, minBitsPerEntry);
         }
         if (!(data instanceof LongArrayBinaryTag packed)) {
-            throw new IOException("The biome palette container holds a data entry which is not a long array");
+            throw new ChunkDataException(ChunkDataException.Reason.PALETTE_DATA_NOT_LONG_ARRAY,
+                    "The biome palette container holds a data entry which is not a long array");
         }
         return PaletteData.read(palette, NbtReads.longArray(packed), entryCount, minBitsPerEntry);
     }

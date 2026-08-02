@@ -59,7 +59,12 @@ public final class ChunkDataException extends AnvilFormatException {
         /**
          * A list holds elements of a type other than the one the key requires.
          */
-        UNEXPECTED_LIST_ELEMENT_TYPE
+        UNEXPECTED_LIST_ELEMENT_TYPE,
+
+        /**
+         * A key the format requires is absent, or holds a tag of another type.
+         */
+        MISSING_OR_MISTYPED_KEY
     }
 
     /**

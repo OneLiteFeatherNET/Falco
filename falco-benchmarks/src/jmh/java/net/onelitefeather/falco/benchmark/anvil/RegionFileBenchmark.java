@@ -6,6 +6,7 @@ import net.onelitefeather.falco.benchmark.support.ChunkPayloads;
 import net.onelitefeather.falco.benchmark.support.FakePaletteEntryResolver;
 import net.onelitefeather.falco.anvil.ChunkCompression;
 import net.onelitefeather.falco.anvil.RegionFile;
+import net.onelitefeather.falco.anvil.RegionFormatException;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -80,7 +81,7 @@ public class RegionFileBenchmark {
      * @throws IOException if the region file cannot be prepared
      */
     @Setup(Level.Trial)
-    public void setUp() throws IOException {
+    public void setUp() throws IOException, RegionFormatException {
         this.directory = Files.createTempDirectory("falco-region-benchmark");
         this.region = RegionFile.open(this.directory.resolve("r.0.0.mca"));
 
@@ -96,7 +97,7 @@ public class RegionFileBenchmark {
      * @throws IOException if the temporary files cannot be removed
      */
     @TearDown(Level.Trial)
-    public void tearDown() throws IOException {
+    public void tearDown() throws IOException, RegionFormatException {
         this.region.close();
 
         try (Stream<Path> entries = Files.walk(this.directory)) {
@@ -121,7 +122,7 @@ public class RegionFileBenchmark {
      * @throws IOException if the payload cannot be written
      */
     @Benchmark
-    public void writeRaw() throws IOException {
+    public void writeRaw() throws IOException, RegionFormatException {
         this.region.writeRaw(CHUNK_X, CHUNK_Z, ChunkCompression.ZLIB, this.payload);
     }
 
@@ -132,7 +133,7 @@ public class RegionFileBenchmark {
      * @throws IOException if the payload cannot be read
      */
     @Benchmark
-    public RegionFile.RawChunk readRaw() throws IOException {
+    public RegionFile.RawChunk readRaw() throws IOException, RegionFormatException {
         return this.region.readRaw(CHUNK_X, CHUNK_Z);
     }
 
@@ -143,7 +144,7 @@ public class RegionFileBenchmark {
      * @throws IOException if the payload cannot be transferred
      */
     @Benchmark
-    public RegionFile.RawChunk roundTrip() throws IOException {
+    public RegionFile.RawChunk roundTrip() throws IOException, RegionFormatException {
         this.region.writeRaw(CHUNK_X, CHUNK_Z, ChunkCompression.ZLIB, this.payload);
         return this.region.readRaw(CHUNK_X, CHUNK_Z);
     }

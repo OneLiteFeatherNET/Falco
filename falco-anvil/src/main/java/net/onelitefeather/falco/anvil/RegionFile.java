@@ -143,9 +143,10 @@ public final class RegionFile implements AutoCloseable {
      *
      * @param path the path of the region file
      * @return the opened region file
-     * @throws IOException if the file cannot be opened or holds a broken header
+     * @throws IOException           if the file cannot be opened
+     * @throws RegionFormatException if the header does not describe a usable region file
      */
-    public static RegionFile open(Path path) throws IOException {
+    public static RegionFile open(Path path) throws IOException, RegionFormatException {
         Path parent = path.getParent();
 
         if (parent != null) {
@@ -172,7 +173,7 @@ public final class RegionFile implements AutoCloseable {
      * @return the region file which is described by the header
      * @throws IOException if the header is incomplete or describes an invalid layout
      */
-    private static RegionFile readHeader(Path path, FileChannel channel) throws IOException {
+    private static RegionFile readHeader(Path path, FileChannel channel) throws IOException, RegionFormatException {
         long size = channel.size();
         int[] locations = new int[RegionConstants.ENTRY_COUNT];
         int[] timestamps = new int[RegionConstants.ENTRY_COUNT];
@@ -183,7 +184,8 @@ public final class RegionFile implements AutoCloseable {
         }
 
         if (size < RegionConstants.HEADER_SIZE) {
-            throw new IOException(
+            throw new RegionFormatException(
+                    RegionFormatException.Reason.HEADER_TOO_SHORT,
                     "The region file " + path + " holds " + size + " bytes which is less than the header size of "
                             + RegionConstants.HEADER_SIZE + " bytes"
             );
@@ -232,9 +234,10 @@ public final class RegionFile implements AutoCloseable {
      * @param chunkX the absolute chunk x coordinate
      * @param chunkZ the absolute chunk z coordinate
      * @return the raw chunk or null if the region file does not hold the chunk
-     * @throws IOException if the chunk cannot be read or holds an invalid header
+     * @throws IOException           if the chunk cannot be read
+     * @throws RegionFormatException if the stored bytes do not describe a usable chunk entry
      */
-    public @Nullable RawChunk readRaw(int chunkX, int chunkZ) throws IOException {
+    public @Nullable RawChunk readRaw(int chunkX, int chunkZ) throws IOException, RegionFormatException {
         ensureOpen();
         int index = RegionConstants.index(chunkX, chunkZ);
 
@@ -282,9 +285,10 @@ public final class RegionFile implements AutoCloseable {
      * @param chunkX the absolute chunk x coordinate
      * @param chunkZ the absolute chunk z coordinate
      * @return the raw chunk or null if the region file does not hold the chunk
-     * @throws IOException if the chunk cannot be read or holds an invalid header
+     * @throws IOException           if the chunk cannot be read
+     * @throws RegionFormatException if the stored bytes do not describe a usable chunk entry
      */
-    private @Nullable RawChunk readEntry(int index, int chunkX, int chunkZ) throws IOException {
+    private @Nullable RawChunk readEntry(int index, int chunkX, int chunkZ) throws IOException, RegionFormatException {
         int location = this.locations.get(index);
 
         if (location == 0) {
@@ -301,7 +305,8 @@ public final class RegionFile implements AutoCloseable {
         int scheme = head.get() & 0xFF;
 
         if (length <= 0 || length > available) {
-            throw new IOException(
+            throw new RegionFormatException(
+                    RegionFormatException.Reason.CHUNK_LENGTH_OUT_OF_RANGE,
                     "The chunk " + chunkX + "/" + chunkZ + " in " + this.path + " declares a length of " + length
                             + " bytes which does not fit into its " + sectorCount + " sectors"
             );
@@ -636,7 +641,7 @@ public final class RegionFile implements AutoCloseable {
      * @return a buffer which holds the requested bytes and is ready to be read
      * @throws IOException if the file ends before the requested amount of bytes was read
      */
-    private static ByteBuffer readFully(FileChannel channel, long position, int length, Path path) throws IOException {
+    private static ByteBuffer readFully(FileChannel channel, long position, int length, Path path) throws IOException, RegionFormatException {
         ByteBuffer buffer = ByteBuffer.allocate(length);
         long offset = position;
 
@@ -644,7 +649,8 @@ public final class RegionFile implements AutoCloseable {
             int read = channel.read(buffer, offset);
 
             if (read < 0) {
-                throw new IOException(
+                throw new RegionFormatException(
+                        RegionFormatException.Reason.TRUNCATED_FILE,
                         "The file " + path + " ended after " + buffer.position() + " of " + length + " expected bytes"
                 );
             }

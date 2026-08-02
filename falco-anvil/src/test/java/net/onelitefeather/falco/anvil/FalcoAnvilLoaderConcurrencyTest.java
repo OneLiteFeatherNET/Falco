@@ -87,7 +87,7 @@ class FalcoAnvilLoaderConcurrencyTest {
     }
 
     @Test
-    void testConcurrentSavesAndLoadsOverSeveralRegionsLoseNoChunk(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testConcurrentSavesAndLoadsOverSeveralRegionsLoseNoChunk(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Half of the chunks are already on disk and are only read while the other half is written.
         // Reading and writing therefore meet inside the same region files, which is the situation a
         // server produces while it streams chunks in and out. A region file which mixed the two
@@ -163,7 +163,7 @@ class FalcoAnvilLoaderConcurrencyTest {
     }
 
     @Test
-    void testTheOpenRegionLimitHoldsWhileManyThreadsOpenRegions(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testTheOpenRegionLimitHoldsWhileManyThreadsOpenRegions(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Every thread works in a region file of its own, so every one of them opens a new file and
         // forces the loader to evict another one. A limit which is only respected by a single thread
         // would let the amount of open files grow with the amount of threads, which is exactly the
@@ -220,7 +220,7 @@ class FalcoAnvilLoaderConcurrencyTest {
     }
 
     @Test
-    void testLoadingSurvivesTheEvictionOfItsRegionFile(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testLoadingSurvivesTheEvictionOfItsRegionFile(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Every thread reads from a region file of its own while the limit allows a single open
         // file, so every load evicts the file another thread is about to read from. The loader owns
         // that eviction, the file on disk is intact, and a read which fails here loses a chunk the
@@ -259,7 +259,7 @@ class FalcoAnvilLoaderConcurrencyTest {
     }
 
     @Test
-    void testLoadingSurvivesTheUnloadOfAnotherChunkOfTheSameRegion(Env env) throws IOException, InterruptedException, ExecutionException {
+    void testLoadingSurvivesTheUnloadOfAnotherChunkOfTheSameRegion(Env env) throws IOException, RegionFormatException, InterruptedException, ExecutionException {
         // Every chunk of this test lives in the same region file. A thread which unloads the last
         // chunk the loader tracks closes that file, and the loader only starts tracking a chunk
         // after it has been read, so a reader which is still ahead of its own registration loses
@@ -394,7 +394,7 @@ class FalcoAnvilLoaderConcurrencyTest {
      * @return the written chunks in the order of their region
      * @throws IOException if a chunk cannot be written
      */
-    private List<Chunk> storeChunkPerRegion(Instance instance, int regionCount) throws IOException {
+    private List<Chunk> storeChunkPerRegion(Instance instance, int regionCount) throws IOException, RegionFormatException {
         List<Chunk> chunks = new ArrayList<>(regionCount);
 
         for (int region = 0; region < regionCount; region++) {

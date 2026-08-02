@@ -11,7 +11,9 @@ import net.minestom.server.instance.anvil.AnvilLoader;
 import net.minestom.server.instance.block.Block;
 import net.onelitefeather.falco.anvil.FalcoAnvilLoader;
 import net.onelitefeather.falco.anvil.ChunkCompression;
+import net.onelitefeather.falco.anvil.ChunkDataException;
 import net.onelitefeather.falco.anvil.RegionFile;
+import net.onelitefeather.falco.anvil.RegionFormatException;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -138,7 +140,7 @@ public class ChunkSaveComparisonBenchmark {
      * @throws IOException if the world directories cannot be prepared
      */
     @Setup(Level.Trial)
-    public void setUp() throws IOException {
+    public void setUp() throws IOException, ChunkDataException, RegionFormatException {
         if (MinecraftServer.process() == null) {
             MinecraftServer.init();
         }
@@ -172,7 +174,7 @@ public class ChunkSaveComparisonBenchmark {
      * @throws IOException if the loader of Falco cannot be closed
      */
     @TearDown(Level.Trial)
-    public void tearDown() throws IOException {
+    public void tearDown() throws IOException, RegionFormatException {
         this.falcoLoader.close();
 
         try (Stream<Path> entries = Files.walk(this.directory)) {
@@ -217,7 +219,7 @@ public class ChunkSaveComparisonBenchmark {
      * @throws IOException if the payload cannot be compressed
      */
     @Benchmark
-    public byte[] compressFalcoLevel() throws IOException {
+    public byte[] compressFalcoLevel() throws IOException, RegionFormatException {
         return ChunkCompression.ZLIB.compress(this.serialized, ChunkCompression.DEFAULT_LEVEL);
     }
 
@@ -228,7 +230,7 @@ public class ChunkSaveComparisonBenchmark {
      * @throws IOException if the payload cannot be compressed
      */
     @Benchmark
-    public byte[] compressMinestomLevel() throws IOException {
+    public byte[] compressMinestomLevel() throws IOException, RegionFormatException {
         return ChunkCompression.ZLIB.compress(this.serialized, MINESTOM_LEVEL);
     }
 
@@ -311,7 +313,7 @@ public class ChunkSaveComparisonBenchmark {
      * @return the chunk data as the loader of Falco stores it
      * @throws IOException if the chunk cannot be described
      */
-    private CompoundBinaryTag snapshotOf(Chunk chunk) throws IOException {
+    private CompoundBinaryTag snapshotOf(Chunk chunk) throws IOException, ChunkDataException, RegionFormatException {
         Path probeRoot = this.directory.resolve("probe");
         Files.createDirectories(probeRoot.resolve("dimensions/minecraft/overworld/region"));
 
