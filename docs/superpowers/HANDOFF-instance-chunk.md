@@ -41,6 +41,13 @@ behind a guard, heightmaps are built on demand, and the two block maps became on
 A fresh chunk fell from 192 objects / 6 848 B to **25 / 840**, which is −87.7 %; a filled chunk saves
 104 B and nothing more, because the flyweight pays for sections that hold nothing.
 
+**Stage 2 — reviewed.** The final whole-branch review found four defects, all fixed in one wave
+(`.superpowers/sdd/2026-08-02-falco-lazy-sections/final-review-fix-report.md`). Two were real and
+neither had a test: materialising a section was an unsynchronised read-modify-write reachable from
+three lock-free Minestom call sites and could lose a block silently, and the generator wrote its
+special blocks inside the commit loop, which latched both heightmaps over a half-committed chunk for
+the life of the chunk. The other two were figures that had gone stale, one of them in the table below.
+
 **Stages 3 and 4 — specified, not planned.** Stage 3 is the facade split of `FalcoInstance`
 (1119 lines doing registry, loading, block writing, generation and persistence) plus lifecycle
 listeners and the viewer-cache cleanup. Stage 4 is `FalcoSharedInstance extends SharedInstance`.
@@ -52,7 +59,7 @@ listeners and the viewer-cache cleanup. Stage 4 is `FalcoSharedInstance extends 
 | | |
 |---|---|
 | fresh chunk, Minestom | 192 objects, 6 848 B |
-| fresh chunk, Falco after stage 2 | **32 objects, 2 088 B** |
+| fresh chunk, Falco after stage 2 | **25 objects, 840 B** |
 | materialisation: fresh chunk / pure read | 0 / 0 sections |
 | one `setBlock` at y=64 | 10 sections — the heightmap descent, not the write |
 | write order y=200 then y=−64 / reverse | 18 / 3 — a factor of six |
@@ -61,6 +68,11 @@ listeners and the viewer-cache cleanup. Stage 4 is `FalcoSharedInstance extends 
 | empty section share, real generated overworld | 62.24 % (441 finished chunks around one spawn) |
 | palette break-even, indirect against direct | between 192 and 224 entries |
 | Minestom's viewer cache leak | 1 entry per chunk construction, 257 B, never removed |
+
+If you find **32 objects / 2 088 B** for the fresh Falco chunk in an older task report, it is the same
+measurement taken with tasks 2 and 3 in place and tasks 7 and 8 not yet written. The difference is the
+four objects of the two heightmaps and the three of the second block map. `ChunkFootprintTest` says
+which is current; it is the only thing that does.
 
 **Not citable** — every timing figure taken during this work. The machine ran at load 4.4 to 7.0
 throughout (a Minecraft client, an IDE and several agent sessions). They establish direction, never

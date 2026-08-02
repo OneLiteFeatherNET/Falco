@@ -149,7 +149,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 3.4.0
+ * @version 3.4.1
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -504,14 +504,17 @@ public class FalcoChunk extends Chunk {
      * the two of them together. Which share of a chunk that is depends entirely on which chunk is
      * being talked about, so both are named here. Against a fresh {@code DynamicChunk}, which retains
      * {@code 6 848} bytes, it is {@code 16,4 %} — the second largest post after the sections. Against
-     * a fresh chunk of this class it is far more: this chunk shares one empty section until something
-     * writes, so while it still built its heightmaps eagerly it retained {@code 2 088} bytes, of which
-     * the two heightmaps were {@code 1 120}, {@code 53,6 %}, the largest post it had; without them it
-     * retains {@code 968}. Every figure above is what {@code ChunkFootprintTest} measures with jol
+     * a fresh chunk of this class the comparison needs no percentage at all: a fresh
+     * {@code FalcoChunk} retains {@code 840} bytes in total, which is less than the two heightmaps
+     * alone would weigh. That is why they and not the sections are the post this class defers.
+     * </p>
+     * <p>
+     * The {@code 6 848} and the {@code 840} are what {@code ChunkFootprintTest} measures with jol
      * 0.17 through the instrumentation agent on OpenJDK 25.0.3 with a twelve byte object header and an
      * alignment of eight ({@code falco.compactHeaders=false}), over an overworld chunk of 24 sections,
-     * counting what the chunk retains once the instance is subtracted. Under compact headers, or at
-     * another world height, they are different numbers.
+     * counting what the chunk retains once the instance is subtracted; the {@code 1 120} is the two
+     * heightmaps of that {@code DynamicChunk} in the same walk. Under compact headers, or at another
+     * world height, they are different numbers.
      * </p>
      * <p>
      * Minestom builds both heightmaps in a field initialiser, so a chunk pays for them whether or not
