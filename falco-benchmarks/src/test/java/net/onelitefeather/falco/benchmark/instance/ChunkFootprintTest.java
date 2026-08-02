@@ -176,6 +176,38 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * so the seam is paid for many times over — but it is paid, and a reader of this table should see
  * the price rather than a zero.
  * </p>
+ * <p>
+ * That whole account describes the eager storage of stage 1 and no longer describes the default.
+ * {@code FalcoChunk} now builds a {@code LazySectionBlockStorage}, a fresh one holds no section of
+ * its own, and the difference the two sides may show is consequently not one object of one named
+ * class — it is twenty-four sections and everything under them. {@link #assertTheSeamIsTheOnlyDifference}
+ * is therefore the assertion of a layout that is gone, and it fails. It is left standing rather than
+ * softened: the plan replaces it in its task 9, and until then a red assertion states the discrepancy
+ * where a widened one would bury it. The tables it fails after are the corrected ones and can be read.
+ * </p>
+ *
+ * <h2>Why the equivalence check runs after the measurement and not before</h2>
+ * <p>
+ * A probe that writes to its specimen is not a probe. {@code MinestomChunks#assertSameBlocks} used to
+ * run first in all three places below, and on a lazy storage it was a write: it asked both chunks for
+ * {@code Chunk#getSections()}, which a {@code FalcoChunk} answers by giving every shared slot a
+ * section of its own. Every fresh Falco chunk in these tables was therefore fully materialised before
+ * a single byte of it was counted, and the table said so without saying so — {@code 193} objects
+ * against {@code 192}, the same delta the eager storage of stage 1 produced, which is exactly what a
+ * chunk with twenty-four sections of its own costs. The measured truth is {@code 32} objects; see the
+ * diagnosis report of 2026-08-02 in {@code .superpowers/sdd/2026-08-02-falco-lazy-sections}.
+ * </p>
+ * <p>
+ * Two things follow and both are done. {@code MinestomChunks#assertSameBlocks} no longer reaches
+ * through {@code getSections()} at all, which is a fix every benchmark of this module shares. And the
+ * order here is inverted: the chunk is measured first and proved equivalent afterwards, before any
+ * table is printed. That keeps what the check is for — a run whose two sides disagree still fails and
+ * still publishes nothing — while removing the last way it can decide the number it is guarding. The
+ * residue is stated rather than removed: comparing the heightmaps forces both sides to compute them,
+ * and on a fresh Falco chunk the column descent of {@code Heightmap#refresh(int, int, int)}
+ * materialises the one section it lands in. That is {@code 7} objects, it is Minestom's descent and
+ * not this class's, and after the inversion it lands outside every number below.
+ * </p>
  *
  * <h2>Running it</h2>
  * <p>
@@ -192,7 +224,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @DisplayName("The retained size of a chunk, measured with JOL")
@@ -312,11 +344,11 @@ class ChunkFootprintTest {
 
         final Chunk minestomChunk = MinestomChunks.newChunk(container, 0, 0);
         final Chunk falcoChunk = MinestomChunks.newChunk(falco, 0, 0);
-        MinestomChunks.assertSameBlocks(minestomChunk, falcoChunk);
 
         final Footprint minestom = measure(minestomChunk, container);
         final Footprint falcoFootprint = measure(falcoChunk, falco);
         final Footprint sections = measureSections(minestomChunk);
+        MinestomChunks.assertSameBlocks(minestomChunk, falcoChunk);
 
         final StringBuilder out = new StringBuilder();
         appendHeader(out, "a fresh chunk, before a single block is set");
@@ -363,15 +395,20 @@ class ChunkFootprintTest {
      * this table can be read as an answer to a question it did not ask.
      * </p>
      * <p>
-     * The two sides are proved equal before the first number is taken, through
-     * {@code MinestomChunks#assertSameBlocks}, which walks every position and both heightmaps and
-     * throws. A footprint comparison of two chunks with different content is not a comparison.
+     * The two sides are proved equal through {@code MinestomChunks#assertSameBlocks}, which walks
+     * every position and both heightmaps and throws. A footprint comparison of two chunks with
+     * different content is not a comparison. It runs after each pair has been measured and before the
+     * row is written, for the reason the class documentation gives: the check computes heightmaps, and
+     * a heightmap computation on a lazy storage allocates. Running last still stops a run whose two
+     * sides disagree, and it stops it before a number reaches standard output.
      * </p>
      * <p>
      * The {@code fresh} row is measured on both sides rather than printed twice from the Minestom
      * side. It used to be the latter, which cost nothing while the delta was zero and would now print
      * a zero in a column where every other row shows what the seam costs — a row that reports a
-     * difference it never measured.
+     * difference it never measured. Its pair is now compared like every other row, which it was not:
+     * the two fresh chunks went unchecked here, and the only reason that never showed is that the
+     * check they were missing was the one destroying the row above them.
      * </p>
      */
     @Test
@@ -383,6 +420,7 @@ class ChunkFootprintTest {
         final Chunk freshFalcoChunk = MinestomChunks.newChunk(falco, 0, 0);
         final Footprint fresh = measure(freshChunk, container);
         final Footprint freshFalco = measure(freshFalcoChunk, falco);
+        MinestomChunks.assertSameBlocks(freshChunk, freshFalcoChunk);
 
         final StringBuilder out = new StringBuilder();
         appendHeader(out, "one chunk over the distinct state count and the arrangement");
@@ -399,10 +437,10 @@ class ChunkFootprintTest {
                 final Chunk falcoChunk = MinestomChunks.newChunk(falco, 0, 0);
                 MinestomChunks.fill(minestomChunk, states, shape);
                 MinestomChunks.fill(falcoChunk, states, shape);
-                MinestomChunks.assertSameBlocks(minestomChunk, falcoChunk);
 
                 final Footprint minestom = measure(minestomChunk, container);
                 final Footprint falcoFootprint = measure(falcoChunk, falco);
+                MinestomChunks.assertSameBlocks(minestomChunk, falcoChunk);
                 appendProfileRow(out, shape.name(), Integer.toString(states),
                         Integer.toString(MinestomChunks.countDistinctStates(minestomChunk)),
                         minestom, falcoFootprint);

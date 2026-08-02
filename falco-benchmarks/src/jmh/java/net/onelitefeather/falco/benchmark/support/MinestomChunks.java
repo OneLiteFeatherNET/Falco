@@ -11,6 +11,7 @@ import net.minestom.server.instance.block.Block;
 import net.minestom.server.instance.heightmap.Heightmap;
 import net.minestom.server.registry.RegistryKey;
 import net.minestom.server.world.DimensionType;
+import net.onelitefeather.falco.instance.FalcoChunk;
 import net.onelitefeather.falco.instance.FalcoInstance;
 import org.jetbrains.annotations.Nullable;
 
@@ -126,7 +127,7 @@ import java.util.UUID;
  * }</pre>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 public final class MinestomChunks {
@@ -659,6 +660,29 @@ public final class MinestomChunks {
      * ends up in the chunk packet.
      * </p>
      *
+     * <h2>Why this check may not touch {@code Chunk#getSections()}</h2>
+     * <p>
+     * It used to compare {@code expected.getSections().size()} against {@code actual.getSections().size()},
+     * and on a {@link net.onelitefeather.falco.instance.FalcoChunk} that one line was not a read. Its
+     * storage hands out a real {@code Section} per slot there, so asking for the list materialised all
+     * twenty-four of a chunk that held none — which turned every footprint number taken after this
+     * check into a measurement of the check. Measured: a fresh {@code FalcoChunk} retains {@code 32}
+     * objects, and {@code 193} once this method has run over it, against {@code 192} for the
+     * {@code DynamicChunk} it is compared with. The section count is therefore read through
+     * {@link #sectionCount(Chunk)}, which asks a Falco chunk's storage instead of its section list.
+     * </p>
+     * <p>
+     * The heightmaps are the second such place and cannot be sidestepped, only started correctly.
+     * {@code Heightmap#getHeight} refreshes on first use and begins that refresh at
+     * {@code Heightmap#getHighestBlockSection(Chunk)}, which walks every section from the build limit
+     * downwards through {@code Chunk#getSection(int)} — twenty-four materialisations before the scan
+     * proper has begun. {@link #primeHeightmaps(Chunk)} starts both heightmaps of each side from that
+     * side's own scan, the way {@code ChunkComparisonBenchmark} already starts them, so the descent
+     * begins at the height the chunk itself reports. What the descent then materialises is the
+     * documented cost of {@code Heightmap#refresh(int, int, int)} and is asserted per fixture in
+     * {@code SectionMaterialisationTest}; it is not this method's to hide.
+     * </p>
+     *
      * @param expected the chunk that defines the content, usually the Minestom side
      * @param actual   the chunk that has to match it, usually the Falco side
      * @throws IllegalStateException if the two chunks differ in their bounds, in a block or in a height
@@ -669,9 +693,9 @@ public final class MinestomChunks {
                     + expected.getMinSection() + ", " + expected.getMaxSection() + ") but got ["
                     + actual.getMinSection() + ", " + actual.getMaxSection() + ")");
         }
-        if (expected.getSections().size() != actual.getSections().size()) {
+        if (sectionCount(expected) != sectionCount(actual)) {
             throw new IllegalStateException("The chunks hold a different amount of sections: expected "
-                    + expected.getSections().size() + " but got " + actual.getSections().size());
+                    + sectionCount(expected) + " but got " + sectionCount(actual));
         }
         final int minY = expected.getMinSection() * SECTION_SIZE;
         final int maxY = expected.getMaxSection() * SECTION_SIZE;
@@ -681,6 +705,8 @@ public final class MinestomChunks {
             actual.lockReadLock();
             try {
                 compareBlocks(expected, actual, minY, maxY);
+                primeHeightmaps(expected);
+                primeHeightmaps(actual);
                 compareHeightmaps(expected, actual, expected.motionBlockingHeightmap(), actual.motionBlockingHeightmap());
                 compareHeightmaps(expected, actual, expected.worldSurfaceHeightmap(), actual.worldSurfaceHeightmap());
             } finally {
@@ -689,6 +715,47 @@ public final class MinestomChunks {
         } finally {
             expected.unlockReadLock();
         }
+    }
+
+    /**
+     * Reports how many sections a chunk spans without making it create any.
+     * <p>
+     * {@code Chunk} declares no such accessor, and the only one it has,
+     * {@code Chunk#getSections()}, is a write on every lazy layout. A
+     * {@link net.onelitefeather.falco.instance.FalcoChunk} is asked through its storage, which knows
+     * its own length; every other chunk answers from its section list, where the question is free.
+     * </p>
+     *
+     * @param chunk the chunk to count the sections of
+     * @return the amount of sections the chunk spans
+     */
+    public static int sectionCount(Chunk chunk) {
+        if (chunk instanceof FalcoChunk falcoChunk) {
+            return falcoChunk.storage().sectionCount();
+        }
+        return chunk.getSections().size();
+    }
+
+    /**
+     * Computes both heightmaps of a chunk from the scan that chunk starts them with.
+     * <p>
+     * A no-op for a heightmap that has already been refreshed, because {@code Heightmap#refresh(int)}
+     * returns on its own {@code needsRefresh}. For one that has not, it decides where the column
+     * descent begins: {@code FalcoChunk#highestBlockSection()} finds the top of the terrain through
+     * the read-only view of its storage, while {@code Heightmap#getHighestBlockSection(Chunk)} finds
+     * the same height through {@code Chunk#getSection(int)}. The two answer identically — that is
+     * covered by {@code FalcoChunkEquivalenceTest} — but only the first one is a read.
+     * </p>
+     *
+     * @param chunk the chunk whose heightmaps are computed
+     */
+    public static void primeHeightmaps(Chunk chunk) {
+        final int startY = chunk instanceof FalcoChunk falcoChunk
+                ? falcoChunk.highestBlockSection()
+                : Heightmap.getHighestBlockSection(chunk);
+
+        chunk.motionBlockingHeightmap().refresh(startY);
+        chunk.worldSurfaceHeightmap().refresh(startY);
     }
 
     /**
