@@ -5,7 +5,7 @@ name: Benchmark
 #   custom — one filter, one job. For reproducing a single table or checking one change.
 #   full   — the whole suite, split across parallel jobs.
 #
-# Sequentially the suite is 494 configurations and several hours; a timeout at hour five would
+# Sequentially the suite is 488 configurations and several hours; a timeout at hour five would
 # discard everything, including the classes that finished in minute three. Split into shards the
 # wall clock is roughly the longest single shard, and a failure costs one shard.
 #
@@ -18,10 +18,12 @@ name: Benchmark
 #   would spend two to four minutes building and one measuring, so the build would be most of the
 #   bill.
 #
-#   Shards are balanced by configuration count, not by method count. JMH's -lp reports the parameter
-#   cross product per method and it is wildly uneven — ScalingBenchmark declares 75 combinations per
-#   method against 2 for the region file comparison — so splitting by method alone would leave one
-#   shard running twenty times longer than another.
+#   A shard is a whole class, and the balancing is by configuration count. The unit is the class for
+#   correctness, not for balance: a comparison class holds both sides of its comparison, shards land
+#   on different runners with different CPUs, and a split pair measures the hardware — observed once
+#   at 2.13x where one machine gives 1.13x. The weighting matters because JMH's -lp reports a wildly
+#   uneven cross product, ScalingBenchmark declaring 300 configurations against 8 for the region file
+#   comparison, so ScalingBenchmark alone sets the wall clock.
 #
 # The plan is derived from the jar at run time. A hard-coded list is a count that goes stale, and
 # this suite went from sixteen classes to seventeen inside one day.
