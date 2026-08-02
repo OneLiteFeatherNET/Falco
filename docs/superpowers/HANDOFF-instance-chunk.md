@@ -122,6 +122,23 @@ prove their tests bite by mutation, and several have caught their own briefs bei
 - **Region file size says nothing about terrain density.** Anvil pads every chunk to whole 4096-byte
   sectors; a 4.3 MB file held 601 KB of payload.
 
+## Open defect, found during the merge and deliberately not fixed
+
+`FalcoChunk#tick(long)` iterates `this.entries` with no lock, and `Int2ObjectOpenHashMap` is not
+thread-safe. A concurrent `setBlock` that rehashes the map while the tick thread walks it can yield
+garbage or spin. The tick thread never holds the chunk lock — `ThreadDispatcher` registers the chunk
+as a `Tickable` and `TickThread` calls it under its own lock — and Minestom's `Chunk#tick` contract
+says outright that the method "doesn't necessary have to be thread-safe".
+
+**Upstream `DynamicChunk` has the identical race** with its `tickableMap` (`DynamicChunk.java:185-186`),
+so this is inherited rather than introduced by the storage rewrite. ArchUnit cannot see it: the field
+is `final`, so `sharedStateIsSafelyPublished` skips it by construction.
+
+Fixing it is a design decision — take the read lock in `tick`, make the map concurrent, or confine
+writes to the chunk's tick thread — and each option has a cost on a path that runs for every chunk
+every tick. It belongs to stage 3, which owns the lifecycle, and it is recorded here so that the next
+reader meets it as a known open item rather than as a surprise.
+
 ## How to continue
 
 ```bash
