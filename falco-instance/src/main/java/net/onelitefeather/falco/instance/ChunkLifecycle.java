@@ -69,7 +69,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -370,6 +370,25 @@ public final class ChunkLifecycle {
         this.owner.getEntityTracker().chunkEntities(chunkX, chunkZ, EntityTracker.Target.ENTITIES)
                 .forEach(Entity::remove);
         this.persistence.unloaded(managed);
+    }
+
+    /**
+     * Hands out what fills a chunk no loader knows about.
+     * <p>
+     * This is the only route to {@link ChunkGeneration} there is, and that is the point rather than an
+     * inconvenience. A chunk is generated exactly once and that once is inside its load, so generation
+     * is a collaborator of this class; giving {@link FalcoInstance} a field for it would have made it a
+     * fifth part of a facade that holds four, which {@code InstanceFacadeTest} refuses. The three
+     * members of {@link FalcoInstance} that still speak about generation —
+     * {@link FalcoInstance#generator()}, {@link FalcoInstance#setGenerator(Generator)} and
+     * {@link FalcoInstance#generateChunk(int, int, Generator)} — reach it through here.
+     * </p>
+     *
+     * @return the generation side of this lifecycle
+     * @since 0.4.0
+     */
+    public ChunkGeneration generation() {
+        return this.generation;
     }
 
     /**

@@ -32,22 +32,62 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 /**
- * The {@link FalcoInstance} class is a world of a Minestom server which cleans up after itself.
+ * The {@link FalcoInstance} class is a world of a Minestom server which cleans up after itself, and
+ * it is a facade: it owns four references and no state at all.
+ *
+ * <h2>The four parts and where the line between them runs</h2>
+ * <ul>
+ *   <li>{@link ChunkRegistry} — which chunk sits at which position, and which position is busy. It
+ *   holds the two maps and the four transitions between them, and it is the only thing that decides
+ *   whether a position is free, loading or taken.</li>
+ *   <li>{@link ChunkLifecycle} — everything that happens to a chunk between not existing and not
+ *   existing again: create, read, publish, notify, unload, and the two settings that steer them. It
+ *   uses the registry to make those transitions; it does not duplicate them. {@link ChunkGeneration}
+ *   is its collaborator rather than a fifth part of this class, because a chunk is generated exactly
+ *   once and that once is inside its load, and it is reached through
+ *   {@link ChunkLifecycle#generation()}.</li>
+ *   <li>{@link BlockWriter} — a block write and everything it wakes: the neighbours, the packets, the
+ *   event, the recursion guard and the change timestamp.</li>
+ *   <li>{@link ChunkPersistence} — the loader, the four save paths, the read and the unload
+ *   notification, plus the two settings the shutdown of this instance asks it about.</li>
+ * </ul>
  * <p>
- * It extends {@link Instance} directly instead of {@code InstanceContainer}. Deriving from the
- * container looks cheaper but leads nowhere: the chunk lifecycle hooks it would have to override
- * are {@code protected} members of {@code net.minestom.server.instance}, so a subclass in this
- * package cannot reach them. Starting from {@link Instance} makes the same barrier visible once, at
- * the chunk, where {@link FalcoChunk} answers it.
+ * The line between the last two and the first two is the one worth stating, because it is the one a
+ * later change is most likely to blur: a part may hold whatever it needs to answer its own question,
+ * and no part reads the state of another. {@link ChunkLifecycle} is handed the registry, the
+ * persistence and the generation rather than reaching for them, which is what lets each of the four be
+ * driven on its own by a test — US-3.02, and the reason the split was worth six commits.
+ * </p>
+ *
+ * <h2>Why this class holds nothing else</h2>
+ * <p>
+ * A facade that keeps state of its own is the class it replaced with delegation in front of it, and
+ * the difference is invisible from the outside: every method below still reads like a one-liner while
+ * a fifth field quietly makes two parts disagree. That is not left to a reader.
+ * {@code InstanceFacadeTest} asks {@code getDeclaredFields()} on every build and fails if this class
+ * declares anything but one {@code final} reference per part. Anything that looks like it belongs here
+ * belongs in one of the four instead; if it belongs in none of them, the split is wrong and needs a
+ * fifth part rather than a field.
+ * </p>
+ *
+ * <h2>What being an {@link Instance} rather than a container costs</h2>
+ * <p>
+ * This class extends {@link Instance} directly instead of {@code InstanceContainer}. Deriving from the
+ * container looks cheaper but leads nowhere: the chunk lifecycle hooks it would have to override are
+ * {@code protected} members of {@code net.minestom.server.instance}, so a subclass in this package
+ * cannot reach them. Starting from {@link Instance} makes the same barrier visible once, at the chunk,
+ * where {@link FalcoChunk} answers it.
  * </p>
  * <p>
- * Four places in Minestom branch on {@code instanceof InstanceContainer} and quietly take a
- * different path for any other instance. Three of them are harmless here, one is not:
+ * Four places in Minestom branch on {@code instanceof InstanceContainer} and quietly take a different
+ * path for any other instance. The split changed none of them, so all four still apply exactly as they
+ * did. Three are harmless here, one is not:
  * </p>
  * <ul>
  *   <li>{@code InstanceManager#unregisterInstance} does not unload the chunks of a foreign
  *   instance, which leaks every chunk the instance ever loaded. {@link #unregister(InstanceManager)}
- *   is the answer and the reason this class exists.</li>
+ *   is the answer and it is still the reason this class exists — the four parts are how it is built,
+ *   not why.</li>
  *   <li>{@code SharedInstance} is typed on the container throughout, so this instance cannot back
  *   one. That is a missing feature rather than a defect, and it is refused by the compiler.</li>
  *   <li>The {@code Chunk} constructor asks the instance for its shared instances and gets an empty
@@ -57,33 +97,25 @@ import java.util.function.Consumer;
  *   must not rely on it.</li>
  * </ul>
  * <p>
- * A world here comes from its {@link ChunkLoader}, from a {@link Generator}, or stays empty, in that
- * order. The generator runs against staged palettes rather than against the live ones of the chunk,
- * so a generator which fails halfway changes nothing and the failure reaches the caller instead of
- * the exception manager. {@code InstanceContainer} does the opposite on both counts, which is why
- * {@link #generator()} could not simply be inherited in spirit.
+ * Where this class deviates from {@code InstanceContainer} on purpose — the generator that runs
+ * against staged palettes instead of the live ones, the publish and the unload of one position that
+ * are made mutually exclusive, and the block write that takes the lock of one chunk instead of a
+ * monitor on the whole world — the reasoning now sits with the code it is about, in
+ * {@link ChunkGeneration#apply(Chunk, Generator)}, {@link ChunkLifecycle} and {@link BlockWriter}
+ * respectively. It moved with them rather than being dropped: a comment about a lock is worth
+ * something only next to the statement that takes it.
  * </p>
  * <p>
- * The other place where this class deviates on purpose is the moment a loaded chunk becomes part of
- * the instance. Publishing a chunk and unloading one are two transitions of the same position, and
- * they are made mutually exclusive, so an unload which meets a running load either sees the finished
- * chunk or claims the load and makes it throw its result away. Minestom lets the two overlap, and
- * the chunk which loses that race stays in the world with nothing left that could unload it.
- * </p>
- * <p>
- * On threading, this class promises no more than Minestom does, and for a reason worth stating: the
+ * On threading this class promises no more than Minestom does, and for a reason worth stating: the
  * parallelism of chunk and entity ticking lives in the global {@code ThreadDispatcher} of the server
- * process, not in the instance. Replacing the instance cannot make ticking faster. What it does buy
- * is that block writes are guarded by the lock of the chunk they touch rather than by a monitor on
- * the whole instance, so two writes to two chunks no longer wait for each other. That ordering lives
- * in {@link BlockWriter}, which is where it can be read and measured.
+ * process, not in the instance. Replacing the instance cannot make ticking faster.
  * </p>
  * <p>
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.7.0
+ * @version 2.0.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -122,33 +154,7 @@ public class FalcoInstance extends Instance {
      * {@link ChunkRegistry#remove} come from {@link ChunkLifecycle}.
      * </p>
      */
-    private final ChunkRegistry registry = new ChunkRegistry();
-
-    /**
-     * The registries the biomes of a generated chunk are looked up in.
-     * <p>
-     * Kept here rather than read from {@link MinecraftServer} so an instance built against a process
-     * which is not the global one generates against the registries of that process.
-     * </p>
-     */
-    private final Registries registries;
-
-    /**
-     * The generator, the forks it produced for chunks which were not there, and the commit of both.
-     * <p>
-     * Final, and the generator inside it is what changes. The field which used to sit here was
-     * {@code volatile} because a public setter wrote it while the load path read it from another
-     * thread; that reason did not go away, it moved into {@link ChunkGeneration} along with the
-     * generator.
-     * </p>
-     * <p>
-     * It is handed {@link #getChunkAt(Point)} rather than this instance, because a neighbour a fork
-     * writes into is the only thing generation ever needs a world for. What it is <em>not</em> handed
-     * is {@link #refreshLastBlockChangeTime()}: the timestamp belongs to {@link BlockWriter}, so the
-     * two callers of {@link ChunkGeneration#apply} refresh it themselves.
-     * </p>
-     */
-    private final ChunkGeneration generation;
+    private final ChunkRegistry registry;
 
     /**
      * Everything this instance does when a block changes.
@@ -175,7 +181,8 @@ public class FalcoInstance extends Instance {
     private final ChunkPersistence persistence;
 
     /**
-     * Everything that happens to a chunk between not existing and not existing again.
+     * Everything that happens to a chunk between not existing and not existing again, and what fills a
+     * chunk no loader knows about.
      * <p>
      * The create, the read, the publish, the unload and the two settings which steer them —
      * the chunk supplier and the auto load flag — used to be {@code private} members of this class,
@@ -183,18 +190,14 @@ public class FalcoInstance extends Instance {
      * are a responsibility of their own and {@link ChunkLifecycle} carries it, which is what makes
      * each step reachable and measurable one at a time.
      * </p>
+     * <p>
+     * {@link ChunkGeneration} is held by this part rather than beside it, and is reached through
+     * {@link ChunkLifecycle#generation()}. A chunk is generated exactly once and that once is inside
+     * its load, so a field here would have been a fifth reference nothing but the lifecycle ever
+     * touches.
+     * </p>
      */
     private final ChunkLifecycle lifecycle;
-
-    /**
-     * Whether {@link #shutdown(InstanceManager)} saves the chunks before it unregisters.
-     */
-    private volatile boolean saveOnShutdown = true;
-
-    /**
-     * Whether {@link #shutdown(InstanceManager)} closes the loader, if the loader can be closed.
-     */
-    private volatile boolean ownsLoader;
 
     /**
      * Creates an instance in the overworld dimension without a chunk loader.
@@ -235,15 +238,20 @@ public class FalcoInstance extends Instance {
     public FalcoInstance(Registries registries, UUID uuid, RegistryKey<DimensionType> dimensionType,
                          @Nullable ChunkLoader loader, Key dimensionName) {
         super(registries, uuid, dimensionType, dimensionName);
-        this.registries = registries;
-        this.generation = new ChunkGeneration(this.registries, this::getChunkAt);
+        this.registry = new ChunkRegistry();
         this.persistence = new ChunkPersistence(loader);
-        this.lifecycle = new ChunkLifecycle(this, this.registry, this.persistence, this.generation);
         this.blockWriter = new BlockWriter(this);
-        // Last, and outside the ChunkPersistence constructor on purpose: loadInstance may call back
-        // into this instance, and a callback into an object whose constructor has not finished is how
-        // a field that is assigned one line later is read as null. Every field this instance
-        // delegates to has to stand before this line, not after it.
+        // The registries are handed straight through rather than kept. They are what the biomes of a
+        // generated chunk are looked up in, generation is the only thing that asks, and this is the
+        // only line that hands them over — a field for them would be state of the facade that nothing
+        // reads twice. Taken as an argument rather than read from MinecraftServer so an instance built
+        // against a process which is not the global one generates against the registries of that
+        // process. ChunkGeneration is handed getChunkAt rather than this instance, because a neighbour
+        // a fork writes into is the only thing generation ever needs a world for.
+        this.lifecycle = new ChunkLifecycle(this, this.registry, this.persistence,
+                new ChunkGeneration(registries, this::getChunkAt));
+        // Last, and outside every constructor above: loadInstance may call back into this instance,
+        // and a callback into an object whose parts are not all built yet reads one of them as null.
         this.persistence.loader().loadInstance(this);
     }
 
@@ -286,7 +294,7 @@ public class FalcoInstance extends Instance {
      * @throws FalcoInstanceException if the chunks could not be saved or the loader not closed
      */
     public void shutdown(InstanceManager instanceManager) {
-        if (this.saveOnShutdown) {
+        if (this.persistence.saveOnShutdown()) {
             try {
                 saveChunksToStorage().join();
             } catch (Throwable throwable) {
@@ -296,7 +304,7 @@ public class FalcoInstance extends Instance {
         }
         unregister(instanceManager);
 
-        if (!this.ownsLoader) return;
+        if (!this.persistence.ownsLoader()) return;
 
         if (this.persistence.loader() instanceof AutoCloseable closeable) {
             try {
@@ -348,11 +356,11 @@ public class FalcoInstance extends Instance {
             if (this.registry.idle()) {
                 // A fork whose target chunk was never requested waits forever, and after this there
                 // is nothing left it could wait for.
-                this.generation.clearPending();
+                this.lifecycle.generation().clearPending();
                 return;
             }
         }
-        this.generation.clearPending();
+        this.lifecycle.generation().clearPending();
         LOGGER.warn("chunks kept arriving while the instance {} was unregistered; {} chunks and {} loads are left behind",
                 getUuid(), this.registry.size(), this.registry.loading());
     }
@@ -695,8 +703,8 @@ public class FalcoInstance extends Instance {
                 instance.setChunkLifecycle(this.chunkLoaded, this.chunkUnloaded);
             }
             instance.enableAutoChunkLoad(this.autoChunkLoad);
-            instance.saveOnShutdown = this.saveOnShutdown;
-            instance.ownsLoader = this.ownsLoader;
+            instance.persistence.saveOnShutdown(this.saveOnShutdown);
+            instance.persistence.ownsLoader(this.ownsLoader);
 
             instanceManager.registerInstance(instance);
             return instance;
@@ -796,7 +804,7 @@ public class FalcoInstance extends Instance {
      */
     @Override
     public @Nullable Generator generator() {
-        return this.generation.generator();
+        return this.lifecycle.generation().generator();
     }
 
     /**
@@ -811,7 +819,7 @@ public class FalcoInstance extends Instance {
      */
     @Override
     public void setGenerator(@Nullable Generator generator) {
-        this.generation.generator(generator);
+        this.lifecycle.generation().generator(generator);
     }
 
     /**
@@ -841,7 +849,7 @@ public class FalcoInstance extends Instance {
                     throw new FalcoInstanceException("the chunk " + chunkX + ":" + chunkZ
                             + " was unloaded before the generator could run over it");
                 }
-                this.generation.apply(chunk, generator);
+                this.lifecycle.generation().apply(chunk, generator);
                 refreshLastBlockChangeTime();
                 chunk.sendChunk();
                 future.complete(null);

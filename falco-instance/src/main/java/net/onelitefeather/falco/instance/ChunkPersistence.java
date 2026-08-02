@@ -31,12 +31,29 @@ import java.util.concurrent.CompletableFuture;
  * written by a public unsynchronized setter and read on the load path from another thread, and the
  * value is an object handed in by a caller whose construction has to be visible to that reader.
  * </p>
+ *
+ * <h2>Why the two shutdown settings live here</h2>
+ * <p>
+ * {@link #saveOnShutdown()} and {@link #ownsLoader()} steer {@link FalcoInstance#shutdown(net.minestom.server.instance.InstanceManager)},
+ * so at first sight they look like settings of the instance, and they were fields of it until stage 3
+ * asserted that the facade holds nothing but its four parts. They are not arbitrary refugees from that
+ * assertion: both are questions about the loader and about nothing else — whether the chunks are
+ * written through it before the world goes away, and whether it is closed afterwards — and this is the
+ * class that owns the loader. An instance without a loader answers both of them the same way whatever
+ * they are set to.
+ * </p>
+ * <p>
+ * They are deliberately not reachable from {@link FalcoInstance}, which has no {@code persistence()}
+ * door. That keeps them what they were before the move: values a caller sets on
+ * {@code FalcoInstance.Builder} while the world is being built, and not a switch that can be flipped
+ * from under a running shutdown.
+ * </p>
  * <p>
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -46,6 +63,22 @@ public final class ChunkPersistence {
      * The loader chunks are read from and written to, never null.
      */
     private volatile ChunkLoader chunkLoader;
+
+    /**
+     * Whether the shutdown of the instance saves the chunks before it unregisters.
+     * <p>
+     * Volatile for the same reason as {@link #chunkLoader}: written by a public unsynchronized setter
+     * and read on a path that may run on another thread.
+     * </p>
+     */
+    private volatile boolean saveOnShutdown = true;
+
+    /**
+     * Whether the shutdown of the instance closes the loader, if the loader can be closed.
+     *
+     * @see #saveOnShutdown
+     */
+    private volatile boolean ownsLoader;
 
     /**
      * Creates a persistence over a loader.
@@ -79,6 +112,55 @@ public final class ChunkPersistence {
      */
     public void loader(ChunkLoader loader) {
         this.chunkLoader = Objects.requireNonNull(loader, "the chunk loader cannot be null");
+    }
+
+    /**
+     * Reports whether the shutdown of the instance saves the chunks before it unregisters.
+     *
+     * @return true if the shutdown saves first
+     * @since 0.4.0
+     */
+    public boolean saveOnShutdown() {
+        return this.saveOnShutdown;
+    }
+
+    /**
+     * Sets whether the shutdown of the instance saves the chunks before it unregisters.
+     * <p>
+     * The default is true, and the asymmetry is deliberate: saving a world nobody changed costs time,
+     * while not saving one that was changed costs the changes.
+     * </p>
+     *
+     * @param enable true if the shutdown saves before it unregisters
+     * @since 0.4.0
+     */
+    public void saveOnShutdown(boolean enable) {
+        this.saveOnShutdown = enable;
+    }
+
+    /**
+     * Reports whether the shutdown of the instance closes the loader.
+     *
+     * @return true if the instance closes the loader when it shuts down
+     * @since 0.4.0
+     */
+    public boolean ownsLoader() {
+        return this.ownsLoader;
+    }
+
+    /**
+     * Sets whether the shutdown of the instance closes the loader.
+     * <p>
+     * The default is false, because a loader is usually shared: the overworld and the nether of one
+     * world are two instances on one loader, and the first of them to shut down must not close it
+     * under the second.
+     * </p>
+     *
+     * @param owns true if the instance closes the loader when it shuts down
+     * @since 0.4.0
+     */
+    public void ownsLoader(boolean owns) {
+        this.ownsLoader = owns;
     }
 
     /**
