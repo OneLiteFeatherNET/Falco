@@ -80,7 +80,7 @@ import java.util.Objects;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.2.1
  * @since 0.4.0
  */
 @ApiStatus.Experimental

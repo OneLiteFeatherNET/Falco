@@ -65,7 +65,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.3.0
+ * @version 1.3.1
  * @since 0.4.0
  */
 @DisplayName("What a caller of a Falco chunk makes it allocate")
