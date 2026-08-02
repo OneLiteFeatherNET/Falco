@@ -22,6 +22,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * every time somebody reads it, and differently; this class answers it once per build.
  * </p>
  *
+ * <h2>What is asserted, which is less than that sentence</h2>
+ * <p>
+ * The two cases below assert one thing: {@link FalcoInstance} declares exactly four non-static,
+ * non-synthetic fields, every one of them {@code final} and of one of the four part types, each type
+ * once. That is a property of the declaration and nothing more. It does not assert that no value the
+ * facade acts on lives anywhere — {@link ChunkPersistence#saveOnShutdown()} and
+ * {@link ChunkPersistence#ownsLoader()} are read by {@code FalcoInstance#shutdown} and by no method
+ * of the class that holds them, so a fifth field could in principle be avoided by parking its value
+ * in a part that never asks about it, and these cases would stay green.
+ * </p>
+ * <p>
+ * The gap is written here rather than papered over, because the difference between what a check does
+ * and what its name suggests is the failure this repository has been bitten by repeatedly. What is
+ * bought is still the thing §8 asked for and the thing a later change actually threatens: nobody can
+ * hang a map, a counter or a flag back onto the facade without a red build.
+ * </p>
+ *
  * <h2>Why this is reflection, and why that is allowed here</h2>
  * <p>
  * NFR-001 forbids reflection in the modules, so that they run without {@code --add-opens} and without
@@ -34,7 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.0.1
  * @since 0.4.0
  */
 @DisplayName("The instance facade")

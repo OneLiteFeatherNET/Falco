@@ -33,7 +33,7 @@ import java.util.function.Consumer;
 
 /**
  * The {@link FalcoInstance} class is a world of a Minestom server which cleans up after itself, and
- * it is a facade: it owns four references and no state at all.
+ * it is a facade: it declares four references and nothing else.
  *
  * <h2>The four parts and where the line between them runs</h2>
  * <ul>
@@ -52,14 +52,33 @@ import java.util.function.Consumer;
  *   notification, plus the two settings the shutdown of this instance asks it about.</li>
  * </ul>
  * <p>
- * The line between the last two and the first two is the one worth stating, because it is the one a
- * later change is most likely to blur: a part may hold whatever it needs to answer its own question,
- * and no part reads the state of another. {@link ChunkLifecycle} is handed the registry, the
- * persistence and the generation rather than reaching for them, which is what lets each of the four be
- * driven on its own by a test — US-3.02, and the reason the split was worth six commits.
+ * The line between them is the one worth stating, because it is the one a later change is most likely
+ * to blur: a part holds whatever it needs to answer its own question, and it never holds a reference
+ * to another part it was not handed. {@link ChunkLifecycle} is handed the registry, the persistence
+ * and the generation rather than reaching for them, which is what lets each of the four be driven on
+ * its own by a test — US-3.02, and the reason the split was worth six commits.
+ * </p>
+ * <p>
+ * That is a rule about references, not a claim that the four never look at each other. Two of them do,
+ * both through this class rather than through a field, and they are named here because a rule with two
+ * exceptions nobody wrote down is a rule that gets discovered by breaking it:
+ * </p>
+ * <ul>
+ *   <li>{@link BlockWriter#setBlock(int, int, int, Block, boolean)} asks
+ *   {@link ChunkLifecycle#autoLoad()} whether it may load the chunk it is about to write into.
+ *   The setting steers a load, so it belongs to the lifecycle; the question is asked on the write
+ *   path, so the writer has to ask it.</li>
+ *   <li>{@link ChunkLifecycle#create(int, int)} calls {@link #refreshLastBlockChangeTime()} after a
+ *   generator filled a chunk, and this class forwards that to {@link BlockWriter}, which keeps the
+ *   timestamp because every other writer of it is a block write.</li>
+ * </ul>
+ * <p>
+ * Both couplings predate this class becoming a facade and neither is a reference: each goes through a
+ * public method of the other part, so either part can still be constructed and driven alone. A change
+ * to {@code autoLoad} or to the timestamp has to be checked against the part on the other side.
  * </p>
  *
- * <h2>Why this class holds nothing else</h2>
+ * <h2>Why this class declares nothing but its parts</h2>
  * <p>
  * A facade that keeps state of its own is the class it replaced with delegation in front of it, and
  * the difference is invisible from the outside: every method below still reads like a one-liner while
@@ -68,6 +87,13 @@ import java.util.function.Consumer;
  * declares anything but one {@code final} reference per part. Anything that looks like it belongs here
  * belongs in one of the four instead; if it belongs in none of them, the split is wrong and needs a
  * fifth part rather than a field.
+ * </p>
+ * <p>
+ * What that test asserts is the declaration and only the declaration, which is narrower than <em>the
+ * facade holds no state</em>: {@link ChunkPersistence#saveOnShutdown()} and
+ * {@link ChunkPersistence#ownsLoader()} are read by {@link #shutdown(InstanceManager)} and by nothing
+ * else, so a value the facade acts on does live one hop away. That is stated rather than glossed over,
+ * and the reason it is still the right home is written at {@link ChunkPersistence}.
  * </p>
  *
  * <h2>What being an {@link Instance} rather than a container costs</h2>
@@ -115,7 +141,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 2.0.0
+ * @version 2.0.1
  * @since 0.1.0
  */
 @ApiStatus.Experimental

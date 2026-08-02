@@ -49,11 +49,21 @@ import java.util.concurrent.CompletableFuture;
  * from under a running shutdown.
  * </p>
  * <p>
+ * What the move did <em>not</em> do is worth being exact about, because the commit that made it could
+ * be read as claiming more. No method of this class consults either setting; the only reader of both
+ * is {@code FalcoInstance#shutdown}, and the shutdown sequence stays there because the save has to
+ * happen before the unregister and the close after it — an order about the instance, not about the
+ * loader. So the two values were re-homed, not consumed here, and the facade still acts on them one
+ * hop away. Bringing the sequence into this class would move behaviour rather than structure, which
+ * stage 3 does not do; if a later change wants that, it is a decision of its own and the argument for
+ * it is that these two accessors would then have a caller inside their own class.
+ * </p>
+ * <p>
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.1.1
  * @since 0.4.0
  */
 @ApiStatus.Experimental
