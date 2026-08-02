@@ -159,7 +159,10 @@ public final class RegionFile implements AutoCloseable {
 
         try {
             return readHeader(path, channel);
-        } catch (IOException | RuntimeException exception) {
+        } catch (IOException | RuntimeException | RegionFormatException exception) {
+            // RegionFormatException belongs in this list for the same reason the other two do, and
+            // it is easy to miss: it is not an IOException, so leaving it out would return from a
+            // broken header with the channel still open.
             channel.close();
             throw exception;
         }
@@ -257,7 +260,13 @@ public final class RegionFile implements AutoCloseable {
                 if (this.versions.get(index) == version) {
                     return chunk;
                 }
-            } catch (IOException exception) {
+            } catch (IOException | RegionFormatException exception) {
+                // A format fault is caught here as well, and that is load bearing rather than
+                // tidy. A reader whose entry changed under it can read a length or a compression
+                // id that never existed as a whole, which now surfaces as a RegionFormatException
+                // instead of an IOException. Both mean the same thing at this point: if the version
+                // moved, the bytes were torn and the attempt is retried; only an unchanged version
+                // makes it a real failure of the stored data.
                 if (this.versions.get(index) == version) {
                     throw exception;
                 }

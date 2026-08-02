@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -44,6 +45,66 @@ class RegionFileTest extends FileTestBase {
      */
     private Path regionPath() {
         return this.tempDir.resolve("r.0.0.mca");
+    }
+
+    /**
+     * A header that is too short leaves no file handle behind.
+     * <p>
+     * {@code open} closes the channel itself when the header cannot be read, and the catch which
+     * does that has to list every type {@code readHeader} can throw. A {@link RegionFormatException}
+     * is not an {@link IOException}, so leaving it out of that catch returns from a broken header
+     * with the channel still open. Measured before the fix: one descriptor on the file. After: none.
+     * </p>
+     * <p>
+     * The check counts open descriptors through {@code /proc/self/fd} where that exists, because the
+     * consequence is invisible otherwise — on Windows the leak shows up as a file that can no longer
+     * be moved, which is what the fallback exercises.
+     * </p>
+     *
+     * @throws Exception if the probe file cannot be written
+     */
+    @Test
+    void testABrokenHeaderLeavesNoOpenHandle() throws Exception {
+        Files.write(regionPath(), new byte[RegionConstants.HEADER_SIZE - 1]);
+
+        assertThrows(RegionFormatException.class, () -> RegionFile.open(regionPath()));
+
+        Path descriptors = Path.of("/proc/self/fd");
+
+        if (Files.isDirectory(descriptors)) {
+            assertEquals(0, openDescriptorsOn(descriptors, regionPath()),
+                    "the failed open() left a channel on the file");
+            return;
+        }
+
+        Path moved = this.tempDir.resolve("moved.mca");
+        Files.move(regionPath(), moved);
+        Files.move(moved, regionPath());
+    }
+
+    /**
+     * Counts how many descriptors of this process point at the given file.
+     *
+     * @param descriptors the descriptor directory of this process
+     * @param target      the file to count descriptors for
+     * @return the amount of open descriptors on the file
+     * @throws IOException if the descriptor directory cannot be listed
+     */
+    private static int openDescriptorsOn(Path descriptors, Path target) throws IOException {
+        int open = 0;
+
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(descriptors)) {
+            for (Path entry : entries) {
+                try {
+                    if (Files.readSymbolicLink(entry).equals(target)) {
+                        open++;
+                    }
+                } catch (IOException ignored) {
+                    // A descriptor which disappeared while this loop ran is not one of ours.
+                }
+            }
+        }
+        return open;
     }
 
     @Test
