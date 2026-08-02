@@ -44,8 +44,36 @@ import java.util.function.Consumer;
  * Creating and deleting a tick partition has to be part of the same atomic step as entering and
  * leaving the chunk map; splitting them is what lets Minestom delete a partition that is created a
  * moment later, which leaves a chunk being ticked for the rest of the life of the server even though
- * nothing else knows about it any more. Everything that may call back into the instance — the events,
- * the packets, the loader, the listeners — stays outside and is the caller's business.
+ * nothing else knows about it any more.
+ * </p>
+ *
+ * <h2>What a step handed to publish or remove may do</h2>
+ * <p>
+ * Both steps run as the remapping function of a {@link ConcurrentHashMap#compute} on the map of
+ * running loads, so they inherit the rules of that method rather than merely being called at an
+ * awkward moment. A step has to be short, must not block, and must not reach back into this
+ * registry — not for its own position and not for another one. {@code compute} states outright that
+ * a remapping function must not attempt to update any other mapping of the same map, so a step which
+ * calls {@link #acquire}, {@link #publish}, {@link #remove}, {@link #release} or {@link #discard}
+ * can wedge a position for the rest of the life of the server. Reading which chunk sits somewhere is
+ * a read of the other map and is safe.
+ * </p>
+ * <p>
+ * A step must not throw either. {@code compute} rethrows and leaves its own mapping alone, but the
+ * chunk map was already written by the time the step runs, so what a throw leaves behind is a
+ * position on which the two maps disagree; {@link #publish} and {@link #remove} each name the state
+ * their own failure produces. This registry does not undo it and cannot: a step which failed half
+ * way holds bookkeeping only its caller knows about.
+ * </p>
+ * <p>
+ * What this does <em>not</em> say is "no foreign code inside the lock". {@link FalcoInstance} hands
+ * the removal step the very hook a caller installs through
+ * {@link FalcoInstance#setChunkLifecycle(Consumer, Consumer)}, because clearing the loaded flag of a
+ * chunk has to be atomic with that chunk leaving the chunk map — a chunk which is out of the map and
+ * still reports {@code isLoaded()} is one every {@code ChunkUtils#isLoaded} check in Minestom
+ * believes in. The rule is that whatever runs in there obeys the three constraints above. Everything
+ * which cannot — the events, the packets, the loader, the listeners — stays outside and is the
+ * caller's business.
  * </p>
  *
  * <h2>Why this registry speaks {@link Chunk} and not {@link FalcoChunk}</h2>
@@ -62,7 +90,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.0.1
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -86,6 +114,17 @@ public final class ChunkRegistry {
      * </p>
      */
     private final Map<Long, CompletableFuture<Chunk>> loadingChunks = new ConcurrentHashMap<>();
+
+    /**
+     * Creates a registry which holds neither a chunk nor a running load.
+     * <p>
+     * Written out rather than left to the compiler because this type is published: a default
+     * constructor carries no documentation, and the Javadoc build of this module treats a public
+     * type with one as an error.
+     * </p>
+     */
+    public ChunkRegistry() {
+    }
 
     /**
      * What a caller asking for a position is told.
@@ -282,11 +321,20 @@ public final class ChunkRegistry {
 
     /**
      * Makes a chunk the chunk of its position, unless somebody claimed the load.
+     * <p>
+     * The chunk enters the chunk map before the step runs, so the step already meets a registry which
+     * answers {@link #chunk(long)} with it. That order is what makes a throwing step expensive: the
+     * chunk stays in the chunk map, {@code compute} rethrows, and the entry of the running load
+     * survives untouched. The position is then loaded and loading at once, and every later
+     * {@link #acquire} on it hands out a {@link LoadSlot.Running} carrying a future nobody is going
+     * to complete any more. The constraints named on this class apply in full.
+     * </p>
      *
      * @param index      the chunk index of the position
      * @param chunk      the chunk to publish
      * @param future     the future of this load, which has to still be the entry of the position
-     * @param insideLock the step to run while the position is held, once, only if the publish happens
+     * @param insideLock the step to run while the position is held, once, only if the publish
+     *                   happens; short, non-blocking, no call back into this registry, no exception
      * @return true if the chunk is now the chunk of its position, false if the load was claimed
      */
     public boolean publish(long index, Chunk chunk, CompletableFuture<Chunk> future,
@@ -305,10 +353,19 @@ public final class ChunkRegistry {
 
     /**
      * Takes a chunk out of its position.
+     * <p>
+     * The chunk leaves the chunk map before the step runs, and the entry of the position in the map
+     * of running loads is handed back unchanged — a position which carries a chunk has no running
+     * load, because {@link #acquire} claims a slot only for a position without one. A throwing step
+     * therefore leaves the removal standing while {@code compute} rethrows into the caller, which
+     * then never reaches the half of the unload that belongs outside the lock: the chunk is gone from
+     * this registry and only half unloaded. The constraints named on this class apply in full.
+     * </p>
      *
      * @param index      the chunk index of the position
      * @param chunk      the chunk to remove, which has to be the one at that position
-     * @param insideLock the step to run while the position is held, once, only if the removal happens
+     * @param insideLock the step to run while the position is held, once, only if the removal
+     *                   happens; short, non-blocking, no call back into this registry, no exception
      * @return true if the chunk was removed, false if it was not the chunk of that position
      */
     public boolean remove(long index, Chunk chunk, Consumer<Chunk> insideLock) {

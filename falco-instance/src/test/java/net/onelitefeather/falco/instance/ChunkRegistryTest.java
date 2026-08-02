@@ -18,20 +18,27 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Drives every transition of a chunk position directly, without a loader and without a load.
  * <p>
  * This is half of US-3.02. The transitions used to be three {@code private} methods of a class of
- * 1 272 lines and could only be reached by loading a chunk through a loader, which meant that a test
+ * 1 722 lines and could only be reached by loading a chunk through a loader, which meant that a test
  * of the publish had to be a test of the whole load path and could never cover the case where a
  * publish is refused — that case needs an unload to interleave with a load, which is exactly what a
  * full load path makes impossible to arrange.
  * </p>
+ * <p>
+ * Two of the cases below drive a step which throws. They are not there because throwing is supported
+ * — {@link ChunkRegistry} forbids it — but because the state such a step leaves behind is written
+ * down in that contract, and a documented failure mode which nothing measures is a claim rather than
+ * a fact.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -140,6 +147,48 @@ class ChunkRegistryTest {
         assertFalse(registry.remove(INDEX, stranger, removed -> {
         }));
         assertSame(resident, registry.chunk(INDEX), "the chunk that is actually there has to survive");
+    }
+
+    @Test
+    @DisplayName("leaves a position loaded and loading at once when a publish step throws")
+    void testAThrowingPublishStepWedgesThePosition(Env env) {
+        final FalcoInstance instance = registered(env);
+        final ChunkRegistry registry = new ChunkRegistry();
+        final FalcoChunk chunk = new FalcoChunk(instance, 0, 0);
+        final CompletableFuture<Chunk> own = new CompletableFuture<>();
+        registry.acquire(INDEX, own);
+
+        assertThrows(IllegalStateException.class, () -> registry.publish(INDEX, chunk, own, published -> {
+            throw new IllegalStateException("the step of a caller failed");
+        }), "a step which throws has to reach the caller rather than be swallowed");
+
+        assertSame(chunk, registry.chunk(INDEX),
+                "the chunk map is written before the step runs, so the chunk stays at its position");
+        assertEquals(1, registry.loading(),
+                "compute leaves its own mapping alone when the step throws, so the load stays claimed");
+        assertSame(own, assertInstanceOf(ChunkRegistry.LoadSlot.Running.class,
+                        registry.acquire(INDEX, new CompletableFuture<>())).future(),
+                "every later caller is handed the future of a load which nobody will complete");
+    }
+
+    @Test
+    @DisplayName("keeps the removal when the remove step throws")
+    void testAThrowingRemoveStepKeepsTheRemoval(Env env) {
+        final FalcoInstance instance = registered(env);
+        final ChunkRegistry registry = new ChunkRegistry();
+        final FalcoChunk chunk = new FalcoChunk(instance, 0, 0);
+        final CompletableFuture<Chunk> own = new CompletableFuture<>();
+        registry.acquire(INDEX, own);
+        registry.publish(INDEX, chunk, own, published -> {
+        });
+
+        assertThrows(IllegalStateException.class, () -> registry.remove(INDEX, chunk, removed -> {
+            throw new IllegalStateException("the step of a caller failed");
+        }), "a step which throws has to reach the caller rather than be swallowed");
+
+        assertNull(registry.chunk(INDEX),
+                "the chunk map is written before the step runs, so the removal stands");
+        assertTrue(registry.idle(), "nothing of the position is left behind in either map");
     }
 
     @Test

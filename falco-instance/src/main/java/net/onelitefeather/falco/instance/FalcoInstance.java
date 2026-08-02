@@ -113,7 +113,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.3.0
+ * @version 1.3.1
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -717,8 +717,18 @@ public class FalcoInstance extends Instance {
      * though nothing else knows about it any more.
      * </p>
      * <p>
-     * The loaded flag of the chunk is deliberately set outside, because it calls a hook a subclass
-     * may override, and foreign code has no business running while a position is held.
+     * Telling the chunk that it was loaded happens outside, and the asymmetry with
+     * {@link #unloadChunk(Chunk)}, which tells the chunk it left from <em>inside</em> the lock, is
+     * not an oversight. {@code Chunk#onLoad()} sets no flag: a chunk reports {@code isLoaded()} from
+     * the moment it is constructed, so nothing a reader of this instance can see depends on that
+     * hook having run yet. The unload hook does set the flag, and a chunk which has left the chunk
+     * map while still reporting itself as loaded is one every {@code ChunkUtils#isLoaded} check in
+     * Minestom believes in — which is why that one step is inside and this one is not.
+     * </p>
+     * <p>
+     * The step below therefore has no foreign code in it, but that is a property of this method
+     * rather than a rule of the registry; {@link ChunkRegistry} states what a step handed to it may
+     * do, and the removal step of {@link #unloadChunk(Chunk)} is bound by exactly the same rules.
      * </p>
      *
      * @param index  the chunk index of the position
@@ -844,6 +854,13 @@ public class FalcoInstance extends Instance {
      * publishing the same position cannot interleave with it. Everything else — the packet, the
      * event, the entities and the loader — follows outside, because all four can call back into this
      * instance and holding a position while foreign code runs is how two chunks deadlock each other.
+     * </p>
+     * <p>
+     * Clearing the flag is the one step which cannot move out, and it may be foreign code: a caller
+     * which installed a lifecycle through {@link #setChunkLifecycle(Consumer, Consumer)} sees its own
+     * consumer run right there, while the position is held. That consumer is bound by what
+     * {@link ChunkRegistry} requires of such a step — short, non-blocking, no call back into the
+     * chunk map of this instance, no exception — and the constraint is documented on both.
      * </p>
      * <p>
      * A running load is not cancelled here and not waited for either, and that is not an omission: a
@@ -1212,6 +1229,16 @@ public class FalcoInstance extends Instance {
      * The instance stops checking for {@link FalcoChunk} from here on and requires only a
      * {@code DynamicChunk}, so an unsuitable supplier now fails on the cast inside your own
      * function rather than with a message from this class.
+     * </p>
+     * <p>
+     * The two halves are not called under the same conditions, and the difference matters for what
+     * may be written into them. The loaded half runs after the position of the chunk was released and
+     * is unconstrained. The unloaded half runs <em>while</em> the position is held, because clearing
+     * the loaded flag has to be atomic with the chunk leaving the chunk map, so it runs under the
+     * rules {@link ChunkRegistry} states for such a step: it has to be short, must not block, must
+     * not call back into the chunk map of this instance — a {@code getChunk}, {@code loadChunk} or
+     * {@code unloadChunk} from in there can wedge that position for good — and must not throw, which
+     * would leave the chunk out of the map and only half unloaded.
      * </p>
      *
      * @param onLoaded   what tells a chunk that it is part of this instance
