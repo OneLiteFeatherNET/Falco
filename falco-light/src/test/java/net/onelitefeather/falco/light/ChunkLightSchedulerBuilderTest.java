@@ -188,52 +188,42 @@ class ChunkLightSchedulerBuilderTest {
     /**
      * Sky light can be turned off for a dimension which carries it.
      * <p>
-     * The observable difference is the amount of work: the sky pass reads the block states a second
-     * time, so a source which counts its queries is asked strictly more often with the pass than
-     * without it.
+     * The observable difference is the amount of work: the sky pass propagates every chunk of the
+     * area a second time, so a scheduler which counts its propagations counts strictly more with the
+     * pass than without it.
+     * </p>
+     * <p>
+     * This used to count the queries the {@link BlockLightSource} received instead, on the grounds
+     * that the sky pass reads the block states a second time. It no longer does — the opacity tables
+     * of a chunk describe its blocks and not a kind of light, so the second pass reuses what the
+     * first one built and both settings query the source equally often. The propagation is what the
+     * second pass still costs, and counting that measures the pass rather than the reading it no
+     * longer does.
      * </p>
      */
     @Test
     void testSkyLightCanBeDisabledForADimensionThatHasIt(Env env) {
         Instance instance = env.createEmptyInstance();
 
-        int withPass = countSourceQueries(env, instance, ChunkLightScheduler.SkyLight.FROM_DIMENSION);
-        int withoutPass = countSourceQueries(env, instance, ChunkLightScheduler.SkyLight.DISABLED);
+        long withPass = countPropagations(instance, ChunkLightScheduler.SkyLight.FROM_DIMENSION);
+        long withoutPass = countPropagations(instance, ChunkLightScheduler.SkyLight.DISABLED);
 
         assertTrue(withoutPass < withPass,
-                "the sky pass costs a second read of the block states: " + withoutPass + " < " + withPass);
+                "the sky pass costs a second propagation: " + withoutPass + " < " + withPass);
     }
 
     /**
-     * Runs one pass and counts how often the light source was queried.
+     * Runs one pass and counts how many chunks the scheduler propagated from scratch.
      *
-     * @param env      the test environment
      * @param instance the instance the chunk belongs to
      * @param skyLight the sky light setting under test
-     * @return the amount of queries the source received
+     * @return the amount of full propagations the pass cost
      */
-    private static int countSourceQueries(Env env, Instance instance, ChunkLightScheduler.SkyLight skyLight) {
+    private static long countPropagations(Instance instance, ChunkLightScheduler.SkyLight skyLight) {
         Chunk chunk = instance.loadChunk(0, 0).join();
         place(chunk, 8, 40, 8, Block.GLOWSTONE);
 
-        AtomicInteger queries = new AtomicInteger();
-        BlockLightSource registry = new MinestomBlockLightSource();
-        BlockLightSource counting = new BlockLightSource() {
-
-            @Override
-            public int emission(int stateId) {
-                queries.incrementAndGet();
-                return registry.emission(stateId);
-            }
-
-            @Override
-            public boolean blocksFace(int stateId, BlockFace face) {
-                queries.incrementAndGet();
-                return registry.blocksFace(stateId, face);
-            }
-        };
-
-        ChunkLightScheduler scheduler = ChunkLightScheduler.builder(new ChunkLightService(counting))
+        ChunkLightScheduler scheduler = ChunkLightScheduler.builder(new ChunkLightService())
                 .executor(DIRECT)
                 .skyLight(skyLight)
                 .build();
@@ -241,7 +231,7 @@ class ChunkLightSchedulerBuilderTest {
         scheduler.markDirty(instance, 0, 0);
         scheduler.onTick(instance, 1L);
 
-        return queries.get();
+        return scheduler.fullPropagations();
     }
 
     /**
