@@ -178,4 +178,19 @@ class FalcoSharedInstanceStateTest {
         assertSame(loaded, shared.loadOptionalChunk(4, 4).join(),
                 "the flag governs whether a load is started, not whether the world is visible");
     }
+
+    @Test
+    @DisplayName("loads on its own flag even where the container would have refused")
+    void testAutoChunkLoadIsTheDecisionOfTheView(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        container.enableAutoChunkLoad(false);
+        final FalcoSharedInstance shared = registered(env, container);
+
+        shared.enableAutoChunkLoad(true);
+
+        assertNotNull(shared.loadOptionalChunk(4, 4).join(),
+                "the view owns this decision, so turning it back on at the view is enough");
+        assertFalse(container.hasEnabledAutoChunkLoad(),
+                "and the container is still refusing loads asked of it directly");
+    }
 }

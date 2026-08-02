@@ -207,6 +207,13 @@ public class FalcoSharedInstance extends SharedInstance {
      * consults it, and only that branch is a decision this instance is entitled to make — the chunk
      * itself is still created, cached and published by the container.
      * </p>
+     * <p>
+     * The flag consulted is this view's alone, which has a consequence in one direction: a view
+     * whose flag is on loads a chunk even where the container's own flag is off, because an explicit
+     * {@code loadChunk} was never governed by that flag either. It takes a deliberate act to get
+     * there — a fresh view is seeded from the container, so the setting has to be turned back on at
+     * the view after the container refused it.
+     * </p>
      *
      * @param chunkX the chunk X
      * @param chunkZ the chunk Z
