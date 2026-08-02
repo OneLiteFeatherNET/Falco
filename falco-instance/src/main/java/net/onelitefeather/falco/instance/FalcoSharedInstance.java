@@ -89,7 +89,7 @@ import java.util.concurrent.CompletableFuture;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.10.0
+ * @version 1.11.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -375,8 +375,21 @@ public class FalcoSharedInstance extends SharedInstance {
      * view of it write over one another and the last save wins. Saving one view of a world is
      * therefore meaningful; saving several and expecting to read all of them back is not.
      * </p>
+     * <p>
+     * A failure is reported to the caller and to nobody else, and that is a second deviation from
+     * {@code InstanceContainer}. Its {@code optionalAsync} hands a parallel failure to
+     * {@code MinecraftServer.getExceptionManager()} as well as to the future, and throws a
+     * synchronous one at the call site instead of returning it. Here both branches do the same
+     * thing: the returned future is completed exceptionally, the {@code ExceptionManager} is not
+     * told, and nothing is thrown out of this method. The consequence is the caller's to carry.
+     * Firing this call and not observing the future is a save that failed in silence — stock would
+     * at least have logged it — and a {@code try}/{@code catch} around the call no longer catches
+     * anything, because the synchronous branch does not throw either. Observe the future.
+     * {@code FalcoInstance#runSave} makes the same choice, so a code base using both is told once.
+     * </p>
      *
-     * @return a future completed once the data is written, completed exceptionally if it threw
+     * @return a future completed once the data is written, completed exceptionally if the loader
+     *         threw — which is the only report of that failure
      */
     @Override
     public CompletableFuture<Void> saveInstance() {
