@@ -36,6 +36,30 @@ public final class ChunkLightPropagator {
     private static final BlockFace[] FACES = BlockFace.values();
     private static final int MASK = LightNibbles.DIMENSION - 1;
 
+    /**
+     * The opposite of every face, in the order of {@link #FACES}.
+     * <p>
+     * {@code BlockFace#opposite()} is a switch over the enum, and the inner loop calls it once per
+     * face per queued position — six times for every block the light reaches. Resolving it once at
+     * class load turns that into an array read.
+     * </p>
+     */
+    private static final BlockFace[] OPPOSITES = opposites();
+
+    /**
+     * Resolves the opposite of every face once.
+     *
+     * @return the opposite of every face, indexed like {@link #FACES}
+     */
+    private static BlockFace[] opposites() {
+        BlockFace[] opposites = new BlockFace[FACES.length];
+
+        for (int index = 0; index < FACES.length; index++) {
+            opposites[index] = FACES[index].opposite();
+        }
+        return opposites;
+    }
+
     private byte[] levels;
     private int[] queue;
 
@@ -120,7 +144,8 @@ public final class ChunkLightPropagator {
             int y = index >> 8;
             int next = level - 1;
 
-            for (BlockFace face : FACES) {
+            for (int faceIndex = 0; faceIndex < FACES.length; faceIndex++) {
+                BlockFace face = FACES[faceIndex];
                 int neighbourX = x + face.offsetX();
                 int neighbourY = y + face.offsetY();
                 int neighbourZ = z + face.offsetZ();
@@ -128,7 +153,7 @@ public final class ChunkLightPropagator {
                 if (isOutside(neighbourX, neighbourY, neighbourZ, height)) {
                     continue;
                 }
-                if (blocksFace(sections, neighbourX, neighbourY, neighbourZ, face.opposite())) {
+                if (blocksFace(sections, neighbourX, neighbourY, neighbourZ, OPPOSITES[faceIndex])) {
                     continue;
                 }
 
