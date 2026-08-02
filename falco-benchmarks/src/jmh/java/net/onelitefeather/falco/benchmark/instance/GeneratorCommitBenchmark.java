@@ -6,6 +6,7 @@ import net.minestom.server.instance.palette.Palette;
 import net.onelitefeather.falco.benchmark.support.BenchmarkConstants;
 import net.onelitefeather.falco.benchmark.support.MinestomChunks;
 import net.onelitefeather.falco.instance.FalcoInstance;
+import net.onelitefeather.falco.instance.PaletteCompaction;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -50,13 +51,22 @@ import java.util.concurrent.TimeUnit;
  * {@code 2,4} is what the two widths cost, not what this call can move between them.
  * </p>
  *
- * <h2>The three arms and why the middle one exists</h2>
+ * <h2>The five arms and why the middle ones exist</h2>
  * <p>
  * {@link #commitPlain()} copies the staged palettes into the sections of a chunk, which is what
  * {@code FalcoInstance#applyGenerator} does today. {@link #commitOptimized()} does the same and then
  * optimises each palette it wrote. The difference between the two is the whole answer, and it is a
  * difference rather than an absolute on purpose: a number for {@code optimize} alone would be
  * compared against nothing, while the commit is the step it was added to.
+ * </p>
+ * <p>
+ * {@link #commitGuarded()} is the arm this stage ships. It asks {@code PaletteCompaction} whether the
+ * palette it just wrote can still be narrowed and calls {@code optimize} only then, which is a
+ * bounded sample of the entries against the full walk {@code optimize} would do before it could reach
+ * the same conclusion. Its distance from {@link #commitOptimized()} at {@code 1024} distinct states is
+ * what the guard saves, and its distance at {@code 64} is what the guard costs where it decides to go
+ * ahead; both belong in the same table, because a guard is only worth reporting with the price it
+ * charges the case it does not help.
  * </p>
  * <p>
  * {@link #optimizeAlreadyPacked()} is the control. It optimises palettes which are already at their
@@ -113,7 +123,7 @@ import java.util.concurrent.TimeUnit;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @State(Scope.Thread)
@@ -253,6 +263,43 @@ public class GeneratorCommitBenchmark {
             final Palette palette = this.target[index].blockPalette();
             palette.copyFrom(this.staged.get(index));
             palette.optimize(Palette.Optimization.SIZE);
+        }
+        return this.target;
+    }
+
+    /**
+     * Measures the same commit with the guarded optimisation this stage ships.
+     *
+     * @return the sections that were written, so that nothing can be eliminated
+     */
+    @Benchmark
+    public Section[] commitGuarded() {
+        for (int index = 0; index < this.target.length; index++) {
+            final Palette palette = this.target[index].blockPalette();
+            palette.copyFrom(this.staged.get(index));
+            PaletteCompaction.packBlocks(palette);
+        }
+        return this.target;
+    }
+
+    /**
+     * Measures the guard on palettes that are already at their minimum width.
+     * <p>
+     * The pair of this arm and {@link #optimizeAlreadyPacked()} is the case a server meets most often
+     * and the one the plain {@code optimize} call handles worst. A palette that is already as narrow as
+     * its content allows still costs the full walk before {@code downsizeWithPalette} can say so, while
+     * the guard needs only enough entries to see that the count is past what the next mode down could
+     * index — a handful, for a palette that is already at the minimum width.
+     * </p>
+     *
+     * @return the sections that were written, so that nothing can be eliminated
+     */
+    @Benchmark
+    public Section[] packAlreadyPacked() {
+        for (int index = 0; index < this.target.length; index++) {
+            final Palette palette = this.target[index].blockPalette();
+            palette.copyFrom(this.packed.get(index));
+            PaletteCompaction.packBlocks(palette);
         }
         return this.target;
     }

@@ -975,12 +975,18 @@ public class FalcoInstance extends Instance {
      * about what the generator produced and not about what the chunk should end up holding.
      * </p>
      * <p>
-     * The optimisation afterwards is US-2.03. A generator writes through {@code GenSection} palettes
+     * The compaction afterwards is US-2.03. A generator writes through {@code GenSection} palettes
      * which grow to fifteen bits per entry and never shrink again, because nothing in the main source
      * tree of Minestom ever calls {@code Palette#optimize} — a generated chunk retains
      * {@code 203 840} bytes where the same content packed to its minimum width retains {@code 84 800}.
-     * What that costs in time is measured by {@code GeneratorCommitBenchmark} and stated in the plan
-     * of this stage; it is not assumed to be free.
+     * What that costs in time is measured by {@code GeneratorCommitBenchmark} and it is not assumed to
+     * be free: {@code 576,7 µs} against {@code 22,0 µs} for the bare commit of a chunk of twenty-four
+     * sections. It goes through {@link PaletteCompaction} rather than straight to
+     * {@code Palette#optimize} because the same benchmark found the two cases where that price buys
+     * nothing at all — a section past the indirect ceiling comes out exactly as wide as it went in, and
+     * a section that is already packed was never going to move — and the guard turns those into
+     * {@code 185,1 µs} and {@code 31,8 µs}. What it costs is stated there too: {@code 24 %} on the case
+     * where the optimisation does narrow something.
      * </p>
      *
      * @param chunk     the chunk which receives the section
@@ -1001,8 +1007,8 @@ public class FalcoInstance extends Instance {
 
         section.blockPalette().copyFrom(generated.blocks());
         section.biomePalette().copyFrom(generated.biomes());
-        section.blockPalette().optimize(Palette.Optimization.SIZE);
-        section.biomePalette().optimize(Palette.Optimization.SIZE);
+        PaletteCompaction.packBlocks(section.blockPalette());
+        PaletteCompaction.packBiomes(section.biomePalette());
         writeSpecialBlocks(chunk, generated.specials(),
                 (chunk.getMinSection() + index) * Chunk.CHUNK_SECTION_SIZE);
     }
