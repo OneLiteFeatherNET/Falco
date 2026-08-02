@@ -1,6 +1,7 @@
 package net.onelitefeather.falco.instance;
 
 import net.minestom.server.instance.Chunk;
+import net.minestom.server.instance.ChunkLoader;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.SharedInstance;
 import net.minestom.server.instance.generator.Generator;
@@ -38,7 +39,7 @@ import java.util.concurrent.CompletableFuture;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.4.0
+ * @version 1.5.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -266,5 +267,46 @@ public class FalcoSharedInstance extends SharedInstance {
         if (loaded != null) return CompletableFuture.completedFuture(loaded);
         if (!this.autoChunkLoad) return CompletableFuture.completedFuture(null);
         return container.loadChunk(chunkX, chunkZ);
+    }
+
+    /**
+     * Saves the data of this instance through the loader of its container.
+     * <p>
+     * Minestom's shared instance forwards this to {@code InstanceContainer#saveInstance()}, which
+     * hands the loader the container. The tags of the view are therefore never written and the call
+     * still reports success — the anvil loader writes {@code instance.tagHandler().asCompound()} of
+     * whatever it was given. Reaching the loader directly and handing it {@code this} is the whole
+     * of the repair.
+     * </p>
+     * <p>
+     * What it does not repair: a loader writes to one place per world. An
+     * {@code AnvilLoader} puts instance data in a single {@code level.dat}, so a container and every
+     * view of it write over one another and the last save wins. Saving one view of a world is
+     * therefore meaningful; saving several and expecting to read all of them back is not.
+     * </p>
+     *
+     * @return a future completed once the data is written, completed exceptionally if it threw
+     */
+    @Override
+    public CompletableFuture<Void> saveInstance() {
+        final ChunkLoader loader = getInstanceContainer().getChunkLoader();
+        if (!loader.supportsParallelSaving()) {
+            try {
+                loader.saveInstance(this);
+                return CompletableFuture.completedFuture(null);
+            } catch (Throwable throwable) {
+                return CompletableFuture.failedFuture(throwable);
+            }
+        }
+        final CompletableFuture<Void> future = new CompletableFuture<>();
+        Thread.startVirtualThread(() -> {
+            try {
+                loader.saveInstance(this);
+                future.complete(null);
+            } catch (Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        });
+        return future;
     }
 }
