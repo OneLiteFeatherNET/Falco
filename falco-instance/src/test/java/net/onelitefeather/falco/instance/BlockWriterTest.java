@@ -2,6 +2,7 @@ package net.onelitefeather.falco.instance;
 
 import net.kyori.adventure.key.Key;
 import net.minestom.server.MinecraftServer;
+import net.minestom.server.coordinate.BlockVec;
 import net.minestom.server.event.instance.InstanceBlockUpdateEvent;
 import net.minestom.server.instance.block.Block;
 import net.minestom.server.instance.block.BlockHandler;
@@ -41,9 +42,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code InstanceBlockUpdateEvent} run with no chunk lock held — are only observable from within
  * those two, which is what {@code holdsWriteLock()} is read for here.
  * </p>
+ * <p>
+ * The same reading is taken from the other side. Two cases assert that the placement rule and the two
+ * block handlers <em>do</em> run under the write lock, because that is what the class documentation of
+ * {@link BlockWriter} now says and a documented lock rule nobody measures is how the previous wording
+ * came to claim the opposite of what the code did.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -76,6 +83,41 @@ class BlockWriterTest {
         @Override
         public Key getKey() {
             return Key.key("falco", "counting-writer");
+        }
+    }
+
+    /**
+     * A handler which records whether the write lock of a chunk was held while it was called.
+     * <p>
+     * Read from within the callbacks for the same reason the two neighbour cases are: whether a lock
+     * was held during a call is not answerable once that call returned.
+     * </p>
+     *
+     * @param chunk            the chunk whose write lock is probed
+     * @param places           the counter raised once per {@code onPlace}
+     * @param destroys         the counter raised once per {@code onDestroy}
+     * @param placeUnderLock   whether the write lock was held during the last {@code onPlace}
+     * @param destroyUnderLock whether the write lock was held during the last {@code onDestroy}
+     */
+    private record LockProbeHandler(FalcoChunk chunk, AtomicInteger places, AtomicInteger destroys,
+                                    AtomicBoolean placeUnderLock, AtomicBoolean destroyUnderLock)
+            implements BlockHandler {
+
+        @Override
+        public void onPlace(Placement placement) {
+            this.places.incrementAndGet();
+            this.placeUnderLock.set(this.chunk.holdsWriteLock());
+        }
+
+        @Override
+        public void onDestroy(Destroy destroy) {
+            this.destroys.incrementAndGet();
+            this.destroyUnderLock.set(this.chunk.holdsWriteLock());
+        }
+
+        @Override
+        public Key getKey() {
+            return Key.key("falco", "lock-probe-writer");
         }
     }
 
@@ -159,6 +201,55 @@ class BlockWriterTest {
         assertEquals(1, events.get(), "a write has to announce itself exactly once");
         assertFalse(lockHeld.get(),
                 "a listener of the update event is arbitrary foreign code and may not run under a chunk lock");
+    }
+
+    @Test
+    @DisplayName("asks the placement rule while the write lock of the chunk is held")
+    void testThePlacementRuleRunsUnderTheChunkLock(Env env) {
+        final FalcoInstance instance = registered(env);
+        final BlockWriter writer = instance.blockWriter();
+        final FalcoChunk chunk = FalcoChunk.require(instance.loadChunk(0, 0).join());
+        final AtomicInteger placements = new AtomicInteger();
+        final AtomicBoolean lockHeld = new AtomicBoolean();
+        MinecraftServer.getBlockManager().registerBlockPlacementRule(new BlockPlacementRule(Block.DIAMOND_BLOCK) {
+
+            @Override
+            public Block blockPlace(PlacementState state) {
+                placements.incrementAndGet();
+                lockHeld.set(chunk.holdsWriteLock());
+                return state.block();
+            }
+        });
+        final BlockVec position = new BlockVec(5, Y, 5);
+
+        writer.write(chunk, position.blockX(), position.blockY(), position.blockZ(), Block.DIAMOND_BLOCK,
+                new BlockHandler.Placement(Block.DIAMOND_BLOCK, Block.AIR, instance, position), null, true, 0);
+
+        assertEquals(1, placements.get(), "a placement whose block carries a rule has to reach that rule");
+        assertTrue(lockHeld.get(),
+                "the placement rule decides what the block is and therefore runs under the write lock; the "
+                        + "class documentation says so and this is what says it is still true");
+    }
+
+    @Test
+    @DisplayName("runs the handlers of the old and the new block while the write lock of the chunk is held")
+    void testTheBlockHandlersRunUnderTheChunkLock(Env env) {
+        final FalcoInstance instance = registered(env);
+        final BlockWriter writer = instance.blockWriter();
+        final FalcoChunk chunk = FalcoChunk.require(instance.loadChunk(0, 0).join());
+        final LockProbeHandler probe = new LockProbeHandler(chunk, new AtomicInteger(), new AtomicInteger(),
+                new AtomicBoolean(), new AtomicBoolean());
+
+        writer.write(chunk, 7, Y, 7, Block.STONE.withHandler(probe), null, null, false, 0);
+        writer.write(chunk, 7, Y, 7, Block.DIRT.withHandler(probe), null, null, false, 0);
+
+        assertEquals(2, probe.places().get(), "both written blocks carry a handler and both have to be placed");
+        assertEquals(1, probe.destroys().get(), "the second write replaces the first block and has to destroy it");
+        assertTrue(probe.placeUnderLock().get(),
+                "a block handler is foreign code that nonetheless runs under the chunk write lock, because it "
+                        + "is told about the block while that block is being established");
+        assertTrue(probe.destroyUnderLock().get(),
+                "the same holds for the handler of the block that was replaced");
     }
 
     @Test

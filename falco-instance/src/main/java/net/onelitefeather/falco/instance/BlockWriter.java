@@ -42,15 +42,45 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <h2>What is held while what runs</h2>
  * <p>
- * Only the write lock of the touched chunk is held, and only across the write. The container of
- * Minestom takes its own monitor around the whole of this, which turns every block write in the world
- * into a queue behind every other one; two writes to two chunks have no reason to wait for each other.
- * That is NFR-006, and it is a property of the <em>ordering</em> of this class rather than of any one
- * statement in it: the neighbour pass, the two packets and {@code InstanceBlockUpdateEvent} all run
- * after the lock was given back, because every one of the three can reach code this module does not
- * own — a placement rule, a viewer, an arbitrary listener — and holding a chunk lock while foreign
- * code runs is how two block writes deadlock each other. A neighbour in particular usually lives in
- * another chunk and takes that chunk's lock on the way.
+ * No lock of the instance is taken at all; the only lock in a write is the write lock of the one
+ * chunk that receives the block. The container of Minestom instead takes its own monitor around the
+ * whole of this, which turns every block write in the world into a queue behind every other one, and
+ * two writes to two chunks have no reason to wait for each other. That is NFR-006, and it is a
+ * property of the <em>ordering</em> of this class rather than of any one statement in it.
+ * </p>
+ * <p>
+ * The chunk lock is taken before the placement rule is asked and given back after the block reached
+ * the storage. Three pieces of foreign code therefore run <em>under</em> it, and it is worth naming
+ * them rather than pretending otherwise: {@code BlockPlacementRule#blockPlace} of the placed block,
+ * and — inside {@link FalcoChunk#setBlock(int, int, int, Block, BlockHandler.Placement,
+ * BlockHandler.Destroy)}, which requires that very lock — {@code BlockHandler#onDestroy} of the block
+ * that was replaced and {@code BlockHandler#onPlace} of the one that replaced it. They are inside
+ * because they are part of deciding and recording what the block <em>is</em>: a rule that runs after
+ * the write would be answering about a block already written, and a handler that runs after the lock
+ * was given back could be told about a block a second writer has since overwritten.
+ * </p>
+ * <p>
+ * Three further steps run <em>outside</em> it, and this is where the ordering is deliberate: the
+ * neighbour pass, the two packets and {@code InstanceBlockUpdateEvent} all happen after the lock was
+ * given back. Each of them reaches code this module does not own as well — a rule reshaping a
+ * neighbour, a viewer, an arbitrary listener — but none of them is needed to establish the block, so
+ * none of them has a reason to hold a chunk lock while it runs. The neighbour pass is the sharpest
+ * case: a neighbour usually lives in another chunk and takes that chunk's lock on the way, so running
+ * it inside would mean holding two chunk locks at once, in an order two concurrent writes can
+ * disagree about.
+ * </p>
+ *
+ * <h2>The hazard that the handlers leave standing</h2>
+ * <p>
+ * What is inside the lock is not free of that same problem, and no amount of ordering in this class
+ * removes it: a {@code BlockHandler#onPlace} or {@code #onDestroy} that writes a block in
+ * <em>another</em> chunk re-enters {@link #write} and takes a second chunk write lock while the first
+ * one is still held. Two such writes started in opposite chunk order on two threads deadlock each
+ * other. This is a real hazard of this design and not a theoretical one; it is simply the price of not
+ * having an instance-wide monitor, which is exactly what {@code InstanceContainer} pays for by
+ * serialising every block write in the world. It is inherited behaviour, unchanged from before this
+ * class existed, and it is written here so that the next person to touch the lock finds it stated
+ * rather than has to derive it.
  * </p>
  * <p>
  * The class exists so that ordering is a thing somebody can look at. It used to be the tail of one
@@ -71,7 +101,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -199,8 +229,11 @@ public final class BlockWriter {
     /**
      * Writes a block into a chunk and tells everyone who needs to know.
      * <p>
-     * Only the write lock of the given chunk is held here, and only across the write itself. What that
-     * buys and why the three steps after it stand outside the lock is the subject of the class
+     * The write lock of the given chunk is the only lock taken, and it is held from the placement rule
+     * to the end of {@link FalcoChunk#setBlock(int, int, int, Block, BlockHandler.Placement,
+     * BlockHandler.Destroy)} — which means across the rule and across the block handlers of the old and
+     * the new block. The neighbour pass, the packets and the event follow it with no lock held. What
+     * that buys, and the re-entrancy hazard the handlers leave standing, is the subject of the class
      * documentation.
      * </p>
      * <p>
