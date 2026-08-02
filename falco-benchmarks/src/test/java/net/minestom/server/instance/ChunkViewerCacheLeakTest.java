@@ -63,10 +63,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <h2>What this does and does not say</h2>
  * <p>
  * It says that the leak exists, that it is linear in the amount of chunk constructions, and that
- * {@code FalcoInstance} does not trigger it. It does not say that Falco solved it: Falco escapes it
- * for the single reason that it is not an {@code InstanceContainer}, and its own unload path does
- * not clear the entry either, so a Falco world still keeps one entry per chunk position for the life
- * of the process. That is a far smaller quantity than one per construction, and it is not nothing.
+ * {@code FalcoInstance} does not trigger it. What it does not say is that being bounded is a design.
+ * A {@code FalcoInstance} escapes the unbounded growth for the single reason that it is not an
+ * {@code InstanceContainer} and is therefore handed the {@code List.of()} singleton; what it does not
+ * escape that way is the bounded remainder, one entry per chunk position, created by the first chunk
+ * built there.
+ * </p>
+ * <p>
+ * That remainder is gone since {@code ChunkLifecycle#unload} gives the entry back through
+ * {@code ChunkViewerCache}, and the proof of it is deliberately not here. It is
+ * {@code ChunkViewerCacheTest#testALoadAndUnloadCycleIsNeutral} in {@code falco-instance}, which
+ * drives thirty-two load and unload cycles and asserts that the cache ends at the size it started
+ * at; removing the release from the unload path fails it by exactly thirty-two entries.
+ * </p>
+ * <p>
+ * The case cannot be repeated in this module, and the reason is a property of this test JVM rather
+ * than of the subject. A real load hands the chunk to {@code ThreadDispatcher#createPartition} and
+ * the unload to {@code deletePartition}, and both only enqueue an update which
+ * {@code ThreadDispatcherImpl#updateAndAwait} applies at the start of the next tick. The server this
+ * module starts is {@code MinecraftServer.init()} without a tick loop, so that queue is never drained
+ * and every chunk a test loads stays strongly reachable from the {@code ServerProcess} — which every
+ * instance holds a field of. {@link net.onelitefeather.falco.benchmark.instance.ChunkFootprintTest}
+ * measures a chunk as the difference between a walk of chunk plus instance and a walk of the instance
+ * alone, and states that no walk of an instance reaches the static
+ * {@code LazySectionBlockStorage#EMPTY} flyweight. One retained {@code FalcoChunk} makes that
+ * sentence false, and the fresh Falco chunk then measures zero of the six objects that flyweight
+ * contributes. Added here, the cycles failed that class in four of four runs where JUnit happened to
+ * schedule this one first and in none of four where it did not, against six of six green without
+ * them.
  * </p>
  *
  * <h2>Running it</h2>
@@ -75,7 +99,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * }</pre>
  *
  * @author TheMeinerLP
- * @version 1.0.1
+ * @version 1.1.0
  * @since 0.4.0
  */
 @DisplayName("The viewer cache an instance keeps for its chunks")

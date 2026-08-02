@@ -8,6 +8,7 @@ import net.minestom.server.event.instance.InstanceChunkLoadEvent;
 import net.minestom.server.event.instance.InstanceChunkUnloadEvent;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.ChunkLoader;
+import net.minestom.server.instance.ChunkViewerCache;
 import net.minestom.server.instance.EntityTracker;
 import net.minestom.server.instance.generator.Generator;
 import net.minestom.server.network.packet.server.play.UnloadChunkPacket;
@@ -79,7 +80,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.3.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -420,6 +421,15 @@ public final class ChunkLifecycle {
      * Unloading the same chunk twice does nothing the second time, which makes this usable in a
      * cleanup path that may run more than once.
      * </p>
+     * <p>
+     * The very last step gives the viewer cache entry of the position back, which is US-3.01. The
+     * constructor of every {@link Chunk} takes one out of a {@code computeIfAbsent} in the entity
+     * tracker and Minestom never removes it again, so a world which streams chunks keeps one entry
+     * per position it has ever visited for the life of the process. It runs after everything else
+     * because the four steps above still send packets to, and remove entities from, exactly those
+     * viewers. Why the removal needs a class in a package of Minestom is stated on
+     * {@link ChunkViewerCache}.
+     * </p>
      *
      * @param chunk the chunk to remove, which this instance has to be able to drive
      * @throws FalcoInstanceException if the chunk is not a {@link FalcoChunk} and no lifecycle pair
@@ -442,6 +452,10 @@ public final class ChunkLifecycle {
         this.owner.getEntityTracker().chunkEntities(chunkX, chunkZ, EntityTracker.Target.ENTITIES)
                 .forEach(Entity::remove);
         this.persistence.unloaded(managed);
+        // Last, because everything above may still want to reach the viewers of this chunk. The view
+        // object stays alive in the chunk itself; what goes is the entry that kept it findable, which
+        // is what nothing in Minestom ever removes.
+        ChunkViewerCache.release(this.owner, chunkX, chunkZ);
     }
 
     /**
