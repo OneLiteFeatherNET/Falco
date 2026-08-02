@@ -2,6 +2,8 @@ package net.onelitefeather.falco.architecture;
 
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaModifier;
+import net.onelitefeather.falco.anvil.AnvilChunkException;
+import net.onelitefeather.falco.anvil.AnvilFormatException;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -47,11 +49,20 @@ class ErrorHandlingTest {
     /**
      * E1 &mdash; the inheritance clause is not taste but forced by a signature: {@code saveChunk} and
      * {@code loadChunk} override Minestom's {@code ChunkLoader} methods and declare no {@code throws},
-     * so a checked Falco exception could not be thrown at that boundary at all. The cause constructor
+     * so a checked Falco exception could not be thrown <em>at that boundary</em>. The cause constructor
      * protects the single translation point: {@code FalcoAnvilLoader.failedLoad} wraps the
      * {@code IOException} or {@code RuntimeException} of the whole read chain into an
      * {@code AnvilChunkException}, and without it the message says only that a chunk could not be
      * loaded, not which region file or NBT key was behind it.
+     * <p>
+     * <b>The rule applies to the unchecked types only, and that narrowing has a history.</b> It was
+     * written when the project had exactly one exception, and generalised an observation about
+     * {@code AnvilChunkException} to every {@code Throwable}. The format hierarchy is checked on
+     * purpose: it never reaches Minestom's signature, because {@link #exactlyOneTranslationPoint}
+     * keeps the translation in one place, and being checked is what makes the compiler name every
+     * site that has to decide. {@link #checkedFaultsStayInsideTheHierarchy} is what stops that
+     * exemption from becoming a hole.
+     * </p>
      * <p>
      * A naming clause such as {@code haveSimpleNameEndingWith("Exception")} is deliberately not part
      * of the rule &mdash; violating it harms nobody.
@@ -61,8 +72,8 @@ class ErrorHandlingTest {
     static final ArchRule ownExceptionsAreUncheckedAndCarryACause = classes()
             .that().areAssignableTo(Throwable.class)
             .and().resideInAPackage("net.onelitefeather.falco..")
+            .and().areAssignableTo(RuntimeException.class)
             .should().bePublic()
-            .andShould().beAssignableTo(RuntimeException.class)
             .andShould(new ArchCondition<JavaClass>("have a public (String, Throwable) constructor") {
                 @Override
                 public void check(JavaClass clazz, ConditionEvents events) {
@@ -104,6 +115,52 @@ class ErrorHandlingTest {
                     "java\\.lang\\.(RuntimeException|Exception|Throwable|Error)"))))
             .because("loadChunk catches IOException|RuntimeException and labels everything inside a "
                    + "chunk data error; a generic throw disappears into that translation");
+
+    /**
+     * E1a &mdash; a checked Falco exception is allowed only inside the anvil fault hierarchy.
+     * <p>
+     * {@link #ownExceptionsAreUncheckedAndCarryACause} no longer covers checked types, and this is
+     * what keeps that from being an open door. Checked is reserved for the format branch, whose whole
+     * purpose is that the compiler names every site which has to decide what a broken region file or
+     * a broken chunk means. Anything else &mdash; a checked exception somewhere in the light engine,
+     * say &mdash; would either be swallowed at a signature that declares no {@code throws}, or force
+     * {@code throws} onto an override that cannot have one.
+     * </p>
+     */
+    @ArchTest
+    static final ArchRule checkedFaultsStayInsideTheHierarchy = classes()
+            .that().areAssignableTo(Throwable.class)
+            .and().resideInAPackage("net.onelitefeather.falco..")
+            .and().areNotAssignableTo(RuntimeException.class)
+            .should().beAssignableTo(AnvilFormatException.class)
+            .because("checked is reserved for the format branch, which never reaches a Minestom "
+                   + "signature because the loader translates it first");
+
+    /**
+     * E1b &mdash; exactly one class turns a checked fault into an unchecked one.
+     * <p>
+     * This is the invariant the design of the hierarchy rests on, and until now it was prose. If a
+     * second class wrapped a format fault into an {@code AnvilChunkException}, the origin would be
+     * lost halfway and the double report to the {@code ExceptionManager} that the hierarchy was
+     * written against would come back. The translation happens in {@code FalcoAnvilLoader.failedLoad}
+     * and its counterpart in {@code saveChunk}, and nowhere else.
+     * </p>
+     * <p>
+     * Constructing the boundary type is the observable part of translating, so that is what the rule
+     * pins. It says nothing about who may <em>catch</em> a fault, which is every caller's business.
+     * </p>
+     * <p>
+     * The boundary type itself is exempt, because its own constructors delegate to one another and
+     * that is not a translation.
+     * </p>
+     */
+    @ArchTest
+    static final ArchRule exactlyOneTranslationPoint = noClasses()
+            .that().resideInAPackage("net.onelitefeather.falco..")
+            .and().haveSimpleNameNotStartingWith("FalcoAnvilLoader")
+            .and().areNotAssignableTo(AnvilChunkException.class)
+            .should().callConstructorWhere(target(owner(assignableTo(AnvilChunkException.class))))
+            .because("the origin of a failure survives only while one place wraps it");
 
     /**
      * E3 &mdash; all four reporting sites live in exactly these two classes
