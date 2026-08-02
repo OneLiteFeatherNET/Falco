@@ -100,7 +100,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.6.0
+ * @version 1.6.1
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -261,11 +261,12 @@ public class FalcoInstance extends Instance {
         this.registries = registries;
         this.generation = new ChunkGeneration(this.registries, this::getChunkAt);
         this.persistence = new ChunkPersistence(loader);
-        // Outside the ChunkPersistence constructor on purpose: loadInstance may call back into this
-        // instance, and a callback into an object whose constructor has not finished is how a field
-        // that is assigned two lines later is read as null.
-        this.persistence.loader().loadInstance(this);
         this.lifecycle = new ChunkLifecycle(this, this.registry, this.persistence, this.generation);
+        // Last, and outside the ChunkPersistence constructor on purpose: loadInstance may call back
+        // into this instance, and a callback into an object whose constructor has not finished is how
+        // a field that is assigned one line later is read as null. Every field this instance
+        // delegates to has to stand before this line, not after it.
+        this.persistence.loader().loadInstance(this);
         this.lastBlockChangeTime = System.nanoTime();
     }
 

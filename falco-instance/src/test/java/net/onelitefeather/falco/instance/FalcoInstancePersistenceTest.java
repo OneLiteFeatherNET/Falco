@@ -3,6 +3,7 @@ package net.onelitefeather.falco.instance;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.ChunkLoader;
 import net.minestom.server.instance.Instance;
+import net.minestom.server.utils.chunk.ChunkSupplier;
 import net.minestom.server.world.DimensionType;
 import net.minestom.testing.Env;
 import net.minestom.testing.extension.MicrotusExtension;
@@ -15,10 +16,12 @@ import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -41,8 +44,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * vanished in the move without anything turning red. They are pinned here first and moved second.
  * </p>
  *
+ * <p>
+ * One case is not about a save at all. {@code loadInstance} is the only caller which reaches a
+ * {@link FalcoInstance} before its constructor has finished, so it is the case which decides whether
+ * the fields the instance delegates to are assigned before or after that hook.
+ * </p>
+ *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -147,6 +156,53 @@ class FalcoInstancePersistenceTest {
         @Override
         public void loadInstance(Instance instance) {
             this.instanceLoads.incrementAndGet();
+        }
+    }
+
+    /**
+     * A loader which configures the instance it is handed while that instance is still being built.
+     * <p>
+     * {@code ChunkLoader#loadInstance} is a documented Minestom hook and it runs from the constructor
+     * of the instance, so it is the one caller which can reach a {@link FalcoInstance} whose
+     * constructor has not finished. Everything the instance delegates has to stand by then; a field
+     * assigned after this call is read as null here and the constructor dies with a
+     * {@link NullPointerException} that names it.
+     * </p>
+     */
+    private static final class ConfiguringLoader implements ChunkLoader {
+
+        /**
+         * The supplier this loader installs while the instance is being built.
+         */
+        private final ChunkSupplier supplier = FalcoChunk::new;
+
+        /**
+         * What the instance reported as its supplier before this loader changed it.
+         */
+        private final AtomicReference<ChunkSupplier> supplierBefore = new AtomicReference<>();
+
+        /**
+         * What the instance reported about auto loading before this loader changed it.
+         */
+        private final AtomicBoolean autoLoadBefore = new AtomicBoolean();
+
+        @Override
+        public @Nullable Chunk loadChunk(Instance instance, int chunkX, int chunkZ) {
+            return null;
+        }
+
+        @Override
+        public void saveChunk(Chunk chunk) {
+            // This loader is about the read at construction, not about saving.
+        }
+
+        @Override
+        public void loadInstance(Instance instance) {
+            final FalcoInstance falco = (FalcoInstance) instance;
+            this.supplierBefore.set(falco.getChunkSupplier());
+            this.autoLoadBefore.set(falco.hasEnabledAutoChunkLoad());
+            falco.setChunkSupplier(this.supplier);
+            falco.enableAutoChunkLoad(false);
         }
     }
 
@@ -270,6 +326,23 @@ class FalcoInstancePersistenceTest {
 
         assertEquals(1, loader.unloads.get(),
                 "the loader may hold bookkeeping for the chunk and has to hear that it left");
+    }
+
+    @Test
+    @DisplayName("is already usable when its loader reads it from the constructor")
+    void testTheInstanceIsUsableWhileTheLoaderReadsIt(Env env) {
+        final ConfiguringLoader loader = new ConfiguringLoader();
+
+        final FalcoInstance instance = registered(env, loader);
+
+        assertNotNull(loader.supplierBefore.get(),
+                "the chunk supplier has to stand before the loader is let into the instance");
+        assertTrue(loader.autoLoadBefore.get(),
+                "auto chunk load has to report its default rather than throw while the loader reads");
+        assertSame(loader.supplier, instance.getChunkSupplier(),
+                "what the loader configured during the read has to survive the rest of the constructor");
+        assertFalse(instance.hasEnabledAutoChunkLoad(),
+                "a loader which switches auto loading off during the read has to be obeyed");
     }
 
     @Test
