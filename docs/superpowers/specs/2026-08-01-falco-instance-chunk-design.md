@@ -139,11 +139,17 @@ of aliasing the container, and `saveInstance` persists this instance's tags inst
 persisting the container's (`InstanceContainer:293` passes `this`).
 
 **The wall:** the block owner must be an `InstanceContainer`, and its monitor cannot be removed.
-`UNSAFE_setBlock` is `private synchronized` with five call sites — `:135` from `setBlock`, `:223`,
-`:250`, and `:756` from the neighbour update. Overriding `setBlock` bypasses one of them and leaves
-the rest on the private path: two write paths over the same data, one synchronised and one not. That
-is a race of our own making. Shared worlds therefore pay the monitor and keep the chunk-level gains;
-a world that needs throughput uses `FalcoInstance` without sharing.
+`UNSAFE_setBlock` is `private synchronized` and is called from four places — `:135` from `setBlock`,
+`:223`, `:250`, and `:756` from the neighbour update. Overriding `setBlock` bypasses one of them and
+leaves the other three on the private path: two write paths over the same data, one synchronised and
+one not. That is a race of our own making. Shared worlds therefore pay the monitor and keep the
+chunk-level gains; a world that needs throughput uses `FalcoInstance` without sharing.
+
+**This is the carve-out for NFR-006, and it is stated here because the two would otherwise
+contradict each other.** NFR-006 requires a chunk lock rather than an instance monitor. It binds the
+instances this project implements. It cannot bind an `InstanceContainer`, whose monitor is private
+and whose write paths are not reachable from outside — demanding it there would make stage 4
+unbuildable rather than better.
 
 ### 4.5 Lifecycle: listeners instead of template methods
 
@@ -234,7 +240,7 @@ Stage 1 buys the seam the later stages need. It delivers no saving, and it must 
 | NFR-003 | Measurement | If a performance claim is published, then shall a JMH or JOL measurement in this repository support it, stated with its conditions. | Must |
 | NFR-004 | Measurement | While a comparison benchmark runs, shall it fail rather than report a number if the two sides disagree on their result. | Must |
 | NFR-005 | Correctness | When a chunk read fails, shall the failure reach the caller instead of being reported as an absent chunk. | Must |
-| NFR-006 | Concurrency | While a block is written, shall the lock held be the lock of the chunk it touches, not a monitor over the instance. | Must |
+| NFR-006 | Concurrency | While a block is written through an instance **this project implements**, shall the lock held be the lock of the chunk it touches, not a monitor over the instance. See §4.4 — it cannot bind a Minestom `InstanceContainer`, whose write paths are private. | Must |
 | NFR-007 | Memory | The chunk shall allocate no object per block read on any path. | Must |
 | NFR-008 | Operations | The chunk shall not require `-XX:+UseCompactObjectHeaders`; where the flag helps, the gain shall be stated per class and measured, never as a percentage. | Should |
 | NFR-009 | API | Every new public type shall carry `@ApiStatus.Experimental` while the module is experimental. | Must |
