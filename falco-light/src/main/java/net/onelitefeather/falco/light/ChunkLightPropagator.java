@@ -104,7 +104,32 @@ public final class ChunkLightPropagator {
      */
     private static final int NO_FACE = 7;
 
+    /**
+     * The bit of the opposite of every face, ready to be tested against a flat occlusion byte.
+     */
+    private static final int[] OPPOSITE_BIT = oppositeBits();
+
+    /**
+     * Resolves the occlusion bit of the opposite of every face once.
+     *
+     * @return the bit of the opposite of every face, indexed like {@link #FACES}
+     */
+    private static int[] oppositeBits() {
+        int[] bits = new int[FACES.length];
+
+        for (int index = 0; index < FACES.length; index++) {
+            bits[index] = 1 << OPPOSITE_INDEX[index];
+        }
+        return bits;
+    }
+
+    /**
+     * The occlusion bit of the face light enters a block through when it falls straight down.
+     */
+    private static final int TOP_BIT = 1 << BlockFace.TOP.ordinal();
+
     private byte[] levels;
+    private byte[] occlusion;
     private int[] queue;
 
     /**
@@ -112,6 +137,7 @@ public final class ChunkLightPropagator {
      */
     public ChunkLightPropagator() {
         this.levels = new byte[0];
+        this.occlusion = new byte[0];
         this.queue = new int[0];
     }
 
@@ -158,8 +184,16 @@ public final class ChunkLightPropagator {
         }
 
         int height = sections.size() * LightNibbles.DIMENSION;
-        ensureCapacity(height * LightNibbles.DIMENSION * LightNibbles.DIMENSION);
-        Arrays.fill(this.levels, 0, height * LightNibbles.DIMENSION * LightNibbles.DIMENSION, (byte) 0);
+        int blockCount = height * LightNibbles.DIMENSION * LightNibbles.DIMENSION;
+        ensureCapacity(blockCount);
+        Arrays.fill(this.levels, 0, blockCount, (byte) 0);
+
+        // The whole column is laid out flat once, so the search reads one array instead of walking
+        // list, section and null test per face per queued position. It is paid for by one fill or
+        // one copy per section, both of which the JIT turns into vector stores.
+        for (int section = 0; section < sections.size(); section++) {
+            sections.get(section).copyOcclusionInto(this.occlusion, section * LightNibbles.BLOCK_COUNT);
+        }
         return height;
     }
 
@@ -213,7 +247,7 @@ public final class ChunkLightPropagator {
                 if (this.levels[neighbourIndex] >= next) {
                     continue;
                 }
-                if (blocksFace(sections, neighbourX, neighbourY, neighbourZ, OPPOSITES[faceIndex])) {
+                if ((this.occlusion[neighbourIndex] & OPPOSITE_BIT[faceIndex]) != 0) {
                     continue;
                 }
                 this.levels[neighbourIndex] = (byte) next;
@@ -248,6 +282,7 @@ public final class ChunkLightPropagator {
     private void ensureCapacity(int blockCount) {
         if (this.levels.length < blockCount) {
             this.levels = new byte[blockCount];
+            this.occlusion = new byte[blockCount];
             this.queue = new int[blockCount];
         }
     }
@@ -305,10 +340,11 @@ public final class ChunkLightPropagator {
         for (int z = 0; z < LightNibbles.DIMENSION; z++) {
             for (int x = 0; x < LightNibbles.DIMENSION; x++) {
                 for (int y = height - 1; y >= 0; y--) {
-                    if (blocksFace(sections, x, y, z, BlockFace.TOP)) {
+                    int index = index(x, y, z);
+
+                    if ((this.occlusion[index] & TOP_BIT) != 0) {
                         break;
                     }
-                    int index = index(x, y, z);
                     this.levels[index] = LightNibbles.MAX_LEVEL;
                     ensureRoom(tail);
                     this.queue[tail++] = index | (NO_FACE << POSITION_BITS);
@@ -316,20 +352,6 @@ public final class ChunkLightPropagator {
             }
         }
         return tail;
-    }
-
-    /**
-     * Checks whether light cannot enter the given position through the given face.
-     *
-     * @param sections the light properties of every section
-     * @param x        the x coordinate inside the chunk
-     * @param y        the y coordinate inside the column
-     * @param z        the z coordinate inside the chunk
-     * @param face     the face light would enter through
-     * @return true if light cannot pass the face, otherwise false
-     */
-    private static boolean blocksFace(List<SectionOpacity> sections, int x, int y, int z, BlockFace face) {
-        return sections.get(y >> 4).blocksFace(x, y & MASK, z, face);
     }
 
     /**
