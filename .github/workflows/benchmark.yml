@@ -129,8 +129,17 @@ jobs:
           LOAD_AFTER: ${{ steps.run.outputs.load_after }}
         run: |
           JMH_VERSION=$(grep -m1 -oP 'JMH version: \K.*' human.txt || echo 'not captured')
-          JVM_VERSION=$(java -version 2>&1 | head -1 | grep -oP '"\K[^"]+' || echo 'not captured')
-          IDLE=$(awk -v l="${LOAD_BEFORE:-0}" 'BEGIN { print (l < 0.5) ? "recorded as idle" : "recorded as **not idle**" }')
+          # sed rather than grep -oP: the pattern "\K[^"]+ matches a second time past the closing
+          # quote and puts the release date on its own line, which broke the first run's line.
+          JVM_VERSION=$(java -version 2>&1 | head -1 | sed -n 's/.*"\([^"]*\)".*/\1/p')
+          # A load average describes this VM alone. On a shared runner the neighbours sharing the
+          # host do not appear in it, so a low reading is not evidence of a quiet machine and must
+          # not be reported as one.
+          if [ "$RUNNER_KIND" = "ubuntu-latest" ]; then
+            IDLE="load inside this VM only — a shared runner's neighbours do not appear in it"
+          else
+            IDLE=$(awk -v l="${LOAD_BEFORE:-0}" 'BEGIN { print (l < 0.5) ? "recorded as idle" : "recorded as **not idle**" }')
+          fi
           {
             echo "Paste beneath the table, then check every field against the run:"
             echo
