@@ -1625,10 +1625,15 @@ Carry these to the project owner rather than deciding them silently in code.
 
 Run 2026-08-02 on branch `feat/shared-instance`, JDK 25.0.3 (Temurin), Minestom as pinned by the
 build. First taken at `e9c5cce` at a `/proc/loadavg` of 11.77, then taken again in full at `9271642`
-after the review follow-up of Task 7 had added a module's worth of rules — that second run is the one
-the numbers below report, and it read 33.75 before the suite and 44.81 after it. The machine carried
-an IntelliJ session and a parallel worktree throughout. Nothing below is a timing figure, and that is
-deliberate — see *What may be quoted*.
+after the review follow-up of Task 7 had added a module's worth of rules — 33.75 before that suite and
+44.81 after it — and a third time at `3cf4771`, after the final review of the stage had added four
+cases to `falco-instance`. The `falco-instance` row below is the third run's; the other five are the
+second's, because the final review touched no module but that one, and
+`:falco-instance:test :falco-archunit:test :falco-light:test :falco-anvil:test --rerun-tasks` was
+green at `3cf4771` with `falco-archunit`, `falco-light` and `falco-anvil` reporting exactly the 46,
+205 and 217 the table already carried. The machine carried an IntelliJ session and a parallel
+worktree throughout; the third run read 9.00 before and 12.68 after. Nothing below is a timing
+figure, and that is deliberate — see *What may be quoted*.
 
 ### Tests
 
@@ -1637,7 +1642,7 @@ deliberate — see *What may be quoted*.
 
 | module | stage 2 | now | difference |
 | --- | ---: | ---: | ---: |
-| `:falco-instance:` | 143 | **182** | +39 |
+| `:falco-instance:` | 143 | **186** | +43 |
 | `:falco-light:` | 189 | **205** | +16 |
 | `:falco-anvil:` | 193 | **217** | +24 |
 | `:falco-demo:` | 139 | **166** | +27 |
@@ -1650,13 +1655,16 @@ believed: **seven** in `falco-instance` — `FalcoSharedInstance`, `package-info
 classes `FalcoSharedInstanceTest`, `FalcoSharedInstanceResendTest`, `FalcoSharedInstanceStateTest`,
 `FalcoSharedInstanceSaveTest`, `FalcoSharedInstanceWriteTest` — **one** in `falco-archunit`
 (`ForeignWritePathTest`, added by the review follow-up), `README.md` and this plan. 7 + 1 + 1 + 1 =
-10, and the same five test classes are counted again by test case two sentences below. The union of
+10, and the same five test classes are counted again by test case two sentences below. The final
+review of the stage touched five of those ten — `FalcoSharedInstance`, `FalcoSharedInstanceTest`,
+`FalcoSharedInstanceStateTest`, `README.md` and this plan — and added none, so the count stands. The union of
 `git show --name-only` over the stage's own commits is the check, and it has to be taken per commit
 rather than over a range, because the branch merged `feat/block-storage` and `main` mid-stage — a
 range check drops exactly the two classes it is easiest to lose here, `FalcoSharedInstanceTest` and
-`FalcoSharedInstanceResendTest`, which tasks 1 and 2 committed before the first of those merges. Of the +39 in `falco-instance`, **30 are this stage**
-(`FalcoSharedInstanceTest` 7, `FalcoSharedInstanceResendTest` 3, `FalcoSharedInstanceStateTest` 12,
-`FalcoSharedInstanceSaveTest` 5, `FalcoSharedInstanceWriteTest` 3). The remaining 9, and the whole of
+`FalcoSharedInstanceResendTest`, which tasks 1 and 2 committed before the first of those merges. Of the +43 in `falco-instance`, **34 are this stage**
+(`FalcoSharedInstanceTest` 8, `FalcoSharedInstanceResendTest` 3, `FalcoSharedInstanceStateTest` 15,
+`FalcoSharedInstanceSaveTest` 5, `FalcoSharedInstanceWriteTest` 3) — 30 of them at `9271642` and four
+added by the final review, one to the first of those classes and three to the third. The remaining 9, and the whole of
 the other four columns, arrived with the two merges this branch took mid-stage — `feat/block-storage`
 (stage 3) and `main` — six of the nine being the new `FalcoInstanceBuilderTest` and three being cases
 added to classes that already existed. `:falco-archunit:` is a module `main` brought with it; it held
@@ -1677,7 +1685,7 @@ warning and no error, `checkApiCompatibility` genuinely executed and passed.
 | Story | Carried by | State |
 |---|---|---|
 | US-4.01 | `FalcoSharedInstanceResendTest#testTheFastPathSendsNothing`, with `#testTheSlowPathSendsTheMarkers` as the control and `FalcoSharedInstanceTest#testLinkedToItsContainer`, `#testLinkedToASibling`, `#testLinkedToAStockSharedInstance`, `#testUnlinkedAcrossContainers` beneath it | met |
-| US-4.02 | `FalcoSharedInstanceStateTest#testTheGeneratorDoesNotAlias` and `#testClearingTheGeneratorDoesNotClearTheContainer`, plus the same shape for the chunk supplier and the auto-load flag | met, with the reservation below |
+| US-4.02 | `FalcoSharedInstanceStateTest#testTheGeneratorDoesNotAlias` and `#testClearingTheGeneratorDoesNotClearTheContainer`, plus the same shape for the chunk supplier and the auto-load flag, and the three snapshot cases the final review added (`#testTheGeneratorIsTheSnapshotOfConstruction`, `#testTheChunkSupplierIsTheSnapshotOfConstruction`, `#testTheContainerCannotStopAViewItAlreadyHas`) for the direction the aliasing cases never enter | met, with the reservation below |
 | US-4.03 | `FalcoSharedInstanceSaveTest#testTheViewSavesItsOwnTags`, with `#testTheContainerStillSavesItself`, `#testAParallelSaveStillGetsThisInstance`, `#testAFailureIsReturnedOnceOnBothBranches` and `#testAFreshViewHasNothingToWrite` | met, with the reservation below |
 | US-4.04 | the two `<h2>` sections of `FalcoSharedInstance`, the paragraph in `package-info.java`, the *Shared worlds* section of `README.md`, `FalcoSharedInstanceWriteTest` (3 cases) for the observable half and `ForeignWritePathTest` (4 rules) for the premise | met |
 
@@ -1696,6 +1704,8 @@ each injection was reverted and re-run.
 | 6 | body replaced by `super.saveInstance()`; separately, the synchronous branch forced; separately, `handleException` added next to `failedFuture`; separately, the constructor copying the container's tag compound | the view case at `assertSame`; the parallel case; the failure case; `testAFreshViewHasNothingToWrite` |
 | 7 | `getChunk` overridden to return `chunk.copy(this, chunkX, chunkZ)` | `testTheChunkIsTheContainersChunk` at the first `assertSame` and `testAWriteReachesEveryView` at the first `assertEquals`; the auto-load case stayed green, because it asserts the container's state |
 | 7, review follow-up | four separately, one per rule of `ForeignWritePathTest`: the guarded method name pointed at `setBlock`; `breakBlock` swapped for `loadChunk` in the expected caller set; the forward demanded to go to `Chunk`; an override of `setBlock` added to `FalcoSharedInstance` that only calls `super` | W1 twice (not private, not synchronized), W2 with one missing and one unexpected caller, W3 three times (one per forwarded method), W4 at `FalcoSharedInstance.java:355`. The fourth mutation left all three cases of `FalcoSharedInstanceWriteTest` green, which is why the rule exists |
+| final review | four separately: `generator()` delegating to the container; `getChunkSupplier()` delegating to it; `loadOptionalChunk` asking `container.hasEnabledAutoChunkLoad()` instead of the field; the constructor's registration check deleted | 3 of 15 in `FalcoSharedInstanceStateTest` (the two generator aliasing cases and the new snapshot one), 2 of 15, 4 of 15 including `testTheContainerCannotStopAViewItAlreadyHas`; and `testAnUnregisteredContainerIsRefused` as the single failure of the 8 in `FalcoSharedInstanceTest` |
+| final review, existing pin | `handleException` put back next to `completeExceptionally`, to check that the paragraph added about the failure path is guarded rather than only written | `testAFailureIsReturnedOnceOnBothBranches`, the single failure of the five in `FalcoSharedInstanceSaveTest` |
 
 ### What the acceptance re-proved for itself
 
@@ -1781,6 +1791,45 @@ Its structural limit is the one `ConcurrencyTest` already names: ArchUnit sees `
 a method, never a `synchronized` block. A lock moved into the body of `UNSAFE_setBlock` would turn W1
 red although nothing changed for a caller — a false alarm on the safe side, since the paragraph would
 have to be re-read either way.
+
+### The final review of the stage, and the three things it moved
+
+Three findings, all on `FalcoSharedInstance`, none of them visible from inside a single task — each is
+a property of two decisions that are right on their own.
+
+- **A container can no longer stop the views it already has.** The per-view auto-load flag (US-4.02)
+  and routing the load through `container.loadChunk` (the container owns every chunk) combine into a
+  state the documentation said needed "a deliberate act": the flag is a snapshot taken in the
+  constructor and `loadChunk` never consulted that flag, so `container.enableAutoChunkLoad(false)`
+  called *after* a view exists stops nothing — the view goes on pulling chunks into a container that
+  is refusing to load one for itself. Stock `SharedInstance` asked the container on every call, so its
+  off switch was authoritative for every view instantly. Every case of the stage had used the one
+  ordering that hides this (container off, *then* construct). The paragraph now states the runtime
+  ordering, `enableAutoChunkLoad` names it too, and `FalcoSharedInstanceStateTest` grew from 12 to 15:
+  the three snapshot claims the class makes — generator, chunk supplier, auto-load — are now each
+  pinned by a case that changes the container after the view exists, the last one carried as far as
+  the chunk landing in the container. `9b1d9169`.
+- **A guard lost by route change, not by override.** `InstanceManager#createSharedInstance` refuses an
+  unregistered container; `registerSharedInstance`, the only route that can register this type, does
+  not. The class documented the route change and inherited none of the checking. What it let through
+  is quiet and delayed: an unregistered container is in no `InstanceManager`, so `ServerProcessImpl`
+  never ticks it, so `InstanceContainer#tick` never clears `currentlyChangingBlocks` — every repeat
+  write of the same block value at a position stays suppressed and the map grows without bound, while
+  the view ticks normally. The constructor now throws `IllegalStateException`, and
+  `testAnUnregisteredContainerIsRefused` asserts both halves of the asymmetry rather than only the
+  throw. This is the stage's only behaviour change after acceptance; `checkApiCompatibility` passes,
+  since no signature moved. `6c4020ac`.
+- **The failure path was documented in a test class only.** `saveInstance()` drops the
+  `ExceptionManager` report that `InstanceContainer#optionalAsync` performs and returns the
+  synchronous branch's throwable as a failed future instead of throwing it. Both are deliberate and
+  pinned by `testAFailureIsReturnedOnceOnBothBranches`, and the production Javadoc named neither, so a
+  caller who fires the call without observing the future had a save that failed in silence and no way
+  to read that from the API. A paragraph now names both deviations, the `@return` tag says the future
+  is the only report, and `FalcoInstance#runSave` is named as making the same choice. `3cf47715`.
+
+The first and the third are documentation catching up with code that was already correct; the second
+is code catching up with documentation. None of them changed a test expectation or an architecture
+rule.
 
 ### One claim of this plan that the sources did not support
 
