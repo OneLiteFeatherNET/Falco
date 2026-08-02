@@ -442,6 +442,12 @@ public final class ChunkLifecycle {
      * that is already loaded adds it to that chunk through
      * {@link FalcoChunk#addLifecycleListener(ChunkLifecycleListener)} and knows what it is asking for.
      * </p>
+     * <p>
+     * Registration is not atomic, for the reason given on
+     * {@link FalcoChunk#addLifecycleListener(ChunkLifecycleListener)}: two threads registering at the
+     * same moment can lose one of the two. This is a setup call and belongs before the first chunk of
+     * the instance is asked for.
+     * </p>
      *
      * @param listener the listener every chunk created from now on is given
      * @throws NullPointerException if the listener is null

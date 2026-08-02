@@ -368,6 +368,14 @@ public class FalcoChunk extends Chunk {
      * A second listener is composed with the first through {@link ChunkLifecycleListener#of} rather
      * than appended to a collection, which is where the reason for that lives.
      * </p>
+     * <p>
+     * Registration itself is not atomic: this reads the field and writes it back, so two threads
+     * registering at the same moment can lose one of the two. That is deliberate and it is what the
+     * field being a plain volatile reference costs. A listener is installed while a chunk is being
+     * built — {@link ChunkLifecycle#create(int, int)} does it before the generator runs — and paying
+     * for a compare-and-set on every chunk of a world to make a setup-time call thread-safe would
+     * charge the case that happens millions of times for the case that happens once.
+     * </p>
      *
      * @param listener the listener to add
      * @throws NullPointerException if the listener is null

@@ -93,6 +93,13 @@ public interface ChunkLifecycleListener {
      * instance and no exception, because a throwing listener leaves the chunk removed and only half
      * unloaded.
      * </p>
+     * <p>
+     * It is also the one which can arrive without {@link #onPublish} and {@link #onLoad} ever having
+     * arrived. A chunk whose position was claimed while its loader was still working is told that it
+     * was unloaded so that whatever it holds is released, even though it never became part of the
+     * instance — see {@link ChunkLifecycle#completeLoad}. A listener which tears down state it built
+     * in {@link #onLoad} has to survive being asked to tear down nothing.
+     * </p>
      *
      * @param event what happened, to which chunk
      */
