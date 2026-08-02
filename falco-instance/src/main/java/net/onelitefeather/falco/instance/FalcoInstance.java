@@ -113,7 +113,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.1.1
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -967,6 +967,26 @@ public class FalcoInstance extends Instance {
      * nothing into twenty of them. The condition is the one {@code InstanceContainer} already applies
      * to fork sections at {@code InstanceContainer.java:434}, extended by the biomes and by the special
      * blocks, since either of those can be the only thing a generator produced for a section.
+     * </p>
+     * <p>
+     * That {@code 62,24 %} is a census of <em>block</em> content, and the saving is worth that much
+     * only for a generator which leaves the sections above its terrain alone entirely. A biome is
+     * stored per section whether the section holds a block or not, so a generator which calls
+     * {@code UnitModifier#fillBiome} on the chunk unit — the ordinary way to give a chunk a biome —
+     * reaches every one of the twenty-four section modifiers, fills every biome palette, and this
+     * method then materialises all twenty-four sections. Nothing is lost there and nothing is wrong:
+     * a section which has to carry a biome has to exist. It is written down because the number on its
+     * own reads like a promise about every generator, and it is a promise about generators which write
+     * blocks. {@code SectionMaterialisationTest} holds both cases side by side, at {@code 4} and at
+     * {@code 24}.
+     * </p>
+     * <p>
+     * Each of the three clauses is the last line of defence for one kind of content, and each is
+     * covered by a case which fails if that clause is dropped. The blocks are the ordinary case; a
+     * section whose only content is a biome is the second; a section whose only content is a handler on
+     * air is the third, and it is the subtle one, because {@code SectionModifierImpl#handleCache}
+     * writes such a block into the palette as its state id, which for air is {@code 0} — the palette
+     * reports {@code count() == 0} and the specials map is the only evidence the generator was there.
      * </p>
      * <p>
      * A section that is still shared and received nothing needs no write at all, and that is exactly

@@ -1,14 +1,18 @@
 package net.onelitefeather.falco.instance;
 
+import net.kyori.adventure.key.Key;
 import net.minestom.server.MinecraftServer;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.block.Block;
+import net.minestom.server.instance.block.BlockHandler;
 import net.minestom.server.instance.generator.Generator;
 import net.minestom.server.instance.palette.Palette;
 import net.minestom.server.network.ConnectionState;
 import net.minestom.server.network.packet.server.SendablePacket;
+import net.minestom.server.registry.RegistryKey;
 import net.minestom.server.world.DimensionType;
+import net.minestom.server.world.biome.Biome;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,6 +20,9 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
  * Counts what a caller makes a {@link FalcoChunk} allocate at the three boundaries where Minestom
@@ -47,8 +54,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * a column scan that finds nothing walks to the floor.
  * </p>
  *
+ * <h2>Every count here is a count about blocks</h2>
+ * <p>
+ * A section carries a biome palette as well, and a biome is stored per section whether the section
+ * holds a block or not. A generator which gives the whole chunk a biome therefore needs all
+ * twenty-four sections, and the saving this class measures is a saving on the sections a generator
+ * leaves entirely alone. That is not left implicit: the generator cases below come in pairs, one which
+ * writes blocks and no biomes and one which writes a biome and no blocks, and the second one asserts
+ * the full twenty-four.
+ * </p>
+ *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @DisplayName("What a caller of a Falco chunk makes it allocate")
@@ -306,7 +323,7 @@ class SectionMaterialisationTest {
     }
 
     @Test
-    @DisplayName("a generator owns only the sections it filled")
+    @DisplayName("a generator which writes blocks and no biomes owns only the sections it filled")
     void testAGeneratorOwnsOnlyWhatItFilled() {
         final FalcoChunk chunk = generated(unit -> unit.modifier().fillHeight(-64, 0, Block.STONE));
 
@@ -314,7 +331,10 @@ class SectionMaterialisationTest {
                 "stone from y=-64 to y=0 fills exactly four sections; the other twenty hold nothing "
                         + "and must stay shared. This is the number the whole stage is for: a chunk "
                         + "which is generated and then owns all twenty-four sections has paid the full "
-                        + "price of the eager layout before the first block of terrain was written");
+                        + "price of the eager layout before the first block of terrain was written. "
+                        + "The four holds under one condition, and the case below states it: this "
+                        + "generator writes blocks and no biomes. A generator which also calls "
+                        + "fillBiome over the chunk unit owns all twenty-four, and correctly so");
         assertEquals(Block.STONE, read(chunk, 0, -64, 0));
         assertEquals(Block.AIR, read(chunk, 0, 0, 0));
 
@@ -345,5 +365,84 @@ class SectionMaterialisationTest {
                         + "wide holding two states - 8192 bytes for content that fits in 2048. Without "
                         + "the optimisation in the commit this section stays at fifteen bits, because "
                         + "nothing in Minestom ever narrows a palette again");
+    }
+
+    /**
+     * States the condition under which the four of the case above holds, and what happens outside it.
+     * <p>
+     * {@code UnitModifier#fillBiome} over a chunk unit is the ordinary way to give a chunk a biome, and
+     * {@code AreaModifierImpl#fillBiome} hands it down to every one of the twenty-four section
+     * modifiers, each of which calls {@code Palette#fill} on its biome palette. A filled palette whose
+     * value is not zero answers {@code count()} with its {@code maxSize()}, so the commit sees content
+     * in every section and materialises every section. That is not a leak: a biome is per section, and
+     * a section which has to carry one has to exist. The number this stage advertises is therefore a
+     * number about blocks, and a generator which sets biomes over the whole chunk pays the full eager
+     * price for the biomes alone.
+     * </p>
+     * <p>
+     * The case is also the only cover for the second clause of the skip condition. Drop
+     * {@code biomes().count() == 0} from {@code FalcoInstance#commitSection} and a section whose sole
+     * content is a biome is skipped and the biome is dropped in silence; without this case the whole
+     * suite stays green through that mutation.
+     * </p>
+     */
+    @Test
+    @DisplayName("a generator which fills biomes owns every section, because a biome needs a section to sit in")
+    void testAGeneratorWhichFillsBiomesOwnsEverySection() {
+        // Minestom keeps its Biomes constants package private, so the key comes from the registry.
+        // Desert rather than plains because an empty biome palette already reads back as id zero, and
+        // filling with zero would leave count() at zero and prove nothing about the skip.
+        final RegistryKey<Biome> desert = MinecraftServer.getBiomeRegistry().getKey(Key.key("minecraft:desert"));
+
+        assertNotNull(desert, "the fixture needs a registered biome");
+        assertNotEquals(0, MinecraftServer.getBiomeRegistry().getId(desert),
+                "the fixture needs a biome whose id is not the one an empty palette reads back");
+
+        final FalcoChunk chunk = generated(unit -> unit.modifier().fillBiome(desert));
+
+        assertEquals(SECTIONS, owned(chunk),
+                "every section carries the biome, so every section exists. This is the condition on "
+                        + "the four of testAGeneratorOwnsOnlyWhatItFilled, stated as a number rather "
+                        + "than left to the reader: the saving of this stage is a saving on the "
+                        + "sections a generator leaves entirely alone, and a chunk wide fillBiome "
+                        + "leaves none");
+        assertEquals(desert, chunk.storage().getBiome(0, -64, 0),
+                "the bottom section holds no block at all, so the biome is the only thing that keeps "
+                        + "it alive; if the commit skips it the biome is gone without a word");
+        assertEquals(desert, chunk.storage().getBiome(0, 300, 0));
+    }
+
+    /**
+     * Covers the third clause of the skip condition, which no other case in the repository reaches.
+     * <p>
+     * A block which needs its own entry — nbt, a handler or a block entity — is collected by
+     * {@code SectionModifierImpl#handleCache} into {@code GenSection#specials} and written into the
+     * palette as its state id. For a handler on air that state id is zero, so the block palette of the
+     * section reports {@code count() == 0} and the specials map is the only evidence that the generator
+     * touched the section at all. Drop {@code specials().isEmpty()} from the condition and this block
+     * disappears; the existing special block case,
+     * {@code FalcoInstanceGeneratorTest#testABlockWhichNeedsItsOwnEntrySurvivesGeneration}, cannot see
+     * it because a chest raises the palette count on its own.
+     * </p>
+     */
+    @Test
+    @DisplayName("a section whose only content is a handler on air is committed, not skipped")
+    void testASectionCarryingOnlyAHandlerOnAirIsCommitted() {
+        final BlockHandler handler = MinecraftServer.getBlockManager().getHandlerOrDummy("falco:marker");
+        final Block markedAir = Block.AIR.withHandler(handler);
+
+        assertEquals(0, markedAir.stateId(),
+                "the case rests on the state id being the one an empty palette already holds; a "
+                        + "non-zero id would raise the block count and the specials clause would no "
+                        + "longer be the only thing keeping the section alive");
+
+        final FalcoChunk chunk = generated(unit -> unit.modifier().setBlock(0, 64, 0, markedAir));
+
+        assertFalse(chunk.storage().shared(8),
+                "section 8 holds world Y 64. Its palettes are empty and stay empty, so only the "
+                        + "specials map can be the reason it is materialised at all");
+        final Block placed = read(chunk, 0, 64, 0);
+        assertNotNull(placed.handler(), "the handler is the whole content of that section");
+        assertEquals("falco:marker", placed.handler().getKey().asString());
     }
 }
