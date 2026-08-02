@@ -41,6 +41,22 @@ import java.util.List;
  * threads had corrupted would never be recomputed. The world would simply carry wrong light.
  * </p>
  * <p>
+ * <b>What that sentence covers, and what it does not.</b> It is about this object: two calls share
+ * no state <em>inside</em> the service. They can still share state outside it, namely the chunks
+ * they read, and {@link #calculateWithNeighbours(Instance, int, int)} reads nine of them. Two
+ * threads lighting <em>overlapping</em> neighbourhoods therefore have one reading a chunk the other
+ * is writing. Nothing is corrupted — every write holds the write lock of its chunk — but a result
+ * can be committed from a read that was already stale by the time it was written, which a player
+ * sees as a seam rather than as an error, and which {@code set} then makes permanent.
+ * </p>
+ * <p>
+ * Keeping neighbourhoods disjoint is therefore the caller's job, and there is a ready answer for
+ * anyone who does not want it: {@link ChunkLightScheduler} never submits overlapping work. A chunk
+ * being computed stays marked but is not submitted again, and a chunk whose mark count moved while
+ * its area ran has its result discarded rather than written. Calling this method directly is the
+ * path that carries the obligation.
+ * </p>
+ * <p>
  * The working state of a call is the propagator, which keeps buffers and is therefore built per
  * call rather than kept in a field. Its buffers are the entire cost of that choice, and an
  * allocation per chunk is far cheaper than either handing every thread its own service or letting
@@ -219,6 +235,14 @@ public final class ChunkLightService {
      * <p>
      * Only chunks which the instance already holds take part. A neighbour which is not loaded is
      * skipped rather than loaded, because lighting a chunk must not pull a world into memory.
+     * </p>
+     * <p>
+     * <b>Two threads must not run this for overlapping neighbourhoods.</b> The nine chunks are read
+     * one after another, so a neighbour read here may be a chunk another call is writing, and the
+     * result is then committed from bytes that were already stale — visible as a seam, never as an
+     * error, and permanent because writing light clears the update flag of the section. The service
+     * itself is thread-safe; the chunks are what is shared. {@link ChunkLightScheduler} keeps the
+     * neighbourhoods disjoint for anyone who would rather not.
      * </p>
      *
      * @param instance the instance which holds the chunk and its neighbours
