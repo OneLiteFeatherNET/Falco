@@ -1,5 +1,6 @@
 package net.onelitefeather.falco.instance;
 
+import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.block.Block;
 import net.minestom.server.instance.generator.Generator;
@@ -12,10 +13,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers the three pieces of configuration which Minestom's shared instance writes through to the
@@ -28,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -118,5 +122,60 @@ class FalcoSharedInstanceStateTest {
 
         assertThrows(NullPointerException.class, () -> shared.setChunkSupplier(null));
         assertSame(container.getChunkSupplier(), shared.getChunkSupplier());
+    }
+
+    @Test
+    @DisplayName("starts with the auto chunk load setting its container had")
+    void testAutoChunkLoadIsSeededFromTheContainer(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        container.enableAutoChunkLoad(false);
+
+        final FalcoSharedInstance shared = registered(env, container);
+
+        assertFalse(shared.hasEnabledAutoChunkLoad());
+    }
+
+    @Test
+    @DisplayName("keeps the auto chunk load flag to itself")
+    void testAutoChunkLoadDoesNotAlias(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        final FalcoSharedInstance first = registered(env, container);
+        final FalcoSharedInstance second = registered(env, container);
+
+        first.enableAutoChunkLoad(false);
+
+        assertFalse(first.hasEnabledAutoChunkLoad());
+        assertTrue(second.hasEnabledAutoChunkLoad(), "a sibling view must not be reconfigured by this call");
+        assertTrue(container.hasEnabledAutoChunkLoad(), "the container must not be reconfigured by this call");
+    }
+
+    @Test
+    @DisplayName("does not trigger a load of its own when the flag is off, and the container still can")
+    void testAutoChunkLoadDecidesTheOptionalLoad(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        final FalcoSharedInstance disabled = registered(env, container);
+        final FalcoSharedInstance enabled = registered(env, container);
+        disabled.enableAutoChunkLoad(false);
+
+        assertNull(disabled.loadOptionalChunk(4, 4).join(),
+                "a view with auto load off must not pull a chunk into the world");
+        assertNull(container.getChunk(4, 4), "and it must not have done so as a side effect either");
+
+        final Chunk loaded = enabled.loadOptionalChunk(4, 4).join();
+
+        assertNotNull(loaded);
+        assertSame(loaded, container.getChunk(4, 4));
+    }
+
+    @Test
+    @DisplayName("hands back a chunk that is already there even with the flag off")
+    void testAutoChunkLoadDoesNotHideLoadedChunks(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        final FalcoSharedInstance shared = registered(env, container);
+        shared.enableAutoChunkLoad(false);
+        final Chunk loaded = container.loadChunk(4, 4).join();
+
+        assertSame(loaded, shared.loadOptionalChunk(4, 4).join(),
+                "the flag governs whether a load is started, not whether the world is visible");
     }
 }

@@ -1,5 +1,6 @@
 package net.onelitefeather.falco.instance;
 
+import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.SharedInstance;
 import net.minestom.server.instance.generator.Generator;
@@ -9,6 +10,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * A {@link SharedInstance} which keeps its own configuration instead of writing it through to the
@@ -36,7 +38,7 @@ import java.util.UUID;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.3.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -61,6 +63,15 @@ public class FalcoSharedInstance extends SharedInstance {
     private volatile ChunkSupplier chunkSupplier;
 
     /**
+     * Whether this instance pulls chunks into the world when it is asked for one it has not got.
+     * <p>
+     * Volatile for the reason the other two fields are: a view is configured from wherever the world
+     * is set up and read from the thread which happens to ask it for a chunk.
+     * </p>
+     */
+    private volatile boolean autoChunkLoad;
+
+    /**
      * Creates a view over the chunks of a container.
      * <p>
      * The configuration of the container is copied once, here. That is what makes a fresh view
@@ -75,6 +86,7 @@ public class FalcoSharedInstance extends SharedInstance {
         super(uuid, Objects.requireNonNull(instanceContainer, "a shared instance needs a container to share"));
         this.generator = instanceContainer.generator();
         this.chunkSupplier = instanceContainer.getChunkSupplier();
+        this.autoChunkLoad = instanceContainer.hasEnabledAutoChunkLoad();
     }
 
     /**
@@ -149,5 +161,63 @@ public class FalcoSharedInstance extends SharedInstance {
     @Override
     public void setChunkSupplier(ChunkSupplier chunkSupplier) {
         this.chunkSupplier = Objects.requireNonNull(chunkSupplier, "the chunk supplier cannot be null");
+    }
+
+    /**
+     * Decides whether this instance pulls chunks into the world on demand.
+     * <p>
+     * Minestom's shared instance forwards this to its container, which turns a per-view decision
+     * into a per-world one. Here it stays with the view, and it reaches exactly one method:
+     * {@link #loadOptionalChunk(int, int)}. It does <em>not</em> reach {@code setBlock} — that call
+     * belongs to the container and asks the container's flag, for the reason given in the class
+     * documentation.
+     * </p>
+     *
+     * @param enable true to pull chunks in on demand
+     */
+    @Override
+    public void enableAutoChunkLoad(boolean enable) {
+        this.autoChunkLoad = enable;
+    }
+
+    /**
+     * Gets whether this instance pulls chunks into the world on demand.
+     * <p>
+     * The answer is what {@link #enableAutoChunkLoad(boolean)} last stored on this view, or the
+     * setting the container carried when this view was created — never a read of the container as it
+     * stands now. Two views over one container therefore answer independently. Unlike the generator
+     * and the chunk supplier this value is not inert: {@link #loadOptionalChunk(int, int)} consults
+     * it, and that is the method {@code Player#chunkAdder} calls, so a player of this view sees the
+     * effect. Nothing else does — a write through {@code setBlock} reaches the container and asks
+     * {@code getInstanceContainer().hasEnabledAutoChunkLoad()}.
+     * </p>
+     *
+     * @return true if it does
+     */
+    @Override
+    public boolean hasEnabledAutoChunkLoad() {
+        return this.autoChunkLoad;
+    }
+
+    /**
+     * Hands back the chunk at a position, loading it only if this instance is allowed to.
+     * <p>
+     * A chunk the container already holds is handed back whatever the flag says: the flag decides
+     * whether this view may cause a load, not whether it may see the world. Only the second branch
+     * consults it, and only that branch is a decision this instance is entitled to make — the chunk
+     * itself is still created, cached and published by the container.
+     * </p>
+     *
+     * @param chunkX the chunk X
+     * @param chunkZ the chunk Z
+     * @return a future completed with the chunk, or with null if it is absent and may not be loaded
+     */
+    @Override
+    public CompletableFuture<@Nullable Chunk> loadOptionalChunk(int chunkX, int chunkZ) {
+        final InstanceContainer container = getInstanceContainer();
+        final Chunk loaded = container.getChunk(chunkX, chunkZ);
+        if (loaded != null) return CompletableFuture.completedFuture(loaded);
+        if (!this.autoChunkLoad) return CompletableFuture.completedFuture(null);
+        return container.loadChunk(chunkX, chunkZ);
     }
 }
