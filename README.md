@@ -19,7 +19,7 @@ nothing to do with speed — and it claims none.
 | --- | --- |
 | [`falco-anvil`](https://github.com/OneLiteFeatherNET/Falco/wiki/Anvil-Chunk-Loader) | A `ChunkLoader` for the Anvil region format. Genuinely parallel: reading, decompression and NBT parsing do not share one lock. A read failure throws instead of reporting the chunk as absent, so the server cannot overwrite real data with a freshly generated chunk. |
 | [`falco-light`](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine) | A block and sky light engine. Thread-safe per call and tied to no chunk implementation, so it works with chunk types Minestom's own engine ignores. Call it yourself, or let a chunk keep its own light up to date. |
-| [`falco-instance`](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Instances-And-Chunks) | An `Instance` and its `Chunk`. **No speed gain is claimed and none is measured** — ticking lives in the server's global `ThreadDispatcher`, not in the instance. What it buys is an unload path of its own, where `InstanceManager.unregisterInstance` leaks every chunk a foreign instance ever loaded. It cannot back a `SharedInstance`. |
+| [`falco-instance`](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Instances-And-Chunks) | An `Instance` and its `Chunk`. **No speed gain is claimed and none is measured** — ticking lives in the server's global `ThreadDispatcher`, not in the instance. What it buys is an unload path of its own, where `InstanceManager.unregisterInstance` leaks every chunk a foreign instance ever loaded. It cannot back a `SharedInstance`; shared worlds are served by `FalcoSharedInstance` on a plain container instead. |
 
 All three modules are **experimental**. Every public type carries `@ApiStatus.Experimental`;
 signatures and behaviour may still change in a minor release.
@@ -134,6 +134,35 @@ recomputes what is already stored, because loading applies the stored arrays and
 flag — for a pre-lit world the engine is doing work nobody asked for. It earns its keep on worlds
 without stored light and after blocks change at runtime. Which case is which is spelled out in
 [Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine).
+
+## Shared worlds
+
+Shared worlds are the one case `FalcoInstance` cannot serve, because `SharedInstance` takes an
+`InstanceContainer` and nothing else. `FalcoSharedInstance` accepts that and builds on the container
+instead:
+
+```java
+InstanceManager manager = MinecraftServer.getInstanceManager();
+InstanceContainer world = manager.createInstanceContainer();
+world.setChunkSupplier(FalcoChunk::new);
+
+// Not manager.createSharedInstance(world): that factory always builds Minestom's own type.
+FalcoSharedInstance view = new FalcoSharedInstance(UUID.randomUUID(), world);
+manager.registerSharedInstance(view);
+```
+
+The view keeps its own generator, chunk supplier, auto-load setting and tags, where Minestom's writes
+all four through to the container and lets one view reconfigure another. What it does not change is
+who owns the blocks: `setBlock` reaches the container, and the container serialises every write on
+its own monitor, because the method that performs the write is `private synchronized` and is reached
+from three further places that an override cannot follow. A world built this way keeps what the Falco
+chunk saves and keeps the container's write path; a world that needs the write path uses
+`FalcoInstance` and gives up sharing.
+
+The per-view generator and chunk supplier are a repair and not a capability: they stop one view from
+reconfiguring another, and nothing inside Minestom reads them, because the container creates every
+chunk from its own. The reasoning is in
+[Rationale: Instances and Chunks](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Instances-And-Chunks).
 
 ## What "high-performance" means here
 

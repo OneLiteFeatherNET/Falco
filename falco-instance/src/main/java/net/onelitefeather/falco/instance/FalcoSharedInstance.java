@@ -37,9 +37,38 @@ import java.util.concurrent.CompletableFuture;
  * {@code createSharedInstance} always constructs the stock type and can never produce this one, and
  * {@code registerInstance} refuses anything that is a {@link SharedInstance} outright.
  * </p>
+ * <h2>Why writes still serialise on the container</h2>
+ * <p>
+ * They have to, and the reason is a {@code private} modifier in a foreign class.
+ * {@code InstanceContainer#UNSAFE_setBlock} is {@code private synchronized} and is called from four
+ * places: {@code setBlock}, {@code placeBlock}, {@code breakBlock} and the neighbour update that
+ * runs a block placement rule. Overriding {@code setBlock} here would take over one of the four and
+ * leave the other three on the private, synchronised path — two write paths over the same chunk
+ * data, one holding the monitor of the whole instance and one not. That is a race introduced by the
+ * class which claims to remove one, and it is worth less than what it would buy.
+ * </p>
+ * <p>
+ * A shared world therefore pays the container's monitor on every block write and keeps everything
+ * the chunk layer gained. A world that needs write throughput and does not need to be shared uses
+ * {@code FalcoInstance}, which holds the lock of the chunk it touches instead.
+ * </p>
+ * <h2>What the per-instance state reaches, and what it does not</h2>
+ * <p>
+ * {@code enableAutoChunkLoad} reaches {@link #loadOptionalChunk(int, int)}, which is the method a
+ * player's chunk loading goes through, so the flag has an effect a player can observe. It does not
+ * reach {@code setBlock}: that call is the container's and asks the container's flag, which follows
+ * directly from the paragraph above.
+ * </p>
+ * <p>
+ * {@code setGenerator} and {@code setChunkSupplier} reach nothing inside Minestom at all. Chunks are
+ * created by the container, which asks its own generator and its own supplier, and a chunk loader is
+ * handed the container rather than a view. Both setters exist here so that configuring one view
+ * stops reconfiguring the world and every other view of it — a repair, not a capability. To decide
+ * what the world is made of, call them on {@link #getInstanceContainer()}.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 1.6.0
+ * @version 1.7.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
