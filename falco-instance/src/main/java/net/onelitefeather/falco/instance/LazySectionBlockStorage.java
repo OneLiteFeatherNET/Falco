@@ -10,6 +10,8 @@ import net.minestom.server.utils.validate.Check;
 import net.minestom.server.world.biome.Biome;
 import org.jetbrains.annotations.ApiStatus;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.List;
@@ -69,14 +71,41 @@ import java.util.Objects;
  * not on {@code Block#isAir()}, because cave air and void air are air by that predicate and are
  * different states which have to be stored.
  * </p>
+ *
+ * <h2>The one step that cannot rely on the chunk lock</h2>
  * <p>
- * Implementations of {@link BlockStorage} are not thread-safe and this one is no exception. The
- * caller holds the write lock of the chunk, which is what makes the read of a slot, the decision to
- * materialise and the store of the new section one step rather than three.
+ * Implementations of {@link BlockStorage} are not thread-safe and this one is no exception: two
+ * writers into the same palette race here exactly as they race in {@code DynamicChunk}, and the write
+ * lock of the chunk is what keeps them apart. Materialising a slot is the one step that cannot be
+ * left to that lock, because the boundary this class sits behind is reachable without it.
+ * {@code Chunk#getSection(int)} and {@code Chunk#getSectionAt(int)} end in {@link #section(int)}, and
+ * three inherited methods of {@code Instance} reach them holding no chunk lock at all —
+ * {@code Instance#getBlockLight}, {@code Instance#getSkyLight} and
+ * {@code Instance#invalidateSection}, each of which takes a section before it has decided what kind
+ * of chunk it is looking at.
+ * </p>
+ * <p>
+ * A read of the slot, an allocation and a plain store would therefore lose blocks. A writer holding
+ * the write lock materialises a slot and writes stone into its palette; a light query on another
+ * thread read the same slot before that store, saw {@link #EMPTY}, allocates its own section and
+ * stores it over the first one. The stone is gone with no exception and no log, and the next read
+ * answers air through the shortcut in {@link #getBlock}. {@code DynamicChunk} cannot have this race,
+ * because its section list is final and complete from construction; it exists here only because a
+ * slot can change at all.
+ * </p>
+ * <p>
+ * A slot is therefore published with {@link VarHandle#compareAndExchange}: the loser of a race drops
+ * the section it allocated and answers with the winner's, so every caller of a slot ends up with the
+ * same section and no store is ever lost. Taking the write lock inside {@link #section(int)} would
+ * not do it and is not a matter of taste — {@code Heightmap#refresh(int)} holds the <em>read</em>
+ * lock of the chunk while it walks its columns through {@code Chunk#getSection(int)}, and
+ * {@code Chunk#lockWriteLock} asserts that its caller holds no read lock. What this costs when
+ * nothing races is one acquiring read of a slot, and a compare and exchange only on the step which
+ * was going to allocate a section anyway.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -113,6 +142,18 @@ public final class LazySectionBlockStorage implements BlockStorage {
 
     private static final DynamicRegistry<Biome> BIOME_REGISTRY = MinecraftServer.getBiomeRegistry();
 
+    /**
+     * The handle every read and every write of a slot of {@link #sections} goes through.
+     * <p>
+     * A {@code VarHandle} over the array rather than an {@code AtomicReferenceArray} because the two
+     * differ in what they cost: the atomic array is an object plus a second array per storage, which
+     * is a post {@code ChunkFootprintTest} would have to declare and every chunk would pay, while a
+     * static handle over the array this class already holds costs nothing per storage and leaves the
+     * single threaded read a plain load on every architecture this runs on.
+     * </p>
+     */
+    private static final VarHandle SLOT = MethodHandles.arrayElementVarHandle(Section[].class);
+
     private final int minSection;
     private final Section[] sections;
 
@@ -129,7 +170,7 @@ public final class LazySectionBlockStorage implements BlockStorage {
 
         @Override
         public Section get(int index) {
-            return LazySectionBlockStorage.this.sections[index];
+            return LazySectionBlockStorage.this.slot(index);
         }
 
         @Override
@@ -180,7 +221,7 @@ public final class LazySectionBlockStorage implements BlockStorage {
 
     @Override
     public Block getBlock(int x, int y, int z, Block.Getter.Condition condition) {
-        final Section section = this.sections[CoordConversion.globalToChunk(y) - this.minSection];
+        final Section section = slot(CoordConversion.globalToChunk(y) - this.minSection);
 
         // US-2.07: a shared section is air everywhere, so the palette is not reached at all. The
         // palette of the shared section would answer the same; this is a shortcut, not a special case.
@@ -198,7 +239,7 @@ public final class LazySectionBlockStorage implements BlockStorage {
         final int index = CoordConversion.globalToChunk(y) - this.minSection;
         final int stateId = block.stateId();
 
-        if (stateId == AIR_STATE && this.sections[index] == EMPTY) {
+        if (stateId == AIR_STATE && slot(index) == EMPTY) {
             return;
         }
         materialise(index).blockPalette()
@@ -207,7 +248,7 @@ public final class LazySectionBlockStorage implements BlockStorage {
 
     @Override
     public RegistryKey<Biome> getBiome(int x, int y, int z) {
-        final Section section = this.sections[CoordConversion.globalToChunk(y) - this.minSection];
+        final Section section = slot(CoordConversion.globalToChunk(y) - this.minSection);
         final int id = section.biomePalette()
                 .get(x / BIOME_SIZE,
                         CoordConversion.globalToSectionRelative(y) / BIOME_SIZE,
@@ -252,7 +293,7 @@ public final class LazySectionBlockStorage implements BlockStorage {
 
     @Override
     public Section view(int section) {
-        return this.sections[section];
+        return slot(section);
     }
 
     @Override
@@ -262,15 +303,15 @@ public final class LazySectionBlockStorage implements BlockStorage {
 
     @Override
     public boolean shared(int section) {
-        return this.sections[section] == EMPTY;
+        return slot(section) == EMPTY;
     }
 
     @Override
     public int materialisedSections() {
         int owned = 0;
 
-        for (Section section : this.sections) {
-            if (section != EMPTY) owned++;
+        for (int index = 0; index < this.sections.length; index++) {
+            if (slot(index) != EMPTY) owned++;
         }
         return owned;
     }
@@ -285,7 +326,7 @@ public final class LazySectionBlockStorage implements BlockStorage {
         final Section[] copied = new Section[this.sections.length];
 
         for (int index = 0; index < copied.length; index++) {
-            final Section section = this.sections[index];
+            final Section section = slot(index);
             copied[index] = section == EMPTY ? EMPTY : section.clone();
         }
         return new LazySectionBlockStorage(this.minSection, copied);
@@ -294,30 +335,55 @@ public final class LazySectionBlockStorage implements BlockStorage {
     @Override
     public void clear() {
         for (int index = 0; index < this.sections.length; index++) {
-            final Section section = this.sections[index];
+            final Section section = slot(index);
 
             if (section == EMPTY) continue;
             // Emptied as well as released. A caller which took the section through the boundary
             // before the reset holds a reference this class cannot reach, and DynamicChunk#reset
             // leaves such a caller with an emptied section rather than with a stale one.
             section.clear();
-            this.sections[index] = EMPTY;
+            // Released with the same handle the materialisation publishes through, so that a
+            // materialisation racing this reset either sees the slot before it was released and
+            // keeps its section, or sees it afterwards and materialises a new one. A plain store
+            // here would leave that compare and exchange comparing against a value it cannot be
+            // ordered against.
+            SLOT.setRelease(this.sections, index, EMPTY);
         }
     }
 
     /**
+     * Reads what a slot currently holds.
+     *
+     * @param index the index of the section, counted from the bottom one
+     * @return the section the slot holds, which may be the shared one
+     */
+    private Section slot(int index) {
+        return (Section) SLOT.getAcquire(this.sections, index);
+    }
+
+    /**
      * Gives a slot a section of its own, if it does not have one yet.
+     * <p>
+     * The store is a compare and exchange rather than an assignment, and the section this method
+     * answers with is the one that ended up in the slot rather than the one it happens to have
+     * allocated. Both halves of that matter: the first is what stops a caller without the chunk lock
+     * from overwriting a section somebody else already wrote a block into, and the second is what
+     * stops the loser of such a race from writing into a section no slot holds. The section the loser
+     * allocated is garbage by the time it returns, which is the whole price of the race and is paid
+     * only when there is one.
+     * </p>
      *
      * @param index the index of the section, counted from the bottom one
      * @return the section the slot holds afterwards, which this storage owns
      */
     private Section materialise(int index) {
-        Section section = this.sections[index];
+        final Section section = slot(index);
 
-        if (section == EMPTY) {
-            section = new Section();
-            this.sections[index] = section;
-        }
-        return section;
+        if (section != EMPTY) return section;
+
+        final Section created = new Section();
+        final Section witness = (Section) SLOT.compareAndExchange(this.sections, index, EMPTY, created);
+
+        return witness == EMPTY ? created : witness;
     }
 }

@@ -149,7 +149,7 @@ import static net.minestom.server.coordinate.CoordConversion.globalToSectionRela
  * </p>
  *
  * @author TheMeinerLP
- * @version 3.3.0
+ * @version 3.4.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -476,6 +476,16 @@ public class FalcoChunk extends Chunk {
      * line, while {@link BlockStorage#section(int)} counts from the bottom section of the chunk.
      * Subtracting {@code minSection} is that translation, and it is the one place where forgetting it
      * would be silent: a wrong section still holds blocks, just not the ones that were asked for.
+     * </p>
+     *
+     * <p>
+     * No lock is asserted here, and that is not an oversight of this class but a property of its
+     * callers: {@code Instance#getBlockLight}, {@code Instance#getSkyLight} and
+     * {@code Instance#invalidateSection} all reach this method holding no chunk lock, and
+     * {@code Heightmap#refresh(int)} reaches it holding the read lock, which
+     * {@link Chunk#lockWriteLock()} refuses to be taken on top of. Materialising is therefore made
+     * safe where it happens rather than here — see {@link LazySectionBlockStorage} for the step and
+     * for why it publishes a slot the way it does.
      * </p>
      *
      * @param section the section index in world terms

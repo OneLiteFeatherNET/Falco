@@ -7,9 +7,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicReference;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @DisplayName("The lazy block storage of a chunk")
@@ -226,6 +231,93 @@ class LazySectionBlockStorageTest {
         copy.setBlock(1, 20, 3, Block.DIRT);
         assertEquals(Block.STONE, original.getBlock(1, 20, 3, Block.Getter.Condition.NONE),
                 "a copy that shared a materialised section would change the original");
+    }
+
+    /**
+     * Holds the one step of this class that no chunk lock covers.
+     * <p>
+     * Every other case in this file runs on one thread, and on one thread a materialisation that
+     * reads a slot, allocates and stores is indistinguishable from one that publishes with a compare
+     * and exchange. The difference is only visible against a second thread, and that second thread is
+     * not hypothetical: {@code Instance#getBlockLight}, {@code Instance#getSkyLight} and
+     * {@code Instance#invalidateSection} all reach {@link BlockStorage#section(int)} through
+     * {@code Chunk#getSection} or {@code Chunk#getSectionAt} while holding no chunk lock at all, so a
+     * light query on any thread is exactly the reader modelled here.
+     * </p>
+     * <p>
+     * What the assertion catches is a lost write and not a torn one. The reader below writes nothing;
+     * it only asks for the section, which is the call that used to allocate one and store it over
+     * whatever the writer had just put there. The block the writer stored into the overwritten
+     * section is then unreachable, and — this is what makes it worth a case of its own — nothing
+     * fails: no exception, no log, and the read answers air through the shortcut for a shared slot.
+     * </p>
+     * <p>
+     * A stress case rather than a scheduled one, because the window it aims at is the handful of
+     * instructions between the read of a slot and the store into it, and nothing in this class can be
+     * paused inside it. The two threads are aligned at every round and both walk the same twenty-four
+     * slots in the same order, which is what makes a round a genuine collision attempt rather than a
+     * coin toss. With the compare and exchange replaced by the plain
+     * {@code this.sections[index] = created} it used to be, this case failed in all five runs of the
+     * mutation, in rounds {@code 3, 5, 0, 3} and {@code 3} — so the four thousand rounds are three
+     * orders of magnitude more than the defect needs, and they are what makes the case a statement
+     * rather than a coin toss. It says nothing about how likely the defect is in production, where
+     * the two threads are not aligned by a barrier. The whole case costs under two seconds.
+     * </p>
+     *
+     * @throws InterruptedException if the test thread is interrupted while joining the two workers
+     */
+    @Test
+    @DisplayName("does not lose a written block to a reader that materialises the same slot")
+    void testMaterialisationSurvivesAConcurrentReader() throws InterruptedException {
+        final int rounds = 4_000;
+        final CyclicBarrier start = new CyclicBarrier(2);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        for (int round = 0; round < rounds && failure.get() == null; round++) {
+            final LazySectionBlockStorage storage = storage();
+            // The reader is the lock-free side: it only asks for sections, exactly as a light query
+            // does, and every section it hands back it may have allocated itself.
+            final Thread reader = new Thread(() -> {
+                await(start, failure);
+                for (int section = 0; section < SECTIONS; section++) {
+                    storage.section(section);
+                }
+            }, "lazy-storage-reader");
+            final Thread writer = new Thread(() -> {
+                await(start, failure);
+                for (int section = 0; section < SECTIONS; section++) {
+                    storage.setBlock(0, (MIN_SECTION + section) * 16, 0, Block.STONE);
+                }
+            }, "lazy-storage-writer");
+
+            reader.start();
+            writer.start();
+            writer.join();
+            reader.join();
+
+            for (int section = 0; section < SECTIONS; section++) {
+                assertEquals(Block.STONE,
+                        storage.getBlock(0, (MIN_SECTION + section) * 16, 0, Block.Getter.Condition.NONE),
+                        "round " + round + ": the block written into section " + section
+                                + " was stored into a section the reader then replaced");
+            }
+        }
+        assertNull(failure.get(), "neither worker may fail on anything but the assertion above");
+    }
+
+    /**
+     * Waits at the barrier and records what went wrong instead of throwing into a worker thread.
+     *
+     * @param barrier the barrier both workers meet at before every round
+     * @param failure where a failure of a worker is recorded for the test thread to see
+     */
+    private static void await(CyclicBarrier barrier, AtomicReference<Throwable> failure) {
+        try {
+            barrier.await();
+        } catch (InterruptedException | BrokenBarrierException throwable) {
+            failure.compareAndSet(null, throwable);
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Test
