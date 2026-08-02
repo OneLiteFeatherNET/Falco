@@ -28,8 +28,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * does: the map is package-private and reading it from anywhere else would need reflection.
  * </p>
  *
+ * <p>
+ * Every case here starts from a freshly registered instance whose cache is empty, which makes a
+ * single-position case blind in one direction: a {@code release} which wipes the whole map passes it,
+ * because wiping a map that holds one entry and removing that one entry are the same observation.
+ * {@code testReleasingOnePositionLeavesTheOthers} is the case that separates them and is the only
+ * reason the word "the entry of this position" in the class under test is a claim rather than a hope.
+ * </p>
+ *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -60,6 +68,38 @@ class ChunkViewerCacheTest {
                         + "something other than the leak it is named after");
 
         assertTrue(ChunkViewerCache.release(instance, 4, 4));
+        assertEquals(before, ChunkViewerCache.size(instance));
+    }
+
+    /**
+     * Establishes that a release takes the entry of the position it was given and no other.
+     * <p>
+     * The other three cases hold at most one entry at a time, so each of them is satisfied by a
+     * {@code release} which empties the whole map — the mutation which replaces the body with
+     * {@code viewers.clear()} keeps all three green. This case holds two entries and releases one, so
+     * it fails on that mutation twice over: the size after the release is the size of the map minus
+     * one entry, and the surviving position still has an entry to give back.
+     * </p>
+     *
+     * @param env the environment which provides the server process
+     */
+    @Test
+    @DisplayName("takes the entry of the position it was given and no other")
+    void testReleasingOnePositionLeavesTheOthers(Env env) {
+        final FalcoInstance instance = registered(env);
+        final int before = ChunkViewerCache.size(instance);
+
+        new net.onelitefeather.falco.instance.FalcoChunk(instance, 4, 4);
+        new net.onelitefeather.falco.instance.FalcoChunk(instance, 9, 9);
+        assertEquals(before + 2, ChunkViewerCache.size(instance),
+                "two chunks at two positions have to leave two entries, or this case cannot tell a "
+                        + "targeted removal from a wipe either");
+
+        assertTrue(ChunkViewerCache.release(instance, 4, 4));
+        assertEquals(before + 1, ChunkViewerCache.size(instance),
+                "releasing one position has to cost exactly one entry, not the whole map");
+        assertTrue(ChunkViewerCache.release(instance, 9, 9),
+                "the entry of the position that was not released has to still be there");
         assertEquals(before, ChunkViewerCache.size(instance));
     }
 
