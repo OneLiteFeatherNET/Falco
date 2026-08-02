@@ -26,21 +26,27 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pins what the four save entry points of {@link FalcoInstance} do, before the code that does it
- * moves into {@code ChunkPersistence}.
+ * Pins everything a {@link FalcoInstance} does with a {@link ChunkLoader}, on both sides of the move
+ * of that code into {@link ChunkPersistence}.
  * <p>
- * None of them had a test when this class was written, and the branch that matters most had never
- * been executed at all: a loader which saves in parallel takes a different path through
- * {@code runSave} than one which does not, and a failure on either path has to reach the future the
- * caller holds rather than the exception manager of the server.
+ * None of the four save entry points had a test when this class was written, and the branch that
+ * matters most had never been executed at all: a loader which saves in parallel takes a different
+ * path than one which does not, and a failure on either path has to reach the future the caller
+ * holds rather than the exception manager of the server.
+ * </p>
+ * <p>
+ * The three cases which do not save exist for the same reason one step later. Reading the instance
+ * once at construction and telling the loader that a chunk left were delegations no test in this
+ * module observed, so the two call sites of the one and the single call site of the other could have
+ * vanished in the move without anything turning red. They are pinned here first and moved second.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
-@DisplayName("The save paths of a Falco instance")
+@DisplayName("What a Falco instance does with its chunk loader")
 class FalcoInstancePersistenceTest {
 
     /**
@@ -72,6 +78,11 @@ class FalcoInstancePersistenceTest {
          * How often a chunk was reported as having left the instance.
          */
         private final AtomicInteger unloads = new AtomicInteger();
+
+        /**
+         * How often this loader was asked to read the data of an instance.
+         */
+        private final AtomicInteger instanceLoads = new AtomicInteger();
 
         /**
          * The thread the last save ran on.
@@ -131,6 +142,11 @@ class FalcoInstancePersistenceTest {
         @Override
         public void unloadChunk(Chunk chunk) {
             this.unloads.incrementAndGet();
+        }
+
+        @Override
+        public void loadInstance(Instance instance) {
+            this.instanceLoads.incrementAndGet();
         }
     }
 
@@ -227,6 +243,20 @@ class FalcoInstancePersistenceTest {
         instance.saveChunkToStorage(chunk).join();
         assertEquals(0, first.chunkSaves.get(), "the old loader must not see the save");
         assertEquals(1, second.chunkSaves.get(), "the new loader has to");
+    }
+
+    @Test
+    @DisplayName("reads the instance through its loader while it is built, and never again")
+    void testTheInstanceIsReadOnceWhenItIsBuilt(Env env) {
+        final CountingLoader first = new CountingLoader(false, null);
+        final CountingLoader second = new CountingLoader(false, null);
+        final FalcoInstance instance = registered(env, first);
+
+        instance.setChunkLoader(second);
+
+        assertEquals(1, first.instanceLoads.get(), "building an instance has to read its data once");
+        assertEquals(0, second.instanceLoads.get(),
+                "a loader swapped in later must not overwrite live state with what is on disk");
     }
 
     @Test

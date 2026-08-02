@@ -113,7 +113,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.3.1
+ * @version 1.4.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -210,15 +210,16 @@ public class FalcoInstance extends Instance {
     private volatile ChunkSupplier chunkSupplier = FalcoChunk::new;
 
     /**
-     * The loader chunks of this instance are read from and written to, a no-op loader when the
-     * instance was built without one.
+     * Everything this instance does with a {@link ChunkLoader}: the four save paths, the read and the
+     * notification that a chunk left.
      * <p>
-     * Volatile for the same reason as {@link #chunkSupplier}: written by a public unsynchronized
-     * setter, read on the load path from another thread, and the value is a caller object whose
-     * construction has to be visible to that reader.
+     * Final, and the loader inside it is what changes. The field which used to sit here was
+     * {@code volatile} because a public setter wrote it while the load path read it from another
+     * thread; that reason did not go away, it moved into {@link ChunkPersistence} along with the
+     * loader.
      * </p>
      */
-    private volatile ChunkLoader chunkLoader;
+    private final ChunkPersistence persistence;
 
     private volatile boolean autoChunkLoad = true;
 
@@ -297,8 +298,11 @@ public class FalcoInstance extends Instance {
                          @Nullable ChunkLoader loader, Key dimensionName) {
         super(registries, uuid, dimensionType, dimensionName);
         this.registries = registries;
-        this.chunkLoader = Objects.requireNonNullElseGet(loader, ChunkLoader::noop);
-        this.chunkLoader.loadInstance(this);
+        this.persistence = new ChunkPersistence(loader);
+        // Outside the ChunkPersistence constructor on purpose: loadInstance may call back into this
+        // instance, and a callback into an object whose constructor has not finished is how a field
+        // that is assigned two lines later is read as null.
+        this.persistence.loader().loadInstance(this);
         this.lastBlockChangeTime = System.nanoTime();
     }
 
@@ -353,7 +357,7 @@ public class FalcoInstance extends Instance {
 
         if (!this.ownsLoader) return;
 
-        if (this.chunkLoader instanceof AutoCloseable closeable) {
+        if (this.persistence.loader() instanceof AutoCloseable closeable) {
             try {
                 closeable.close();
             } catch (Exception exception) {
@@ -650,7 +654,7 @@ public class FalcoInstance extends Instance {
                 return running;
             }
             case ChunkRegistry.LoadSlot.Claimed ignored -> {
-                final ChunkLoader loader = this.chunkLoader;
+                final ChunkLoader loader = this.persistence.loader();
                 if (loader.supportsParallelLoading()) {
                     Thread.startVirtualThread(() -> completeLoad(index, chunkX, chunkZ, loader, own));
                 } else {
@@ -670,6 +674,15 @@ public class FalcoInstance extends Instance {
      * in between the two is the window in which an unload can decide that this chunk is not wanted
      * any more; a load which is refused therefore has to undo itself rather than complain, which is
      * what the discard below does.
+     * </p>
+     * <p>
+     * The two ends of that undo do not necessarily reach the same loader. The chunk is read through
+     * the loader handed in here, which {@link #retrieveChunk(int, int)} captured before the load
+     * started, while {@link ChunkPersistence#unloaded(Chunk)} tells whichever loader is current when
+     * it runs. A {@link #setChunkLoader(ChunkLoader)} in between therefore hands the discarded chunk
+     * to a loader that never produced it — which its own documentation permits, since Minestom gives
+     * a loader no way to tell its own chunks apart anyway. It is written down rather than fixed
+     * because changing it is a change of behaviour.
      * </p>
      *
      * @param index  the chunk index of the position, the key in the map of loading chunks
@@ -697,7 +710,7 @@ public class FalcoInstance extends Instance {
             // to clean up. The loader is still told, because it created the chunk and may hold
             // bookkeeping for it, which its own documentation allows for explicitly.
             notifyUnloaded(falcoChunk);
-            this.chunkLoader.unloadChunk(falcoChunk);
+            this.persistence.unloaded(falcoChunk);
             future.completeExceptionally(new FalcoInstanceException("the chunk " + chunkX + ":" + chunkZ
                     + " was unloaded while it was being loaded, so the loaded chunk was discarded"));
             return;
@@ -893,7 +906,7 @@ public class FalcoInstance extends Instance {
         falcoChunk.sendPacketToViewers(new UnloadChunkPacket(chunkX, chunkZ));
         EventDispatcher.call(new InstanceChunkUnloadEvent(this, falcoChunk));
         getEntityTracker().chunkEntities(chunkX, chunkZ, EntityTracker.Target.ENTITIES).forEach(Entity::remove);
-        this.chunkLoader.unloadChunk(falcoChunk);
+        this.persistence.unloaded(falcoChunk);
     }
 
     @Override
@@ -908,49 +921,17 @@ public class FalcoInstance extends Instance {
 
     @Override
     public CompletableFuture<Void> saveInstance() {
-        final ChunkLoader loader = this.chunkLoader;
-        return runSave(loader.supportsParallelSaving(), () -> loader.saveInstance(this));
+        return this.persistence.saveInstance(this);
     }
 
     @Override
     public CompletableFuture<Void> saveChunkToStorage(Chunk chunk) {
-        final ChunkLoader loader = this.chunkLoader;
-        return runSave(loader.supportsParallelSaving(), () -> loader.saveChunk(chunk));
+        return this.persistence.saveChunk(chunk);
     }
 
     @Override
     public CompletableFuture<Void> saveChunksToStorage() {
-        final ChunkLoader loader = this.chunkLoader;
-        final List<Chunk> snapshot = this.registry.snapshot();
-        return runSave(loader.supportsParallelSaving(), () -> loader.saveChunks(snapshot));
-    }
-
-    /**
-     * Runs a save either on the calling thread or on a virtual thread.
-     *
-     * @param parallel true to move the work off the calling thread
-     * @param save     the work to perform
-     * @return a future completed once the work is done, completed exceptionally if it threw
-     */
-    private CompletableFuture<Void> runSave(boolean parallel, Runnable save) {
-        if (!parallel) {
-            try {
-                save.run();
-                return CompletableFuture.completedFuture(null);
-            } catch (Throwable throwable) {
-                return CompletableFuture.failedFuture(throwable);
-            }
-        }
-        final CompletableFuture<Void> future = new CompletableFuture<>();
-        Thread.startVirtualThread(() -> {
-            try {
-                save.run();
-                future.complete(null);
-            } catch (Throwable throwable) {
-                future.completeExceptionally(throwable);
-            }
-        });
-        return future;
+        return this.persistence.saveChunks(this.registry.snapshot());
     }
 
     @Override
@@ -1258,7 +1239,7 @@ public class FalcoInstance extends Instance {
      * @return the current chunk loader
      */
     public ChunkLoader getChunkLoader() {
-        return this.chunkLoader;
+        return this.persistence.loader();
     }
 
     /**
@@ -1272,7 +1253,7 @@ public class FalcoInstance extends Instance {
      * @param chunkLoader the new chunk loader
      */
     public void setChunkLoader(ChunkLoader chunkLoader) {
-        this.chunkLoader = Objects.requireNonNull(chunkLoader, "the chunk loader cannot be null");
+        this.persistence.loader(chunkLoader);
     }
 
     /**
