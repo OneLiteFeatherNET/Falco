@@ -83,10 +83,20 @@ import java.util.concurrent.TimeUnit;
  * {@code downsizeWithPalette} returns on its guard and the arm pays the walk and the set for a rewrite
  * that never happens. At {@code 1024} the control and the optimised commit therefore measure the same
  * work, and that they come out equal is the readout, not a defect: it is the case in which the
- * optimisation costs its full price and returns nothing. The measured widths of the fixture behind
- * this choice are {@code 4} against {@code 0} at one state, {@code 7} against {@code 6} in twenty
- * three of twenty four sections at sixty four, and {@code 15} against {@code 15} in all twenty four at
- * one thousand and twenty four.
+ * optimisation costs its full price and returns nothing.
+ * </p>
+ *
+ * <h2>Why the fixture is re-staged before it is measured</h2>
+ * <p>
+ * The chunk this class fills is filled through {@code Chunk#setBlock}, and the palettes that come out
+ * of it are not the palettes Task 6 will optimise.
+ * {@link #widthAGeneratorWouldLeave(Palette)} states the difference and reproduces it, and it is worth
+ * naming in one line here as well: a palette grown one block at a time carries at most a bit of slack,
+ * while a palette a generator wrote is at the direct width whatever it holds. Measuring the first and
+ * reporting it as the second would have understated both what the optimisation costs and what it
+ * returns, at two of the three points on the axis. The widths the staging produces are {@code 0}
+ * against {@code 0} at one state, {@code 15} against {@code 6} at sixty four, and {@code 15} against
+ * {@code 15} at one thousand and twenty four.
  * </p>
  *
  * <h2>Running it</h2>
@@ -125,7 +135,8 @@ public class GeneratorCommitBenchmark {
     private FalcoInstance instance;
 
     /**
-     * The palettes a generator produced, which every arm copies from and never writes to.
+     * The palettes at the width a generator would have left them, which every arm copies from and
+     * never writes to.
      */
     private List<Palette> staged;
 
@@ -163,13 +174,50 @@ public class GeneratorCommitBenchmark {
         for (int index = 0; index < sections.size(); index++) {
             final Palette blocks = sections.get(index).blockPalette();
 
-            this.staged.add(blocks.clone());
             final Palette alreadyPacked = blocks.clone();
             alreadyPacked.optimize(Palette.Optimization.SIZE);
+
+            final Palette stagedPalette = blocks.clone();
+            stagedPalette.optimize(widthAGeneratorWouldLeave(alreadyPacked));
+
+            this.staged.add(stagedPalette);
             this.packed.add(alreadyPacked);
             this.target[index] = new Section();
         }
         verifyTheFixtureIsWide();
+    }
+
+    /**
+     * Answers which width a generator would have left a section of this content at.
+     * <p>
+     * The fixture is built through {@code Chunk#setBlock}, because that is the only write path every
+     * chunk type of this module shares, and a palette grown one block at a time is never much wider
+     * than its content needs. A generator does not write that way and does not leave that shape.
+     * {@code UnitModifier#setAllRelative} ends in {@code PaletteImpl#setAll}, and that method decides
+     * between two branches after it has read the whole supplier into its cache: a supplier which
+     * answered one constant value goes to {@code fill(fillValue)} and leaves the palette in the single
+     * value mode, and every other supplier goes to {@code makeDirect()} — unconditionally, without
+     * looking at how many distinct values it actually saw. A generated section is therefore at the
+     * direct width because of how it was written, not because of what it holds, and that is the whole
+     * reason {@code optimize} has something to reclaim after a generation and almost nothing to
+     * reclaim after a sequence of block writes.
+     * </p>
+     * <p>
+     * Staging the fixture at the width {@code setBlock} produced would measure the optimisation on
+     * input Task 6 will never hand it. The two branches are reproduced here through the only public
+     * door to them: {@code Optimization.SPEED} is {@code makeDirect}, and {@code Optimization.SIZE} on
+     * a single valued palette is the {@code fill} the constant branch performs.
+     * </p>
+     *
+     * @param alreadyPacked the same content already reduced to its minimum width, which is in the
+     *                      single value mode exactly when a generator's constant branch would have been
+     * @return {@link Palette.Optimization#SIZE} for a section a generator would have filled with one
+     *         value, {@link Palette.Optimization#SPEED} for every section it would have made direct
+     */
+    private static Palette.Optimization widthAGeneratorWouldLeave(Palette alreadyPacked) {
+        return alreadyPacked.bitsPerEntry() == 0
+                ? Palette.Optimization.SIZE
+                : Palette.Optimization.SPEED;
     }
 
     @TearDown(Level.Trial)

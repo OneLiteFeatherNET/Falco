@@ -2414,3 +2414,27 @@ Named here so that a reviewer does not read them as omissions.
 **It does not build a shared instance.** That is stage 4, and it rests on US-1.05, which stage 1 delivered.
 
 **It does not replace `Palette`.** `public sealed interface Palette permits PaletteImpl` is closed by the verifier, and the break-even measurement puts Minestom's choice of representation between 192 and 224 entries, which is sound. What this stage does with palettes is call the method Minestom already has and never calls.
+
+## What optimize() costs
+
+Measured by `GeneratorCommitBenchmark` (Task 5), committed as `f790f0d`. AMD Ryzen 7 5800X, 16 hardware threads, JDK 25.0.3 Temurin, `-Xms2g -Xmx2g`, 3 forks × 5 × 1 s warmup × 5 × 1 s measurement, 15 samples per point, `-prof gc`. The machine was **not** idle — an IntelliJ session and a file indexer were running, load average 5.4 rising to 7.0 across the run. The error bars below are JMH's and are tight; the absolute microseconds still carry that load and should be read as a ratio rather than as a wall clock figure for a quiet server.
+
+One chunk, 24 overworld sections, block palettes only.
+
+| distinct states | `commitPlain` | `commitOptimized` | ratio | `optimizeAlreadyPacked` | width staged → packed |
+|---|---|---|---|---|---|
+| 1 | 0.044 ± 0.001 µs | 0.049 ± 0.002 µs | **1.1×** | 0.047 ± 0.003 µs | 0 → 0 |
+| 64 | 22.637 ± 1.280 µs | 545.602 ± 20.449 µs | **24.1×** | 285.788 ± 8.994 µs | 15 → 6 |
+| 1024 | 23.108 ± 3.123 µs | 529.288 ± 12.895 µs | **22.9×** | 534.017 ± 15.703 µs | 15 → 15 |
+
+Allocation, `gc.alloc.rate.norm`, same run: `commitPlain` 196 992 B/op at both 64 and 1024 states; `commitOptimized` 336 203 B/op at 64 and 393 259 B/op at 1024. The optimisation therefore adds **139 kB/op** where it narrows and **196 kB/op** where it does not.
+
+**The decision: Task 6 adds it, and skips nothing.** `optimize()` costs about **0.5 ms per generated chunk**, a little over twenty times the commit it follows. Against S7's census of 441 chunks around one spawn that is roughly 0.23 s of one-off CPU for the whole spawn area, paid on the generation path and never again. For that price a section whose content fits an indirect palette goes from 15 bpe to 6, which is the conversion S9 priced at 203 840 against 84 800 B. The cost is real and is hereby booked; US-2.03 stays a Must and now has its number.
+
+**Three findings that change what Task 6 may claim.**
+
+1. **The uniform case is free, not cheap.** At one distinct state the generator has already left the palette in single value mode — `PaletteImpl#setAll` sends a constant supplier to `fill(fillValue)` — and `optimize` returns on its opening `bitsPerEntry == 0`. 0.049 against 0.044 µs. Task 6 must not describe the optimisation as costing something on every chunk; on flat and on empty sections it costs nothing.
+
+2. **Above 256 distinct states per section the optimisation charges full price and returns nothing.** `PaletteImpl#downsizeWithPalette` opens with `if (newBpe >= bpe || newBpe > maxBitsPerEntry) return;` and `maxBitsPerEntry` is 8 for blocks. A section holding more than 256 distinct states cannot be narrowed at all, yet `optimize` has already walked all 4 096 entries through `getAll` and built an `IntOpenHashSet` over them before it finds out. At 1 024 states `commitOptimized` (529.3 µs) and the control `optimizeAlreadyPacked` (534.0 µs) are the same number within their error bars, and the widths stay at 15 — 506 µs and 196 kB of garbage for zero bytes saved. This is a real hazard for worlds with very heterogeneous sections, and it cannot be cheaply guarded: the walk that would detect it *is* the cost.
+
+3. **The benchmark had to re-stage its fixture, and the reason is a trap for Task 6 as well.** `MinestomChunks#fill` writes through `Chunk#setBlock`, and a palette grown one block at a time is never more than about a bit wider than its content needs — the survey found 7 → 6 at 64 states, not 15 → 6. A generator does not write that way: `UnitModifier#setAllRelative` ends in `PaletteImpl#setAll`, which calls `makeDirect()` **unconditionally** for any non-constant supplier, without looking at how many distinct values it saw. A generated section is at the direct width because of *how* it was written, not because of *what* it holds, and that — not the block count — is what `optimize` reclaims. `GeneratorCommitBenchmark#widthAGeneratorWouldLeave` reproduces both branches through the only public door to them (`Optimization.SPEED` is `makeDirect`, `Optimization.SIZE` on single-valued content is the `fill`). Measuring the `setBlock` shape and reporting it as the generator shape understated cost and benefit at two of the three points on the axis, and the first draft of this benchmark did exactly that.
