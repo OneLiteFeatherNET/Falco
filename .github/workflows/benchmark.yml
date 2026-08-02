@@ -1,39 +1,67 @@
 name: Benchmark
 
-# Runs a JMH benchmark on demand and uploads its run record.
+# Runs JMH on demand, in one of two profiles.
 #
-# The point of this workflow is provenance, not precision. A shared runner measures worse than a
-# workstation, but it records what a workstation run keeps forgetting: the exact command line, the
-# commit, the date, the machine, and results.json. Several open items in the wiki are of the form
-# "no run record was kept" rather than "the number is wrong", and those close with a run from here
-# even when the numbers themselves are noisier.
+#   custom — one filter, one job. For reproducing a single table or checking one change.
+#   full   — the whole suite, split across parallel jobs.
 #
-# Absolute microseconds from a shared runner do not belong in a published table. Ratios measured
-# within one run are far more robust, because both sides pay the same noise — which is also what the
-# wiki concludes from its five cross-run repeats: ratios reproduce, third digits do not.
+# Sequentially the suite is 494 configurations and several hours; a timeout at hour five would
+# discard everything, including the classes that finished in minute three. Split into shards the
+# wall clock is roughly the longest single shard, and a failure costs one shard.
 #
-# Every input reaches the shell through env: and none is interpolated into a command. This job holds
-# the Maven credentials, so a filter string that reached `eval` would be a credential leak.
+# The two profiles share every step, because a custom run is a shard plan with one entry. Only the
+# planner differs.
+#
+# Two things make the split worth having rather than merely parallel:
+#
+#   The jar is built once, in `prepare`, and downloaded by every shard. A shard that ran ./gradlew
+#   would spend two to four minutes building and one measuring, so the build would be most of the
+#   bill.
+#
+#   Shards are balanced by configuration count, not by method count. JMH's -lp reports the parameter
+#   cross product per method and it is wildly uneven — ScalingBenchmark declares 75 combinations per
+#   method against 2 for the region file comparison — so splitting by method alone would leave one
+#   shard running twenty times longer than another.
+#
+# The plan is derived from the jar at run time. A hard-coded list is a count that goes stale, and
+# this suite went from sixteen classes to seventeen inside one day.
+#
+# On provenance: every input reaches the shell through env: and none is interpolated into a command.
+# This job holds the Maven credentials, so a filter that reached `eval` would be a credential leak.
 
 on:
   workflow_dispatch:
     inputs:
-      include:
-        description: 'JMH filter, e.g. LightEngineComparisonBenchmark or ChunkSaveComparisonBenchmark.compress'
+      profile:
+        description: 'custom = one filter in one job. full = the whole suite, sharded.'
         required: true
-        type: string
-      forks:
-        description: 'Forks. Two or more make the interval cover JVM launches; one does not.'
+        default: 'custom'
+        type: choice
+        options:
+          - custom
+          - full
+      include:
+        description: 'custom only — JMH filter, e.g. LightEngineComparisonBenchmark'
         required: false
-        default: '2'
+        default: ''
         type: string
       arguments:
-        description: 'Further JMH arguments, e.g. -p lightSources=64 -wi 5 -i 10'
+        description: 'custom only — further JMH arguments, e.g. -p lightSources=64 -wi 5 -i 10'
+        required: false
+        default: ''
+        type: string
+      shards:
+        description: 'full only — how many parallel jobs to split the suite into.'
+        required: false
+        default: '40'
+        type: string
+      forks:
+        description: 'Forks. Empty uses each class annotation, which is what reproducing a published table needs.'
         required: false
         default: ''
         type: string
       runner:
-        description: 'Runner. A shared one is noisy; a dedicated one is the only place absolute numbers mean anything.'
+        description: 'Runner for every job.'
         required: false
         default: 'ubuntu-latest'
         type: choice
@@ -45,10 +73,10 @@ permissions:
   contents: read
 
 jobs:
-  benchmark:
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 360
-
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,27 +87,119 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # Rejected before anything is built, so a bad filter costs seconds rather than a Gradle run.
+      # Rejected before anything is built, so a bad input costs seconds rather than a Gradle run.
       # The filter is a JMH regex over class and method names; anything outside that alphabet is a
-      # sign of an attempt at something else, and this job can read the Maven credentials.
+      # sign of an attempt at something else.
       - name: Validate the inputs
         env:
+          PROFILE: ${{ inputs.profile }}
           INCLUDE: ${{ inputs.include }}
-          FORKS: ${{ inputs.forks }}
           ARGUMENTS: ${{ inputs.arguments }}
+          SHARDS: ${{ inputs.shards }}
+          FORKS: ${{ inputs.forks }}
         run: |
-          case "$INCLUDE" in
-            *[!A-Za-z0-9._*\|\(\)\[\]-]*) echo "::error::filter holds characters a JMH pattern does not use"; exit 1 ;;
-          esac
-          case "$FORKS" in
-            ''|*[!0-9]*) echo "::error::forks must be a whole number"; exit 1 ;;
-          esac
-          case "$ARGUMENTS" in
-            *[!A-Za-z0-9=,._[:space:]-]*) echo "::error::arguments hold characters a JMH option does not use"; exit 1 ;;
-          esac
-          if [ "$FORKS" -lt 2 ]; then
+          case "$FORKS" in ''|*[0-9]) ;; *) echo "::error::forks must be empty or a whole number"; exit 1 ;; esac
+          if [ "$PROFILE" = "custom" ]; then
+            [ -n "$INCLUDE" ] || { echo "::error::the custom profile needs a filter"; exit 1; }
+            case "$INCLUDE" in
+              *[!A-Za-z0-9._*\|\(\)\[\]-]*) echo "::error::filter holds characters a JMH pattern does not use"; exit 1 ;;
+            esac
+            case "$ARGUMENTS" in
+              *[!A-Za-z0-9=,._[:space:]-]*) echo "::error::arguments hold characters a JMH option does not use"; exit 1 ;;
+            esac
+          else
+            case "$SHARDS" in ''|*[!0-9]*) echo "::error::shards must be a whole number"; exit 1 ;; esac
+            [ "$SHARDS" -le 256 ] || { echo "::error::a matrix holds at most 256 jobs"; exit 1; }
+          fi
+          if [ "$FORKS" = "1" ]; then
             echo "::warning::One fork measures dispersion inside a single JVM only. A single-fork run has already once shown an ordering here that two forks did not confirm."
           fi
+
+      - name: Build the JMH jar
+        env:
+          ONELITEFEATHER_MAVEN_USERNAME: ${{ secrets.ONELITEFEATHER_MAVEN_USERNAME }}
+          ONELITEFEATHER_MAVEN_PASSWORD: ${{ secrets.ONELITEFEATHER_MAVEN_PASSWORD }}
+        run: ./gradlew :falco-benchmarks:jmhJar --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jmh-jar
+          path: falco-benchmarks/build/libs/*-jmh.jar
+          retention-days: 1
+
+      # custom yields a one-entry plan, so the matrix below serves both profiles unchanged.
+      # full uses longest-processing-time-first bin packing: sort methods by configuration count and
+      # drop each into the shard with the least work so far. Optimal packing is NP-hard and pointless
+      # here — this gets the longest shard close to its unavoidable floor, which is one method.
+      - name: Plan the work
+        id: plan
+        env:
+          PROFILE: ${{ inputs.profile }}
+          INCLUDE: ${{ inputs.include }}
+          ARGUMENTS: ${{ inputs.arguments }}
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          JAR=$(ls falco-benchmarks/build/libs/*-jmh.jar)
+          if [ "$PROFILE" = "custom" ]; then
+            python3 -c '
+          import json, os
+          print("shards=" + json.dumps([{
+              "id": "custom",
+              "patterns": os.environ["INCLUDE"],
+              "arguments": os.environ["ARGUMENTS"],
+          }]))' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          java -jar "$JAR" -lp > listing.txt
+          python3 - << 'PY' >> "$GITHUB_OUTPUT"
+          import json, os, re, sys, heapq
+
+          methods, current = [], None
+          for line in open("listing.txt"):
+              if re.match(r"^\w+(\.\w+)+$", line.strip()):
+                  current = [line.strip(), 1]
+                  methods.append(current)
+              elif current and "param" in line:
+                  values = re.search(r"\{(.*)\}", line)
+                  if values:
+                      current[1] *= len(values.group(1).split(","))
+
+          wanted = min(int(os.environ["SHARDS"]), len(methods))
+          heap = [(0, i, []) for i in range(wanted)]
+          heapq.heapify(heap)
+          for name, weight in sorted(methods, key=lambda m: -m[1]):
+              load, index, held = heapq.heappop(heap)
+              held.append(name)
+              heapq.heappush(heap, (load + weight, index, held))
+
+          plan = sorted(heap, key=lambda s: s[1])
+          print("shards=" + json.dumps([
+              {"id": f"{i + 1:02d}", "patterns": " ".join(re.escape(n) for n in held), "arguments": ""}
+              for i, (_, _, held) in enumerate(plan) if held
+          ]))
+          print(f"::notice::{len(methods)} methods, {sum(w for _, w in methods)} configurations, "
+                f"heaviest shard {max(load for load, _, _ in heap)} configurations", file=sys.stderr)
+          PY
+
+  benchmark:
+    needs: prepare
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(needs.prepare.outputs.shards) }}
+
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: jmh-jar
 
       # Read before the run rather than after, so the recorded state is the one the JVM warmed up in.
       - name: Record the machine
@@ -91,26 +211,23 @@ jobs:
             echo "load_before=$(cut -d' ' -f1 /proc/loadavg)"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build the JMH jar
-        env:
-          ONELITEFEATHER_MAVEN_USERNAME: ${{ secrets.ONELITEFEATHER_MAVEN_USERNAME }}
-          ONELITEFEATHER_MAVEN_PASSWORD: ${{ secrets.ONELITEFEATHER_MAVEN_PASSWORD }}
-        run: ./gradlew :falco-benchmarks:jmhJar --no-daemon
-
-      # The jar is invoked directly rather than through the jmh task, because the task accepts only
-      # the jmh.include property and this job needs -f and the parameter overrides as well.
-      # Arguments are split on whitespace into an array; nothing is passed through a shell.
+      # Patterns and arguments are split into arrays and never pass through a shell. In the full
+      # profile they come from the jar's own listing, escaped by the planner.
       - name: Run
         id: run
         env:
-          INCLUDE: ${{ inputs.include }}
+          PATTERNS: ${{ matrix.shard.patterns }}
+          EXTRA: ${{ matrix.shard.arguments }}
           FORKS: ${{ inputs.forks }}
-          ARGUMENTS: ${{ inputs.arguments }}
+          SHARD: ${{ matrix.shard.id }}
         run: |
-          JAR=$(ls falco-benchmarks/build/libs/*-jmh.jar)
-          read -ra EXTRA <<< "$ARGUMENTS"
-          printf '%q ' java -jar "$JAR" "$INCLUDE" -f "$FORKS" "${EXTRA[@]}" -rf json -rff results.json > command-line.txt
-          java -jar "$JAR" "$INCLUDE" -f "$FORKS" "${EXTRA[@]}" -rf json -rff results.json 2>&1 | tee human.txt
+          JAR=$(ls *-jmh.jar)
+          read -ra WHICH <<< "$PATTERNS"
+          read -ra MORE <<< "$EXTRA"
+          ARGS=()
+          [ -n "$FORKS" ] && ARGS+=(-f "$FORKS")
+          printf '%q ' java -jar "$JAR" "${WHICH[@]}" "${ARGS[@]}" "${MORE[@]}" -rf json -rff "results-$SHARD.json" > "command-line-$SHARD.txt"
+          java -jar "$JAR" "${WHICH[@]}" "${ARGS[@]}" "${MORE[@]}" -rf json -rff "results-$SHARD.json" 2>&1 | tee "human-$SHARD.txt"
           echo "load_after=$(cut -d' ' -f1 /proc/loadavg)" >> "$GITHUB_OUTPUT"
 
       # Emits the fields section 4 of the documentation standard requires, so a table can be
@@ -119,63 +236,64 @@ jobs:
       - name: Write the provenance line
         if: always()
         env:
-          INCLUDE: ${{ inputs.include }}
           FORKS: ${{ inputs.forks }}
-          ARGUMENTS: ${{ inputs.arguments }}
+          PROFILE: ${{ inputs.profile }}
+          SHARD: ${{ matrix.shard.id }}
           RUNNER_KIND: ${{ inputs.runner }}
           CORES: ${{ steps.machine.outputs.cores }}
           MODEL: ${{ steps.machine.outputs.model }}
           LOAD_BEFORE: ${{ steps.machine.outputs.load_before }}
           LOAD_AFTER: ${{ steps.run.outputs.load_after }}
         run: |
-          JMH_VERSION=$(grep -m1 -oP 'JMH version: \K.*' human.txt || echo 'not captured')
+          JMH_VERSION=$(grep -m1 -oP 'JMH version: \K.*' "human-$SHARD.txt" || echo 'not captured')
           # sed rather than grep -oP: the pattern "\K[^"]+ matches a second time past the closing
-          # quote and puts the release date on its own line, which broke the first run's line.
+          # quote and puts the release date on its own line.
           JVM_VERSION=$(java -version 2>&1 | head -1 | sed -n 's/.*"\([^"]*\)".*/\1/p')
           # A load average describes this VM alone. On a shared runner the neighbours sharing the
-          # host do not appear in it, so a low reading is not evidence of a quiet machine and must
-          # not be reported as one.
+          # host do not appear in it, so a low reading is not evidence of a quiet machine.
           if [ "$RUNNER_KIND" = "ubuntu-latest" ]; then
             IDLE="load inside this VM only — a shared runner's neighbours do not appear in it"
           else
             IDLE=$(awk -v l="${LOAD_BEFORE:-0}" 'BEGIN { print (l < 0.5) ? "recorded as idle" : "recorded as **not idle**" }')
           fi
           {
-            echo "Paste beneath the table, then check every field against the run:"
-            echo
             echo '```'
-            echo "<sub>\`$INCLUDE\`, $FORKS fork(s), arguments \`${ARGUMENTS:-none}\`, JMH $JMH_VERSION,"
-            echo "JVM $JVM_VERSION, one $CORES-core $RUNNER_KIND runner ($MODEL), load average"
-            echo "$LOAD_BEFORE before the run and ${LOAD_AFTER:-not captured} after — $IDLE, commit"
-            echo "\`$(git rev-parse --short HEAD)\`, run on $(date -u +%Y-%m-%d), \`results.json\` attached to this"
-            echo "workflow run. Warmup and measurement iterations are the class annotations unless the"
-            echo "arguments above override them — copy the values from the class, do not generalise.</sub>"
+            echo "<sub>$PROFILE profile, shard $SHARD, forks ${FORKS:-per the class annotation}, JMH"
+            echo "$JMH_VERSION, JVM $JVM_VERSION, one $CORES-core $RUNNER_KIND runner ($MODEL), load"
+            echo "average $LOAD_BEFORE before the run and ${LOAD_AFTER:-not captured} after — $IDLE,"
+            echo "commit \`${{ github.sha }}\`, run on $(date -u +%Y-%m-%d), \`results-$SHARD.json\`"
+            echo "attached to this workflow run. Warmup and measurement iterations are the class"
+            echo "annotations unless a fork override is stated above — copy them from the class, do"
+            echo "not generalise across the suite.</sub>"
             echo '```'
             echo
+            if [ "$PROFILE" = "full" ]; then
+              echo "**Shards run on separate runners.** Figures from different shards were measured on"
+              echo "different machines and may not be compared with each other, only within a shard."
+              echo
+            fi
             if [ "$RUNNER_KIND" = "ubuntu-latest" ]; then
               echo "**This ran on a shared runner.** Absolute microseconds from it do not belong in a"
-              echo "published table. A ratio measured inside this one run is far more defensible, because"
-              echo "both sides paid the same noise. If these numbers are to stand beside existing tables,"
-              echo "they need their own table and their own provenance line — never a merge with figures"
-              echo "measured elsewhere."
+              echo "published table, and a ratio is not portable either: the same comparison measures"
+              echo "1.35× here and 1.13× on the machine behind the published tables. A ratio measured"
+              echo "inside one job is the defensible form, in its own table with its own provenance."
               echo
             fi
             if [ "$FORKS" = "1" ]; then
               echo "**One fork.** The interval covers variance between iterations of a single JVM, not"
               echo "between launches, and is therefore narrower than the true uncertainty."
-              echo
             fi
-          } > provenance.md
-          cat provenance.md >> "$GITHUB_STEP_SUMMARY"
+          } > "provenance-$SHARD.md"
+          cat "provenance-$SHARD.md" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: jmh-${{ github.run_number }}
+          name: jmh-${{ github.run_number }}-${{ matrix.shard.id }}
           path: |
-            results.json
-            human.txt
-            command-line.txt
-            provenance.md
+            results-${{ matrix.shard.id }}.json
+            human-${{ matrix.shard.id }}.txt
+            command-line-${{ matrix.shard.id }}.txt
+            provenance-${{ matrix.shard.id }}.md
           if-no-files-found: warn
           retention-days: 90
