@@ -113,7 +113,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.1
+ * @version 1.2.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -925,6 +925,34 @@ public class FalcoInstance extends Instance {
      * generator runs.
      * </p>
      *
+     * <h2>Why the commit is two passes and not one</h2>
+     * <p>
+     * Every palette is moved over first, and only then are the blocks written that need more than a
+     * palette entry. The two used to be one pass and that was a defect, because the second half is
+     * not a write into a section: {@link #writeSpecialBlocks} goes through {@code Chunk#setBlock},
+     * which begins with {@code if (needsCompleteHeightmapRefresh) calculateFullHeightmap()}. On a
+     * chunk that was just generated the flag is true, so the first such block computes both
+     * heightmaps — over whatever part of the chunk had been committed by then. Everything above the
+     * section that block happens to sit in is still empty at that moment and the heights come out
+     * short.
+     * </p>
+     * <p>
+     * What made it permanent rather than merely early is that nothing can re-arm it.
+     * {@code Heightmap#refresh(int)} sets a {@code private needsRefresh} to false, and the
+     * {@code chunk.invalidate()} below only flips the flag of the chunk; the next
+     * {@code calculateFullHeightmap} calls {@code refresh(startY)} again and that method returns on
+     * its first line. The wrong heights then go into every chunk packet for the life of the chunk.
+     * {@code FalcoInstanceGeneratorTest#testTheHeightmapsSeeTheWholeChunkAndNotHalfOfIt} pins the
+     * case with the numbers it produced: {@code 79} instead of {@code 127}.
+     * </p>
+     * <p>
+     * The {@code chunk.invalidate()} sits between the two passes rather than after them, so that the
+     * refresh the first special block triggers is one over the complete chunk and not one over
+     * heights the palettes have meanwhile invalidated. Minestom arrives at the same order by a
+     * different route: {@code InstanceContainer} commits every palette in one loop and runs
+     * {@code applyGenerationData} afterwards.
+     * </p>
+     *
      * @param chunk     the chunk to fill
      * @param generator the generator to run over the chunk
      */
@@ -944,9 +972,13 @@ public class FalcoInstance extends Instance {
         chunk.lockWriteLock();
         try {
             for (int index = 0; index < sectionCount; index++) {
-                commitSection(chunk, storage, index, staged[index]);
+                commitSection(storage, index, staged[index]);
             }
             chunk.invalidate();
+            for (int index = 0; index < sectionCount; index++) {
+                writeSpecialBlocks(chunk, staged[index].specials(),
+                        (chunk.getMinSection() + index) * Chunk.CHUNK_SECTION_SIZE);
+            }
         } finally {
             chunk.unlockWriteLock();
         }
@@ -989,6 +1021,14 @@ public class FalcoInstance extends Instance {
      * reports {@code count() == 0} and the specials map is the only evidence the generator was there.
      * </p>
      * <p>
+     * The specials clause stays in the condition even though this method no longer writes them —
+     * {@link #applyGenerator} does, in a second pass, for the reason stated there. It has to: the
+     * block of that third case is air with a handler, and {@link BlockStorage#setBlock} skips a write
+     * of air into a shared slot, so the section would stay shared and the storage would answer a
+     * question about it without ever having one. Materialising it here is what keeps that section a
+     * section.
+     * </p>
+     * <p>
      * A section that is still shared and received nothing needs no write at all, and that is exactly
      * what the condition tests. A section the chunk already owns is committed unconditionally: it
      * holds content from a loader or an earlier write, and an empty generated palette is a statement
@@ -1009,13 +1049,11 @@ public class FalcoInstance extends Instance {
      * where the optimisation does narrow something.
      * </p>
      *
-     * @param chunk     the chunk which receives the section
      * @param storage   the storage of the chunk
      * @param index     the index of the section, counted from the bottom one
      * @param generated the section the generator produced
      */
-    private void commitSection(Chunk chunk, BlockStorage storage, int index,
-                               GeneratorImpl.GenSection generated) {
+    private void commitSection(BlockStorage storage, int index, GeneratorImpl.GenSection generated) {
         final boolean producedNothing = generated.blocks().count() == 0
                 && generated.biomes().count() == 0
                 && generated.specials().isEmpty();
@@ -1029,8 +1067,6 @@ public class FalcoInstance extends Instance {
         section.biomePalette().copyFrom(generated.biomes());
         PaletteCompaction.packBlocks(section.blockPalette());
         PaletteCompaction.packBiomes(section.biomePalette());
-        writeSpecialBlocks(chunk, generated.specials(),
-                (chunk.getMinSection() + index) * Chunk.CHUNK_SECTION_SIZE);
     }
 
     /**
