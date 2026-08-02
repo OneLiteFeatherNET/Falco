@@ -1,5 +1,8 @@
 package net.onelitefeather.falco.instance;
 
+import net.minestom.server.coordinate.Pos;
+import net.minestom.server.entity.Entity;
+import net.minestom.server.entity.EntityType;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.instance.block.Block;
@@ -11,8 +14,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -32,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.3.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -192,5 +198,31 @@ class FalcoSharedInstanceStateTest {
                 "the view owns this decision, so turning it back on at the view is enough");
         assertFalse(container.hasEnabledAutoChunkLoad(),
                 "and the container is still refusing loads asked of it directly");
+    }
+
+    @Test
+    @DisplayName("refuses an entity the spawn chunk it needs, while a sibling view grants it")
+    void testAutoChunkLoadOffRefusesAnEntityItsSpawnChunk(Env env) {
+        final InstanceContainer container = env.process().instance().createInstanceContainer();
+        final FalcoSharedInstance disabled = registered(env, container);
+        final FalcoSharedInstance enabled = registered(env, container);
+        disabled.enableAutoChunkLoad(false);
+        final List<Throwable> handled = new CopyOnWriteArrayList<>();
+        env.process().exception().setExceptionHandler(handled::add);
+
+        final Entity refused = new Entity(EntityType.ZOMBIE);
+        refused.setInstance(disabled, new Pos(72, 40, 72)).join();
+
+        assertFalse(disabled.getEntities().contains(refused),
+                "a view which may not load the spawn chunk never registers the entity");
+        assertEquals(1, handled.size(),
+                "and the only trace is one throwable handed to the exception manager");
+
+        final Entity spawned = new Entity(EntityType.ZOMBIE);
+        spawned.setInstance(enabled, new Pos(72, 40, 72)).join();
+
+        assertTrue(enabled.getEntities().contains(spawned),
+                "while a sibling view over the same container takes the same entity in");
+        assertEquals(1, handled.size(), "without a second failure");
     }
 }

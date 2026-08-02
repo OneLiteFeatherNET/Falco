@@ -38,7 +38,7 @@ import java.util.concurrent.CompletableFuture;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.3.0
+ * @version 1.4.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -167,10 +167,20 @@ public class FalcoSharedInstance extends SharedInstance {
      * Decides whether this instance pulls chunks into the world on demand.
      * <p>
      * Minestom's shared instance forwards this to its container, which turns a per-view decision
-     * into a per-world one. Here it stays with the view, and it reaches exactly one method:
-     * {@link #loadOptionalChunk(int, int)}. It does <em>not</em> reach {@code setBlock} — that call
+     * into a per-world one. Here the value stays with the view, so two views over one container no
+     * longer overwrite each other. The one method that reads it is
+     * {@link #loadOptionalChunk(int, int)}; it does <em>not</em> reach {@code setBlock} — that call
      * belongs to the container and asks the container's flag, for the reason given in the class
      * documentation.
+     * </p>
+     * <p>
+     * One method is not a small reach. Minestom routes the player view, entity spawns, entity
+     * teleports and player instance changes through {@link #loadOptionalChunk(int, int)}, and most
+     * of those callers do not survive the {@code null} it hands back once this is off — the list is
+     * on that method. Passing {@code false} therefore configures a failure mode rather than a
+     * saving, and because the value is now the view's, it is a failure mode stock
+     * {@link SharedInstance} could only produce for a whole world at once. Use it on a view whose
+     * chunks are brought in through the container beforehand.
      * </p>
      *
      * @param enable true to pull chunks in on demand
@@ -187,9 +197,10 @@ public class FalcoSharedInstance extends SharedInstance {
      * setting the container carried when this view was created — never a read of the container as it
      * stands now. Two views over one container therefore answer independently. Unlike the generator
      * and the chunk supplier this value is not inert: {@link #loadOptionalChunk(int, int)} consults
-     * it, and that is the method {@code Player#chunkAdder} calls, so a player of this view sees the
-     * effect. Nothing else does — a write through {@code setBlock} reaches the container and asks
-     * {@code getInstanceContainer().hasEnabledAutoChunkLoad()}.
+     * it, and every Minestom path that wants a chunk this world has not got yet goes through that
+     * method — five call sites, enumerated there. So the players and entities of this view, and of
+     * no other view, feel the answer. It stops at the block write: {@code setBlock} is forwarded to
+     * the container and asks {@code getInstanceContainer().hasEnabledAutoChunkLoad()}.
      * </p>
      *
      * @return true if it does
@@ -207,8 +218,37 @@ public class FalcoSharedInstance extends SharedInstance {
      * consults it, and only that branch is a decision this instance is entitled to make — the chunk
      * itself is still created, cached and published by the container.
      * </p>
+     *
+     * <h4>What a null answer costs its caller</h4>
      * <p>
-     * The flag consulted is this view's alone, which has a consequence in one direction: a view
+     * Handing back {@code null} is not a clean skip anywhere in Minestom. Five call sites reach this
+     * method, and each of them treats the absent chunk differently:
+     * </p>
+     * <ul>
+     *   <li>{@code Player#chunkAdder} chains {@code thenAccept(Player::sendChunk)}, and
+     *       {@code sendChunk} dereferences its argument on its first line. The result is a
+     *       {@link NullPointerException} parked in a future nobody observes — the chunk is not
+     *       skipped, the send path is aborted mid-way.</li>
+     *   <li>{@code Entity#setInstance} requires the chunk to be non-null before it registers the
+     *       entity with the tracker and spawns it. The throwable is handed to the
+     *       {@code ExceptionManager} and the entity never arrives in this view at all, while a
+     *       sibling view over the same container would have taken it.</li>
+     *   <li>{@code Player#setInstance} pre-loads the surrounding chunks and reads an already
+     *       completed future as a loaded chunk, then walks into the {@code Entity#setInstance}
+     *       above through {@code spawnPlayer}.</li>
+     *   <li>{@code Entity} teleport chains {@code thenRun} and carries on regardless, so the entity
+     *       ends up standing in a chunk this view has not got.</li>
+     *   <li>{@code ChunkUtils#optionalLoadAll} only counts the futures; Minestom's own comment
+     *       there warns that the player will be stuck.</li>
+     * </ul>
+     * <p>
+     * Stock {@link SharedInstance} can reach every one of those states too, but only for a whole
+     * world at a time, because the flag it asks belongs to the container. Per view is the new part:
+     * this view can be that strict while its siblings and the container are not, and that is the
+     * consequence to weigh before turning the flag off.
+     * </p>
+     * <p>
+     * The flag consulted is this view's alone, which has a consequence in the other direction: a view
      * whose flag is on loads a chunk even where the container's own flag is off, because an explicit
      * {@code loadChunk} was never governed by that flag either. It takes a deliberate act to get
      * there — a fresh view is seeded from the container, so the setting has to be turned back on at
