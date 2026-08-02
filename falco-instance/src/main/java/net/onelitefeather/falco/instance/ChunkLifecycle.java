@@ -246,6 +246,15 @@ public final class ChunkLifecycle {
      * loader no way to tell its own chunks apart anyway. It is written down rather than fixed because
      * changing it is a change of behaviour.
      * </p>
+     * <p>
+     * The listener of this lifecycle is installed on both arms, and the two arms do it at different
+     * moments on purpose. A chunk this class builds itself receives it inside {@link #create(int, int)},
+     * before the generator runs, because generation writes blocks. A chunk a {@link ChunkLoader}
+     * returns was built by that loader and never passed through {@link #create(int, int)}, so it is
+     * given the listener here — as late as the loader lets us and therefore after the loader has
+     * already written its blocks. That asymmetry is the loader's, not a choice: a loaded chunk has no
+     * moment before its blocks that this class can reach.
+     * </p>
      *
      * @param index  the chunk index of the position, the key in the registry
      * @param chunkX the chunk X
@@ -261,6 +270,11 @@ public final class ChunkLifecycle {
             if (chunk == null) {
                 chunk = create(chunkX, chunkZ);
                 chunk.onGenerate();
+            } else {
+                // The loader built this chunk itself, so create() never saw it. Without this line a
+                // world read from disk would report no transition at all while a freshly generated
+                // neighbour reports all five.
+                installListener(chunk);
             }
             managed = requireManaged(chunk);
         } catch (Throwable throwable) {
@@ -326,6 +340,31 @@ public final class ChunkLifecycle {
     }
 
     /**
+     * Hands this lifecycle's listener to a chunk that can carry one.
+     * <p>
+     * Two conditions have to hold and neither is an accident. There has to be a listener at all —
+     * the common case is that there is none, and the call then costs one field read. And the chunk
+     * has to be a {@link FalcoChunk}, because carrying a listener is what that type adds; a chunk
+     * from a foreign supplier takes part in the lifecycle without reporting it, which is a
+     * limitation of the supplier rather than of this class.
+     * </p>
+     * <p>
+     * Extracted because the two arms of {@link #retrieve(int, int)} need it at different moments and
+     * a copy in each would be a place for them to drift apart. The moments themselves are documented
+     * where they are chosen, not here.
+     * </p>
+     *
+     * @param chunk the chunk to install the listener on
+     */
+    private void installListener(Chunk chunk) {
+        final ChunkLifecycleListener installed = this.listener;
+
+        if (installed != null && chunk instanceof FalcoChunk falcoChunk) {
+            falcoChunk.addLifecycleListener(installed);
+        }
+    }
+
+    /**
      * Creates a chunk through the chunk supplier of this instance and generates it.
      * <p>
      * This is the path a chunk takes which no {@link ChunkLoader} knows about. Without a generator the
@@ -347,12 +386,9 @@ public final class ChunkLifecycle {
         if (chunk == null) {
             throw new FalcoInstanceException("the chunk supplier returned null for chunk " + chunkX + ":" + chunkZ);
         }
-        final ChunkLifecycleListener installed = this.listener;
         // Before the generator runs, not after it: generation writes the blocks which carry a
         // handler through Chunk#setBlock, and a listener registered afterwards would miss them.
-        if (installed != null && chunk instanceof FalcoChunk falcoChunk) {
-            falcoChunk.addLifecycleListener(installed);
-        }
+        installListener(chunk);
         final Generator current = this.generation.generator();
         if (current != null && chunk.shouldGenerate()) {
             this.generation.apply(chunk, current);
