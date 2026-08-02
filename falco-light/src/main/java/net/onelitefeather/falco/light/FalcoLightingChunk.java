@@ -33,10 +33,13 @@ import org.jetbrains.annotations.Nullable;
  * {@code InstanceContainer} the server ships with.
  * </p>
  * <p>
- * <b>This class holds no computation logic on purpose.</b> Three overrides, and every one of them
- * only reports something to the scheduler. Everything else — the dirty set, the areas, the executor,
- * the back pressure — lives in {@link ChunkLightScheduler}, so a reader looking for the behaviour
- * finds it in one place rather than spread across a chunk and a scheduler.
+ * <b>This class holds no computation logic on purpose.</b> Five overrides, and none of them computes
+ * light. Three report to the scheduler — {@code setBlock} and {@code onLoad} mark the chunk dirty,
+ * {@code tick} passes the tick on. The other two serve the light packet this chunk sends its
+ * viewers: {@code invalidate} drops the cached packet, and {@code onLightUpdated} drops it and sends
+ * a fresh one. Everything else — the dirty set, the areas, the executor, the back pressure — lives
+ * in {@link ChunkLightScheduler}, so a reader looking for the behaviour finds it in one place rather
+ * than spread across a chunk and a scheduler.
  * </p>
  * <p>
  * <b>What it reports is a position, not just a chunk.</b> {@code setBlock} knows exactly which block
