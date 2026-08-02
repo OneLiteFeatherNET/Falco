@@ -184,7 +184,7 @@ public class GeneratorCommitBenchmark {
             this.packed.add(alreadyPacked);
             this.target[index] = new Section();
         }
-        verifyTheFixtureIsWide();
+        verifyTheFixtureIsStagedLikeAGenerator();
     }
 
     /**
@@ -270,46 +270,41 @@ public class GeneratorCommitBenchmark {
     }
 
     /**
-     * Refuses a fixture that is neither of the two cases this benchmark reports.
+     * Refuses a fixture whose palettes are not at a width a generator leaves.
      * <p>
-     * A trial is worth running when the optimisation narrows something, and it is worth running when
-     * the optimisation provably cannot narrow anything because every staged palette already sits at the
-     * direct width, above the {@code maxBitsPerEntry} ceiling {@code downsizeWithPalette} refuses to
-     * cross. What is not worth running is the fixture in between, where the palettes are indirect and
-     * already minimal: there the optimised arm and the control do the same nothing at the same width,
-     * and the trial would look like a priced optimisation while measuring a no-op.
+     * This is the guard the benchmark actually needs, and it replaced one that demanded a narrowing.
+     * Demanding a narrowing looks like the stricter check and is the weaker one. It passes on the
+     * fixture {@code Chunk#setBlock} produces, where a palette carries a bit of slack and duly narrows
+     * by that bit, and it aborts the {@code 1024} state trial, where nothing narrows because nothing
+     * can — which is the single most decision relevant point on the axis. It would therefore have
+     * waved through the first draft of this class, whose numbers were the cost of shaving one bit off
+     * an indirect palette reported as the cost of packing a direct one.
      * </p>
      * <p>
-     * The distinction is the reason this method does not simply demand a narrowing, which is what it
-     * was first written to do. Demanding one aborts the {@code 1024} state trial, and that trial is the
-     * one the plan most needs, because a generator that produces more than {@code 256} distinct states
-     * in a section is exactly the case in which {@code optimize} charges full price for nothing.
+     * What a generator leaves is not a range but two values. {@code PaletteImpl#setAll} sends a
+     * constant supplier to {@code fill} and everything else to {@code makeDirect}, so every staged
+     * palette must be either in the single value mode or at the direct width, and any third width means
+     * the staging in {@link #widthAGeneratorWouldLeave(Palette)} stopped reproducing Minestom — either
+     * because it broke or because {@code setAll} changed. Both are silent failures that turn every
+     * number of this class back into a measurement of the wrong input, so both stop the run here.
      * </p>
      *
-     * @throws IllegalStateException if no staged palette is wider than its packed form and the staged
-     *                               palettes are not all at the direct width, which would make every
-     *                               number of this run a measurement of an unremarkable no-op
+     * @throws IllegalStateException if a staged palette is at neither the single value mode nor the
+     *                               direct width, which means the fixture is no longer the shape a
+     *                               generator hands to the commit
      */
-    private void verifyTheFixtureIsWide() {
-        if (this.distinctStates == 1) {
-            return;
-        }
-        boolean everyStagedPaletteIsDirect = true;
-
+    private void verifyTheFixtureIsStagedLikeAGenerator() {
         for (int index = 0; index < this.staged.size(); index++) {
-            final Palette stagedPalette = this.staged.get(index);
+            final int width = this.staged.get(index).bitsPerEntry();
 
-            if (stagedPalette.bitsPerEntry() > this.packed.get(index).bitsPerEntry()) {
-                return;
+            if (width != 0 && width != Palette.BLOCK_PALETTE_DIRECT_BITS) {
+                throw new IllegalStateException("The staged palette of section " + index + " is "
+                        + width + " bits wide at " + this.distinctStates + " distinct states, but a "
+                        + "generator leaves a section either in the single value mode or at the direct "
+                        + "width of " + Palette.BLOCK_PALETTE_DIRECT_BITS + "; this fixture is the "
+                        + "shape Chunk#setBlock produces, not the shape the commit is handed, and its "
+                        + "numbers would understate both what the optimisation costs and what it saves");
             }
-            everyStagedPaletteIsDirect &= stagedPalette.bitsPerEntry() == Palette.BLOCK_PALETTE_DIRECT_BITS;
         }
-        if (everyStagedPaletteIsDirect) {
-            return;
-        }
-        throw new IllegalStateException("Not one of the " + this.staged.size() + " staged palettes is "
-                + "wider than its optimised form at " + this.distinctStates + " distinct states, and "
-                + "none of them is at the direct width either, so this trial would report the cost of "
-                + "an optimisation that changes nothing");
     }
 }
