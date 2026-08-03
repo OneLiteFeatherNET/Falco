@@ -8,9 +8,11 @@ dependencies {
     compileOnly(libs.annotations)
     compileOnly(libs.minestom)
     compileOnly(libs.fastutil)
+    compileOnly(libs.flare.fastutil)
 
     testImplementation(libs.adventure.nbt)
     testImplementation(libs.fastutil)
+    testImplementation(libs.flare.fastutil)
     testImplementation(libs.annotations)
     testImplementation(libs.minestom)
     testImplementation(libs.cyano)

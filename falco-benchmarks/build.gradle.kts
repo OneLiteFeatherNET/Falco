@@ -16,6 +16,7 @@ dependencies {
     jmhImplementation(libs.jol.core)
     jmhImplementation(libs.minestom)
     jmhImplementation(libs.fastutil)
+    jmhImplementation(libs.flare.fastutil)
 
     testImplementation(platform(libs.mycelium.bom))
     testImplementation(platform(libs.adventure.bom))

@@ -5,6 +5,7 @@ import net.minestom.server.instance.Chunk;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.UnmodifiableView;
+import space.vectrix.flare.fastutil.Long2ObjectSyncMap;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -90,7 +91,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.2
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -99,12 +100,30 @@ public final class ChunkRegistry {
     /**
      * The loaded chunks, keyed by the chunk index of their position.
      * <p>
-     * A plain concurrent hash map rather than the synchronised long map of the container: chunk
-     * streaming is a lookup-dominated access pattern, and the copy-on-write map underneath the
-     * container pays for every load and unload instead.
+     * A primitive keyed map rather than a {@code ConcurrentHashMap<Long, Chunk>}, which boxed its key
+     * on every lookup — counted by {@code ChunkLookupAllocationTest}, which measures a position whose
+     * index is outside the autobox cache and finds nothing left afterwards. This is not offered as a
+     * speed change and no figure of this repository claims one: {@code getChunk} is reached on a chunk
+     * change rather than per block, because {@code ChunkCache} memoises in between, so the allocation
+     * is established and its cost is not.
+     * </p>
+     * <p>
+     * {@code Long2ObjectSyncMap} is a read map plus a dirty map in the shape of Go's {@code sync.Map},
+     * not the copy-on-write map underneath {@code InstanceContainer}. Lookups take no lock; a write
+     * after a run of misses rebuilds the dirty map, which is linear and lands on the load and unload
+     * path, where a tick partition is created and an event is dispatched anyway.
+     * {@code ChunkLookupBenchmark} prices both sides.
+     * </p>
+     * <p>
+     * Two costs of that map are paid by this class and named here rather than discovered later.
+     * {@link #size()} and {@link #idle()} walk the read map instead of reading a counter, so both are
+     * linear; they are reached from {@code FalcoInstance#unregister} and from a log line, never from a
+     * tick. And {@link #chunks()} builds a fresh view object per call, because the fastutil base class
+     * behind this map does not cache one the way {@code ConcurrentHashMap} does — the wrapper that
+     * method returns was allocated per call before this change too.
      * </p>
      */
-    private final Map<Long, Chunk> chunks = new ConcurrentHashMap<>();
+    private final Long2ObjectSyncMap<Chunk> chunks = Long2ObjectSyncMap.hashmap();
 
     /**
      * The chunks which are being loaded right now, keyed by chunk index, and the lock of a position.
