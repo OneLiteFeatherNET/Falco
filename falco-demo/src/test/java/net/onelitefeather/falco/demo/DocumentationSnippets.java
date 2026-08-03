@@ -19,14 +19,55 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 /**
- * Every code block of the wiki page <i>Instances and chunks</i>, compiled.
+ * Every code block the documentation shows, compiled: the quick start of the readme and the wiki
+ * page <i>Instances and chunks</i>.
  *
- * <p>This class is never run. It exists so that a snippet in the wiki cannot quietly stop compiling
- * against the code it documents.</p>
+ * <p>This class is never run and asserts nothing. Its whole value is failing to compile — a snippet
+ * somebody copies is the one piece of documentation that can be wrong in a way no reader forgives,
+ * and a page cannot be kept honest by rereading it. Writing the first version already caught one:
+ * the light engine block said {@code new ChunkLightScheduler(instance)}, and that constructor takes
+ * a {@code ChunkLightService}.</p>
+ *
+ * <p>When a snippet in either document changes, change it here too. When this stops compiling, the
+ * document is wrong rather than this class.</p>
  */
-final class WikiSnippetCheck {
+final class DocumentationSnippets {
 
-    private WikiSnippetCheck() {
+    private DocumentationSnippets() {
+    }
+
+    /**
+     * Readme, quick start, step 5 — all three modules together.
+     *
+     * @return the instance the snippet builds
+     */
+    static FalcoInstance readmeAllThreeModules() {
+        FalcoAnvilLoader loader = new FalcoAnvilLoader(Path.of("worlds", "lobby"), DimensionType.OVERWORLD.key());
+
+        ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService());
+
+        return FalcoInstance.builder(DimensionType.OVERWORLD)
+                .chunkLoader(loader)
+                .chunkSupplier(scheduler.supplier())
+                .autoChunkLoad(true)
+                .ownsLoader(true)
+                .saveOnShutdown(true)
+                .registerAndShutdownWith(MinecraftServer.getInstanceManager(),
+                        MinecraftServer.getSchedulerManager());
+    }
+
+    /**
+     * Readme, quick start, step 4 — the two operations without a listener around them.
+     *
+     * @param instance the instance to read from
+     * @param lighting the light service
+     * @return the block light level the snippet prints
+     */
+    static int readmeCheckWithoutClient(FalcoInstance instance, ChunkLightService lighting) {
+        Chunk chunk = instance.loadChunk(0, 0).join();
+        lighting.calculate(chunk);
+
+        return lighting.blockLightAt(chunk, 8, 40, 8);
     }
 
     static FalcoInstance shortestForm() {

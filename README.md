@@ -26,7 +26,8 @@ signatures and behaviour may still change in a minor release.
 
 ## Quick start
 
-From nothing to a server that serves a stored world, in four steps. The last one needs no client.
+From nothing to a server that serves a stored world, in five steps. Step 4 needs no client, and step
+5 replaces the hand-written parts of step 2 with the third module.
 
 ### 1. Declare the dependency
 
@@ -37,8 +38,12 @@ repositories {
 }
 
 dependencies {
-    implementation("net.onelitefeather:falco-anvil:1.0.0")
-    implementation("net.onelitefeather:falco-light:1.0.0")
+    // One version for all three, so they cannot drift into a combination nobody tested.
+    implementation(platform("net.onelitefeather:falco-bom:1.0.0"))
+
+    implementation("net.onelitefeather:falco-anvil")     // reading and writing Anvil worlds
+    implementation("net.onelitefeather:falco-light")     // block and sky light
+    implementation("net.onelitefeather:falco-instance")  // the instance and the chunk
 
     // Minestom is compileOnly in Falco, so it does not arrive with these
     // artefacts. Falco declares no version for it, on purpose. You pick it.
@@ -48,7 +53,9 @@ dependencies {
 }
 ```
 
-The third module, the BOM that pins all three, Maven and snapshots are in
+Take only the modules you need — a platform constrains a version for each, it does not pull one in.
+Steps 2 to 4 below use the first two; step 5 uses all three. Individual coordinates, Maven and
+snapshots are in
 [Installation](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation).
 
 ### 2. Write the server
@@ -93,17 +100,9 @@ public final class Bootstrap {
 }
 ```
 
-The listener is the explicit route: you decide which chunks are lit and when. There is a shorter one
-that needs no listener at all — `instance.setChunkSupplier(scheduler.supplier())`, covered in
-[Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine).
-
-**That shorter route needs `falco-instance` on the classpath as well**, and the two lines above are
-not enough for it. The chunks the supplier produces are `FalcoChunk`s — which is what lets one chunk
-carry Falco's light *and* Falco's lifecycle instead of forcing a choice between them — and
-`falco-instance` is `compileOnly` in `falco-light`, so it does not arrive with the artefact. Add
-`implementation("net.onelitefeather:falco-instance:1.0.0")` next to the two above before calling
-`supplier()`; everything else in `falco-light`, including the `lighting.calculate` route used here,
-works without it.
+The listener is the explicit route: you decide which chunks are lit and when. Step 5 shows the
+shorter one, where the chunks keep their own light and no listener is needed. Everything in
+`falco-light` that this step uses works without `falco-instance` on the classpath.
 
 ### 3. Put a world where the loader looks
 
@@ -134,6 +133,56 @@ recomputes what is already stored, because loading applies the stored arrays and
 flag — for a pre-lit world the engine is doing work nobody asked for. It earns its keep on worlds
 without stored light and after blocks change at runtime. Which case is which is spelled out in
 [Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine).
+
+### 5. All three modules together
+
+Steps 2 to 4 use an `InstanceContainer` and drive the light yourself. The third module replaces both
+of those decisions:
+
+```java
+FalcoAnvilLoader loader = new FalcoAnvilLoader(Path.of("worlds", "lobby"), DimensionType.OVERWORLD.key());
+
+// The scheduler takes the light service, not an instance. It reaches the world through
+// the chunks its supplier builds.
+ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService());
+
+FalcoInstance instance = FalcoInstance.builder(DimensionType.OVERWORLD)
+        .chunkLoader(loader)
+        .chunkSupplier(scheduler.supplier())
+        .autoChunkLoad(true)
+        .ownsLoader(true)      // close the loader on shutdown
+        .saveOnShutdown(true)  // and write the chunks first
+        .registerAndShutdownWith(MinecraftServer.getInstanceManager(),
+                MinecraftServer.getSchedulerManager());
+```
+
+That is the whole server: no light listener, and no shutdown task written by hand. Three things
+changed compared with step 2.
+
+**The light keeps itself up to date.** The supplier builds `FalcoLightingChunk`s, which report their
+own block changes, loads and ticks to the scheduler. It lights the touched region and sends it, one
+tick later, including the ring around it. Before `1.0.0` this combination did not exist: the lighting
+chunk and the Falco chunk both extended Minestom's `DynamicChunk`, a class has one superclass, and a
+server had to choose one of the two.
+
+**Unregistering the world actually unloads it.** `InstanceManager#unregisterInstance` unloads chunks
+only for an `InstanceContainer`; for anything else it leaves every chunk, tick partition and entity
+behind. `FalcoInstance` cleans up after itself, and that leak is the reason the module exists at all.
+
+**A chunk allocates what it uses.** Sections are created on the first write into them and every empty
+one shares a single instance, which takes a fresh chunk from 192 objects and 6 848 bytes to 25 and
+840. It is a count, not a timing — see
+[What "high-performance" means here](#what-high-performance-means-here).
+
+Two things to know before building on it. `getSections()` materialises all 24 sections, because a
+caller may write into what it gets — use `chunk.storage().views()` to only look. And a chunk supplier
+producing anything but a `FalcoChunk` is refused, because such a chunk would be accepted everywhere
+except the unload path. Lifecycle listeners, the storage accessors and the rest are in
+[Instances and Chunks](https://github.com/OneLiteFeatherNET/Falco/wiki/Instances-And-Chunks).
+
+Minestom's own events are unaffected: `InstanceChunkLoadEvent`, `InstanceChunkUnloadEvent` and
+`PlayerBlockBreakEvent` are dispatched here exactly as they are by a container, so listeners on the
+`GlobalEventHandler` keep working.
 
 ## Shared worlds
 
