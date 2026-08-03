@@ -37,8 +37,8 @@ repositories {
 }
 
 dependencies {
-    implementation("net.onelitefeather:falco-anvil:0.3.0")
-    implementation("net.onelitefeather:falco-light:0.3.0")
+    implementation("net.onelitefeather:falco-anvil:1.0.0")
+    implementation("net.onelitefeather:falco-light:1.0.0")
 
     // Minestom is compileOnly in Falco, so it does not arrive with these
     // artefacts. Falco declares no version for it, on purpose. You pick it.
@@ -101,7 +101,7 @@ that needs no listener at all — `instance.setChunkSupplier(scheduler.supplier(
 not enough for it. The chunks the supplier produces are `FalcoChunk`s — which is what lets one chunk
 carry Falco's light *and* Falco's lifecycle instead of forcing a choice between them — and
 `falco-instance` is `compileOnly` in `falco-light`, so it does not arrive with the artefact. Add
-`implementation("net.onelitefeather:falco-instance:<version>")` next to the two above before calling
+`implementation("net.onelitefeather:falco-instance:1.0.0")` next to the two above before calling
 `supplier()`; everything else in `falco-light`, including the `lighting.calculate` route used here,
 works without it.
 
@@ -177,8 +177,16 @@ chunk from its own. The reasoning is in
 
 ## What "high-performance" means here
 
-Measured, not asserted. Every figure comes from a JMH benchmark in this repository and is quoted
-with the condition it was measured under.
+Measured, not asserted. Every timing below comes from a JMH benchmark in this repository and is
+quoted with the condition it was measured under.
+
+One claim is not a timing and is marked as such where it appears: **a chunk allocates its sections
+when something writes into them**, which takes a fresh chunk from 192 objects and 6 848 bytes to 25
+and 840. That comes from jol rather than from JMH — it is a count of objects on a heap, it has no
+spread, and it is unaffected by what else the machine was doing. It also says nothing about speed.
+Whether a smaller chunk makes anything faster depends on allocation pressure and on the collector,
+and nobody here has measured that. The instance benchmarks exist; they have never been run as a
+baseline, and until they have, no timing about the instance or the chunk appears in this file.
 
 **The Anvil loader is 1.9× faster on two threads** — 1 181 ± 31 against 2 200 ± 445 µs/op, reading
 one chunk of 200 distinct block states. On one thread the intervals overlap and nothing is resolved
