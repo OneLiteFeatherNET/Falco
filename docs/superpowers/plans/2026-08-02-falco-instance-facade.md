@@ -4917,10 +4917,12 @@ Counted out of the JUnit XML rather than read off the console, together with `:f
 `:falco-light:` and `:falco-anvil:javadoc` under `-Werror`. No count fell against any earlier column.
 
 **That run was not made in the stage's own worktree, and the reason is a finding rather than a
-footnote.** Two attempts there failed — the first with `java.io.EOFException` from two test workers,
-the second with `java.nio.file.NoSuchFileException` on
-`build/test-results/test/binary/in-progress-results-generic.bin` — while every test that reported at
-all reported `PASSED`. A second session was running Gradle against the same project directory and
+footnote.** Two attempts there failed — the first with `java.io.EOFException` on two test
+tasks, the second with `java.nio.file.NoSuchFileException` on
+`build/test-results/test/binary/in-progress-results-generic.bin`, the same two tasks — and neither
+failure was an assertion: the second attempt logged 251 `PASSED` lines and no test-level failure at
+all, and the four suites that did finish in the first attempt wrote 0 failures and 0 errors into
+their XML. A second session was running Gradle against the same project directory and
 removing `build/` underneath the run, and the load average moved from 1.5 to 19.7 across it. A green
 run in a directory a second writer is clearing is not evidence of anything, so the acceptance was
 taken in a worktree detached at `87ffd652` and removed afterwards, which is the same precaution the
