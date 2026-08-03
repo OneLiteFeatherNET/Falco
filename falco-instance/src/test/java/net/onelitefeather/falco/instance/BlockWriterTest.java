@@ -43,14 +43,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * those two, which is what {@code holdsWriteLock()} is read for here.
  * </p>
  * <p>
- * The same reading is taken from the other side. Two cases assert that the placement rule and the two
- * block handlers <em>do</em> run under the write lock, because that is what the class documentation of
- * {@link BlockWriter} now says and a documented lock rule nobody measures is how the previous wording
- * came to claim the opposite of what the code did.
+ * The same reading is taken from the other side. Three cases assert that the placement rule, the two
+ * block handlers and the lifecycle listener of the chunk <em>do</em> run under the write lock, because
+ * that is what the class documentation of {@link BlockWriter} now says and a documented lock rule
+ * nobody measures is how the previous wording came to claim the opposite of what the code did — and,
+ * for the listener, how that same wording came to enumerate three pieces of foreign code under the
+ * lock while the code ran four.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -250,6 +252,32 @@ class BlockWriterTest {
                         + "is told about the block while that block is being established");
         assertTrue(probe.destroyUnderLock().get(),
                 "the same holds for the handler of the block that was replaced");
+    }
+
+    @Test
+    @DisplayName("tells the lifecycle listener of the chunk while the write lock of that chunk is held")
+    void testTheLifecycleListenerRunsUnderTheChunkLock(Env env) {
+        final FalcoInstance instance = registered(env);
+        final BlockWriter writer = instance.blockWriter();
+        final FalcoChunk chunk = FalcoChunk.require(instance.loadChunk(0, 0).join());
+        final AtomicInteger changes = new AtomicInteger();
+        final AtomicBoolean lockHeld = new AtomicBoolean();
+        chunk.addLifecycleListener(new ChunkLifecycleListener() {
+
+            @Override
+            public void onBlockChange(FalcoChunk written, int x, int y, int z, Block block) {
+                changes.incrementAndGet();
+                lockHeld.set(written.holdsWriteLock());
+            }
+        });
+
+        writer.write(chunk, 11, Y, 11, Block.STONE, null, null, false, 0);
+
+        assertEquals(1, changes.get(), "a write into a chunk with a listener has to reach that listener once");
+        assertTrue(lockHeld.get(),
+                "a lifecycle listener is the fourth piece of foreign code under the chunk write lock, and "
+                        + "the only one a third party installs without touching a block; the class "
+                        + "documentation of BlockWriter enumerates it and this is what says it is still true");
     }
 
     @Test

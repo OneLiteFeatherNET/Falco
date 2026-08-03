@@ -50,14 +50,27 @@ import java.util.concurrent.ConcurrentHashMap;
  * </p>
  * <p>
  * The chunk lock is taken before the placement rule is asked and given back after the block reached
- * the storage. Three pieces of foreign code therefore run <em>under</em> it, and it is worth naming
+ * the storage. Four pieces of foreign code therefore run <em>under</em> it, and it is worth naming
  * them rather than pretending otherwise: {@code BlockPlacementRule#blockPlace} of the placed block,
  * and — inside {@link FalcoChunk#setBlock(int, int, int, Block, BlockHandler.Placement,
  * BlockHandler.Destroy)}, which requires that very lock — {@code BlockHandler#onDestroy} of the block
- * that was replaced and {@code BlockHandler#onPlace} of the one that replaced it. They are inside
- * because they are part of deciding and recording what the block <em>is</em>: a rule that runs after
- * the write would be answering about a block already written, and a handler that runs after the lock
- * was given back could be told about a block a second writer has since overwritten.
+ * that was replaced, {@code BlockHandler#onPlace} of the one that replaced it, and
+ * {@link ChunkLifecycleListener#onBlockChange} of whatever listens to that chunk. The first three are
+ * inside because they are part of deciding and recording what the block <em>is</em>: a rule that runs
+ * after the write would be answering about a block already written, and a handler that runs after the
+ * lock was given back could be told about a block a second writer has since overwritten.
+ * </p>
+ * <p>
+ * The fourth is the one a reader of this class is least likely to find, and it is the reason this
+ * paragraph counts four rather than three. A block handler and a placement rule are attached to a
+ * block, so somebody put them where the write would meet them; a lifecycle listener is registered
+ * once, on {@link ChunkLifecycle} or on a single chunk, and then runs on every block that chunk ever
+ * receives without anybody touching a block to arrange it. It sits at the end of
+ * {@link FalcoChunk#setBlock(int, int, int, Block, BlockHandler.Placement, BlockHandler.Destroy)},
+ * after the heightmaps, so that it sees a finished chunk — and therefore inside the lock this method
+ * is still holding. {@link ChunkLifecycleListener#onBlockChange} states the same thing from the other
+ * side; {@code BlockWriterTest} measures it from inside the callback, the way it measures the other
+ * three.
  * </p>
  * <p>
  * Three further steps run <em>outside</em> it, and this is where the ordering is deliberate: the
@@ -83,6 +96,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * rather than has to derive it.
  * </p>
  * <p>
+ * It applies to {@link ChunkLifecycleListener#onBlockChange} word for word, and there it is not
+ * inherited from anywhere: a listener which answers a block change by writing a block in a
+ * neighbouring chunk — the shape a light engine or a redstone-like rule reaches for first — is the
+ * same nested lock as a handler doing it, on the hottest path of this module, installed once and
+ * running for every block of every chunk it was given to.
+ * </p>
+ * <p>
  * The class exists so that ordering is a thing somebody can look at. It used to be the tail of one
  * {@code private} method of a class of more than 1 300 lines, where moving a single
  * {@code unlockWriteLock()} one line down would have undone the measurement of stage 1 without
@@ -101,7 +121,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -231,10 +251,10 @@ public final class BlockWriter {
      * <p>
      * The write lock of the given chunk is the only lock taken, and it is held from the placement rule
      * to the end of {@link FalcoChunk#setBlock(int, int, int, Block, BlockHandler.Placement,
-     * BlockHandler.Destroy)} — which means across the rule and across the block handlers of the old and
-     * the new block. The neighbour pass, the packets and the event follow it with no lock held. What
-     * that buys, and the re-entrancy hazard the handlers leave standing, is the subject of the class
-     * documentation.
+     * BlockHandler.Destroy)} — which means across the rule, across the block handlers of the old and
+     * the new block, and across the lifecycle listener of the chunk. The neighbour pass, the packets
+     * and the event follow it with no lock held. What that buys, and the re-entrancy hazard the four
+     * of them leave standing, is the subject of the class documentation.
      * </p>
      * <p>
      * The chunk is taken rather than looked up, which is what makes this reachable one write at a
