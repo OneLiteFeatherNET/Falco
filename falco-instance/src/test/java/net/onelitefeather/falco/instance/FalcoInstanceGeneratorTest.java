@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -42,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.2.0
  * @since 0.3.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -215,6 +216,87 @@ class FalcoInstanceGeneratorTest {
                 unit.fork(setter -> setter.setBlock(new Vec(16, MARKER_Y, 0), Block.GOLD_BLOCK))).join();
 
         assertEquals(Block.GOLD_BLOCK, instance.getBlock(16, MARKER_Y, 0));
+    }
+
+    /**
+     * Pins the order of the two halves of a commit, through the one thing that can observe it.
+     * <p>
+     * A block which needs its own entry is written through {@code Chunk#setBlock}, and that method
+     * runs {@code if (needsCompleteHeightmapRefresh) calculateFullHeightmap()} before it refreshes
+     * anything. On a chunk that was just generated the flag is true, so the first such block latches
+     * both heightmaps — and {@code Heightmap#refresh(int)} sets a private {@code needsRefresh} to
+     * false which nothing public can set back, so whatever the chunk knew at that moment is what it
+     * keeps. If the specials of a section are written inside the loop that commits the palettes, that
+     * moment is halfway through the commit and the heights are computed over a chunk that is missing
+     * everything above the section the block happens to sit in.
+     * </p>
+     * <p>
+     * The case is built to make that gap wide and the wrong answer a specific number rather than a
+     * smell. Stone fills {@code y = -64..127}, which is the sections of index {@code 0..11}, and the
+     * block carrying nbt sits at {@code y = 64}, which is index {@code 8}. Committed in one pass the
+     * surface is {@code 127}; committed with the special written from inside the loop it is
+     * {@code 79} — the top of the highest section that had been committed when the latch fired — and
+     * {@code 79} is what this case reported in both heightmaps before the fix.
+     * </p>
+     * <p>
+     * The height is read rather than the packet, because {@code Heightmap#getHeight} answers from its
+     * array without recomputing anything once {@code needsRefresh} is false, which it is in both
+     * arms. The assertion therefore reads what the chunk stored and never triggers the refresh it is
+     * asserting about.
+     * </p>
+     *
+     * @param env the environment which provides the server process
+     */
+    @Test
+    void testTheHeightmapsSeeTheWholeChunkAndNotHalfOfIt(Env env) {
+        final Block marked = Block.CHEST.withNbt(CompoundBinaryTag.builder().putString("falco", "kept").build());
+        final FalcoInstance instance = registered(env, null);
+        instance.setGenerator(unit -> {
+            unit.modifier().fill(new Vec(0, -64, 0), new Vec(16, 128, 16), Block.STONE);
+            unit.modifier().setBlock(0, 64, 0, marked);
+        });
+
+        instance.loadChunk(0, 0).join();
+
+        final Chunk chunk = instance.getChunk(0, 0);
+
+        assertNotNull(chunk);
+        assertEquals(127, chunk.worldSurfaceHeightmap().getHeight(1, 1),
+                "the stone reaches y=127, and a heightmap latched halfway through the commit reports "
+                        + "the top of the section the special block sits in instead");
+        assertEquals(127, chunk.motionBlockingHeightmap().getHeight(1, 1),
+                "both heightmaps are latched by the same call, so both are wrong together");
+    }
+
+    /**
+     * Pins that both ways into the generator refresh the block change timestamp.
+     * <p>
+     * The refresh used to sit at the end of the commit itself, where one line covered both entry
+     * points. It now sits at the two call sites, because the timestamp belongs to the instance and
+     * the commit belongs to {@link ChunkGeneration}. Nothing observed that line before, so a move
+     * which dropped it at one of the two would have been green everywhere.
+     * </p>
+     *
+     * @param env the environment which provides the server process
+     */
+    @Test
+    void testBothWaysIntoTheGeneratorMoveTheBlockChangeTime(Env env) {
+        final FalcoInstance instance = registered(env, null);
+        instance.setGenerator(writing(3, 5, Block.STONE));
+        final long beforeLoad = instance.getLastBlockChangeTime();
+
+        instance.loadChunk(0, 0).join();
+
+        assertNotEquals(beforeLoad, instance.getLastBlockChangeTime(),
+                "a chunk which came out of the generator on its load carries blocks that were not there");
+
+        final long beforeGenerate = instance.getLastBlockChangeTime();
+
+        // The chunk is already loaded, so this is the second entry point and not the first one again.
+        instance.generateChunk(0, 0, writing(6, 7, Block.DIAMOND_BLOCK)).join();
+
+        assertNotEquals(beforeGenerate, instance.getLastBlockChangeTime(),
+                "a generator run over a chunk which is already loaded changes blocks just the same");
     }
 
     @Test

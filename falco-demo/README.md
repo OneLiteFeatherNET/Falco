@@ -151,16 +151,22 @@ looks at. `FalcoLightingChunk` needs no calls from the outside — `instance.set
 and every chunk reports its own changes — which is the same one-line setup Minestom asks for with
 `LightingChunk::new`. The two sides are therefore compared at the same level of effort.
 
-**`FalcoInstance` is deliberately not in it**, and for a hard reason rather than a preference.
-`FalcoInstance` accepts only `FalcoChunk`: `Chunk#onLoad` and `Chunk#unload` are package-private in
-Minestom, `FalcoChunk` re-exposes them, and an instance in another package has no other way to reach
-them — so it refuses anything else with a `FalcoInstanceException` on the first chunk it loads.
-`FalcoLightingChunk` extends `DynamicChunk` and is not a `FalcoChunk`, so the two cannot be combined
-at all. Given that choice the light wins: what `FalcoInstance` buys — a clean unregister and a block
-write guarded per chunk rather than per instance — is invisible to somebody flying through a world
-nobody edits, while the light is the first thing they look at. Running both servers on the same
-`InstanceContainer` has a second benefit worth as much: the two then differ in the loader and the
-chunk type and in nothing else.
+**`FalcoInstance` is deliberately not in it, and since US-3.06 that is a choice rather than a
+limit.** It used to be neither. `FalcoInstance` accepts only `FalcoChunk` — `Chunk#onLoad` and
+`Chunk#unload` are `protected` in Minestom, `FalcoChunk` re-exposes them, and an instance in another
+package has no other way to reach them, so it refuses anything else with a `FalcoInstanceException`
+on the first chunk it loads. `FalcoLightingChunk` extended `DynamicChunk` back then and was not a
+`FalcoChunk`, so the two could not be combined at all and this paragraph had nothing to decide.
+
+They can now: `FalcoLightingChunk` **is** a `FalcoChunk`, so
+`instance.setChunkSupplier(scheduler.supplier())` on a `FalcoInstance` is the whole setup — no
+`setChunkLifecycle` pair and no cast. The demo still leaves it out, for a reason that has nothing to
+do with whether it works. What `FalcoInstance` buys — a clean unregister and a block write guarded
+per chunk rather than per instance — is invisible to somebody flying through a world nobody edits,
+while the light is the first thing they look at; and putting it on one side only would make the two
+servers differ in three things instead of one, which is exactly what this comparison exists not to
+do. The combination itself is pinned by `FalcoStackIntegrationTest` in this module, which is a
+stronger statement than a server nobody can quote.
 
 ---
 

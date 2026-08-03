@@ -222,13 +222,19 @@ class PublicApiTest {
     /**
      * A public class is final unless Minestom or the error hierarchy force it open.
      * <p>
-     * Five of the 31 public types are non-final and every one of them is forced: {@code FalcoChunk}
-     * ({@code falco-instance/.../instance/FalcoChunk.java:50}) and {@code FalcoLightingChunk}
-     * ({@code falco-light/.../light/FalcoLightingChunk.java:80}) extend {@code DynamicChunk} for its
-     * protected lifecycle hooks, {@code FalcoInstance}
-     * ({@code falco-instance/.../instance/FalcoInstance.java:120}) extends {@code Instance} because
+     * Four of the public types are non-final and every one of them is forced: {@code FalcoChunk}
+     * ({@code falco-instance/.../instance/FalcoChunk.java}) extends {@code Chunk} for its protected
+     * lifecycle hooks, {@code FalcoInstance}
+     * ({@code falco-instance/.../instance/FalcoInstance.java}) extends {@code Instance} because
      * Minestom branches on {@code instanceof InstanceContainer}, and the two exception types must
      * stay extensible so a consumer can refine the error hierarchy.
+     * </p>
+     * <p>
+     * {@code FalcoLightingChunk} used to be the fifth and stopped being forced when it became a
+     * {@code FalcoChunk} rather than a {@code DynamicChunk}: its superclass is no longer a Minestom
+     * type, the exemption below no longer covers it, and it is {@code final} today. That is the shape
+     * this rule is meant to produce — what a subclass of it would have wanted is a lifecycle
+     * listener, which is an interface.
      * </p>
      * <p>
      * The real extension points of this project are interfaces — the benchmarks show it, where

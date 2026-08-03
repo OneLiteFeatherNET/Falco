@@ -1,49 +1,22 @@
 package net.onelitefeather.falco.instance;
 
-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import net.kyori.adventure.key.Key;
-import net.kyori.adventure.nbt.CompoundBinaryTag;
 import net.minestom.server.MinecraftServer;
-import net.minestom.server.coordinate.BlockVec;
-import net.minestom.server.coordinate.CoordConversion;
 import net.minestom.server.coordinate.Point;
-import net.minestom.server.coordinate.Vec;
-import net.minestom.server.entity.Entity;
 import net.minestom.server.entity.Player;
-import net.minestom.server.event.EventDispatcher;
-import net.minestom.server.event.instance.InstanceBlockUpdateEvent;
-import net.minestom.server.event.instance.InstanceChunkLoadEvent;
-import net.minestom.server.event.instance.InstanceChunkUnloadEvent;
-import net.minestom.server.event.player.PlayerBlockBreakEvent;
 import net.minestom.server.instance.Chunk;
 import net.minestom.server.instance.ChunkLoader;
-import net.minestom.server.instance.DynamicChunk;
-import net.minestom.server.instance.EntityTracker;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.InstanceManager;
-import net.minestom.server.instance.Section;
 import net.minestom.server.instance.block.Block;
-import net.minestom.server.instance.block.BlockEntityType;
 import net.minestom.server.instance.block.BlockFace;
 import net.minestom.server.instance.block.BlockHandler;
-import net.minestom.server.instance.block.rule.BlockPlacementRule;
-import net.minestom.server.instance.generator.GenerationUnit;
 import net.minestom.server.instance.generator.Generator;
-import net.minestom.server.instance.generator.GeneratorImpl;
-import net.minestom.server.instance.palette.Palette;
-import net.minestom.server.network.packet.server.play.BlockChangePacket;
-import net.minestom.server.network.packet.server.play.BlockEntityDataPacket;
-import net.minestom.server.network.packet.server.play.UnloadChunkPacket;
-import net.minestom.server.network.packet.server.play.WorldEventPacket;
 import net.minestom.server.registry.Registries;
 import net.minestom.server.timer.SchedulerManager;
 import net.minestom.server.registry.RegistryKey;
-import net.minestom.server.utils.PacketSendingUtils;
-import net.minestom.server.utils.block.BlockUtils;
-import net.minestom.server.utils.chunk.ChunkCache;
 import net.minestom.server.utils.chunk.ChunkSupplier;
 import net.minestom.server.world.DimensionType;
-import net.minestom.server.worldevent.WorldEvent;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.Nullable;
@@ -51,85 +24,129 @@ import org.jetbrains.annotations.UnmodifiableView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
- * The {@link FalcoInstance} class is a world of a Minestom server which cleans up after itself.
+ * The {@link FalcoInstance} class is a world of a Minestom server which cleans up after itself, and
+ * it is a facade: it declares four references and nothing else.
+ *
+ * <h2>The four parts and where the line between them runs</h2>
+ * <ul>
+ *   <li>{@link ChunkRegistry} — which chunk sits at which position, and which position is busy. It
+ *   holds the two maps and the four transitions between them, and it is the only thing that decides
+ *   whether a position is free, loading or taken.</li>
+ *   <li>{@link ChunkLifecycle} — everything that happens to a chunk between not existing and not
+ *   existing again: create, read, publish, notify, unload, and the two settings that steer them. It
+ *   uses the registry to make those transitions; it does not duplicate them. {@link ChunkGeneration}
+ *   is its collaborator rather than a fifth part of this class, because a chunk is generated exactly
+ *   once and that once is inside its load, and it is reached through
+ *   {@link ChunkLifecycle#generation()}.</li>
+ *   <li>{@link BlockWriter} — a block write and everything it wakes: the neighbours, the packets, the
+ *   event, the recursion guard and the change timestamp.</li>
+ *   <li>{@link ChunkPersistence} — the loader, the four save paths, the read and the unload
+ *   notification, plus the two settings the shutdown of this instance asks it about.</li>
+ * </ul>
  * <p>
- * It extends {@link Instance} directly instead of {@code InstanceContainer}. Deriving from the
- * container looks cheaper but leads nowhere: the chunk lifecycle hooks it would have to override
- * are {@code protected} members of {@code net.minestom.server.instance}, so a subclass in this
- * package cannot reach them. Starting from {@link Instance} makes the same barrier visible once, at
- * the chunk, where {@link FalcoChunk} answers it.
+ * The line between them is the one worth stating, because it is the one a later change is most likely
+ * to blur: a part holds whatever it needs to answer its own question, and it never holds a reference
+ * to another part it was not handed. {@link ChunkLifecycle} is handed the registry, the persistence
+ * and the generation rather than reaching for them, which is what lets each of the four be driven on
+ * its own by a test — US-3.02, and the reason the split was worth six commits.
  * </p>
  * <p>
- * Four places in Minestom branch on {@code instanceof InstanceContainer} and quietly take a
- * different path for any other instance. Three of them are harmless here, one is not:
+ * That is a rule about references, not a claim that the four never look at each other. Two of them do,
+ * both through this class rather than through a field, and they are named here because a rule with two
+ * exceptions nobody wrote down is a rule that gets discovered by breaking it:
+ * </p>
+ * <ul>
+ *   <li>{@link BlockWriter#setBlock(int, int, int, Block, boolean)} asks
+ *   {@link ChunkLifecycle#autoLoad()} whether it may load the chunk it is about to write into.
+ *   The setting steers a load, so it belongs to the lifecycle; the question is asked on the write
+ *   path, so the writer has to ask it.</li>
+ *   <li>{@link ChunkLifecycle#create(int, int)} calls {@link #refreshLastBlockChangeTime()} after a
+ *   generator filled a chunk, and this class forwards that to {@link BlockWriter}, which keeps the
+ *   timestamp because every other writer of it is a block write.</li>
+ * </ul>
+ * <p>
+ * Both couplings predate this class becoming a facade and neither is a reference: each goes through a
+ * public method of the other part, so either part can still be constructed and driven alone. A change
+ * to {@code autoLoad} or to the timestamp has to be checked against the part on the other side.
+ * </p>
+ *
+ * <h2>Why this class declares nothing but its parts</h2>
+ * <p>
+ * A facade that keeps state of its own is the class it replaced with delegation in front of it, and
+ * the difference is invisible from the outside: every method below still reads like a one-liner while
+ * a fifth field quietly makes two parts disagree. That is not left to a reader.
+ * {@code InstanceFacadeTest} asks {@code getDeclaredFields()} on every build and fails if this class
+ * declares anything but one {@code final} reference per part. Anything that looks like it belongs here
+ * belongs in one of the four instead; if it belongs in none of them, the split is wrong and needs a
+ * fifth part rather than a field.
+ * </p>
+ * <p>
+ * What that test asserts is the declaration and only the declaration, which is narrower than <em>the
+ * facade holds no state</em>: {@link ChunkPersistence#saveOnShutdown()} and
+ * {@link ChunkPersistence#ownsLoader()} are read by {@link #shutdown(InstanceManager)} and by nothing
+ * else, so a value the facade acts on does live one hop away. That is stated rather than glossed over,
+ * and the reason it is still the right home is written at {@link ChunkPersistence}.
+ * </p>
+ *
+ * <h2>What being an {@link Instance} rather than a container costs</h2>
+ * <p>
+ * This class extends {@link Instance} directly instead of {@code InstanceContainer}. Deriving from the
+ * container looks cheaper but leads nowhere: the chunk lifecycle hooks it would have to override are
+ * {@code protected} members of {@code net.minestom.server.instance}, so a subclass in this package
+ * cannot reach them. Starting from {@link Instance} makes the same barrier visible once, at the chunk,
+ * where {@link FalcoChunk} answers it.
+ * </p>
+ * <p>
+ * Four places in Minestom branch on {@code instanceof InstanceContainer} and quietly take a different
+ * path for any other instance. The split changed none of them, so all four still apply exactly as they
+ * did. Three are harmless here, one is not:
  * </p>
  * <ul>
  *   <li>{@code InstanceManager#unregisterInstance} does not unload the chunks of a foreign
  *   instance, which leaks every chunk the instance ever loaded. {@link #unregister(InstanceManager)}
- *   is the answer and the reason this class exists.</li>
+ *   is the answer and it is still the reason this class exists — the four parts are how it is built,
+ *   not why.</li>
  *   <li>{@code SharedInstance} is typed on the container throughout, so this instance cannot back
  *   one. That is a missing feature rather than a defect, and it is refused by the compiler.</li>
  *   <li>The {@code Chunk} constructor asks the instance for its shared instances and gets an empty
  *   list here. Since there are no shared instances, an empty list is the correct answer.</li>
- *   <li>The block batches skip {@code refreshLastBlockChangeTime()} for a foreign instance. This
- *   class keeps the timestamp itself, but nothing outside it refreshes it, so batch copies must not
- *   rely on it.</li>
+ *   <li>The block batches skip {@code refreshLastBlockChangeTime()} for a foreign instance.
+ *   {@link BlockWriter} keeps the timestamp, but nothing outside it refreshes it, so batch copies
+ *   must not rely on it.</li>
  * </ul>
  * <p>
- * A world here comes from its {@link ChunkLoader}, from a {@link Generator}, or stays empty, in that
- * order. The generator runs against staged palettes rather than against the live ones of the chunk,
- * so a generator which fails halfway changes nothing and the failure reaches the caller instead of
- * the exception manager. {@code InstanceContainer} does the opposite on both counts, which is why
- * {@link #generator()} could not simply be inherited in spirit.
+ * Where this class deviates from {@code InstanceContainer} on purpose — the generator that runs
+ * against staged palettes instead of the live ones, the publish and the unload of one position that
+ * are made mutually exclusive, and the block write that takes the lock of one chunk instead of a
+ * monitor on the whole world — the reasoning now sits with the code it is about, in
+ * {@link ChunkGeneration#apply(Chunk, Generator)}, {@link ChunkLifecycle} and {@link BlockWriter}
+ * respectively. It moved with them rather than being dropped: a comment about a lock is worth
+ * something only next to the statement that takes it.
  * </p>
  * <p>
- * The other place where this class deviates on purpose is the moment a loaded chunk becomes part of
- * the instance. Publishing a chunk and unloading one are two transitions of the same position, and
- * they are made mutually exclusive, so an unload which meets a running load either sees the finished
- * chunk or claims the load and makes it throw its result away. Minestom lets the two overlap, and
- * the chunk which loses that race stays in the world with nothing left that could unload it.
- * </p>
- * <p>
- * On threading, this class promises no more than Minestom does, and for a reason worth stating: the
+ * On threading this class promises no more than Minestom does, and for a reason worth stating: the
  * parallelism of chunk and entity ticking lives in the global {@code ThreadDispatcher} of the server
- * process, not in the instance. Replacing the instance cannot make ticking faster. What it does buy
- * is that block writes are guarded by the lock of the chunk they touch rather than by a monitor on
- * the whole instance, so two writes to two chunks no longer wait for each other.
+ * process, not in the instance. Replacing the instance cannot make ticking faster.
  * </p>
  * <p>
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 2.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
 public class FalcoInstance extends Instance {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(FalcoInstance.class);
-
-    /**
-     * The faces a block change offers to its neighbours for a placement rule update.
-     */
-    private static final BlockFace[] BLOCK_UPDATE_FACES = {
-            BlockFace.WEST, BlockFace.EAST, BlockFace.NORTH, BlockFace.SOUTH, BlockFace.BOTTOM, BlockFace.TOP
-    };
 
     /**
      * The depth below the bottom of the dimension at which a point counts as being in the void.
@@ -149,128 +166,63 @@ public class FalcoInstance extends Instance {
     private static final int UNREGISTER_PASSES = 4;
 
     /**
-     * The loaded chunks, keyed by the chunk index of their position.
+     * Which chunk sits at which position, and which position is busy.
      * <p>
-     * A plain concurrent hash map rather than the synchronised long map of the container: chunk
-     * streaming is a lookup-dominated access pattern, and the copy-on-write map underneath the
-     * container pays for every load and unload instead.
-     * </p>
-     */
-    private final Map<Long, Chunk> chunks = new ConcurrentHashMap<>();
-
-    /**
-     * The chunks which are being loaded right now, keyed by chunk index.
-     * <p>
-     * Holding the future rather than a flag is what makes two concurrent requests for the same
-     * chunk share one load instead of racing into two chunk objects.
+     * The two maps behind this and the four transitions between them used to be fields and
+     * {@code private} methods of this class. They are a responsibility rather than a detail of the
+     * instance, and {@link ChunkRegistry} carries both the answer and the state it needs to give it,
+     * so nothing of the chunk map is left here to be shared with anything else.
      * </p>
      * <p>
-     * This map is also the lock of a chunk position. Every transition of a position — starting a
-     * load, publishing its result, unloading the chunk again — happens inside a
-     * {@link ConcurrentHashMap#compute} on the index of that position, which serialises them without
-     * putting a monitor over the whole instance. That is what the entry of a position is worth far
-     * more than the future it holds: without it, an unload and the load it races can both believe
-     * they went first, and the chunk which loses ends up in the instance with its loaded flag
-     * already cleared, where nothing will ever unload it again.
+     * That the map of running loads is also the lock of a position is stated where the transitions
+     * are, in {@link ChunkRegistry}, and the steps handed to {@link ChunkRegistry#publish} and
+     * {@link ChunkRegistry#remove} come from {@link ChunkLifecycle}.
      * </p>
      */
-    private final Map<Long, CompletableFuture<Chunk>> loadingChunks = new ConcurrentHashMap<>();
+    private final ChunkRegistry registry;
 
     /**
-     * The section modifiers a generator produced for chunks which were not loaded at the time,
-     * keyed by the chunk index of the chunk they belong to.
+     * Everything this instance does when a block changes.
      * <p>
-     * A generator may write outside the chunk it was asked about through
-     * {@link GenerationUnit#fork(java.util.function.Consumer)}. Those writes cannot be applied yet
-     * when their target does not exist, and dropping them would make a generator produce different
-     * worlds depending on the order in which chunks happened to be requested.
+     * The three entry points, the write, the neighbour pass, the packets, the event, the recursion
+     * guard and the change timestamp used to be members of this class, and the ordering they promise —
+     * the write lock of one chunk held across the write and across nothing else — was a property of
+     * one {@code private} method nobody could drive on its own. {@link BlockWriter} carries all of it,
+     * which is what makes that ordering something a test can measure.
      * </p>
      */
-    private final Map<Long, List<GeneratorImpl.SectionModifierImpl>> generationForks = new ConcurrentHashMap<>();
+    private final BlockWriter blockWriter;
 
     /**
-     * The registries the biomes of a generated chunk are looked up in.
+     * Everything this instance does with a {@link ChunkLoader}: the four save paths, the read and the
+     * notification that a chunk left.
      * <p>
-     * Kept here rather than read from {@link MinecraftServer} so an instance built against a process
-     * which is not the global one generates against the registries of that process.
+     * Final, and the loader inside it is what changes. The field which used to sit here was
+     * {@code volatile} because a public setter wrote it while the load path read it from another
+     * thread; that reason did not go away, it moved into {@link ChunkPersistence} along with the
+     * loader.
      * </p>
      */
-    private final Registries registries;
+    private final ChunkPersistence persistence;
 
     /**
-     * The generator which fills a chunk no loader knows about, null while the world stays empty.
-     */
-    private volatile @Nullable Generator generator;
-
-    /**
-     * The blocks changed since the last tick, used to break recursion between block handlers.
+     * Everything that happens to a chunk between not existing and not existing again, and what fills a
+     * chunk no loader knows about.
      * <p>
-     * Concurrent rather than a plain map behind a lock that guarded nothing, which is the shape the
-     * container has.
-     * </p>
-     */
-    private final Map<BlockVec, Block> currentlyChangingBlocks = new ConcurrentHashMap<>();
-
-    /**
-     * The factory every chunk of this instance is created by.
-     * <p>
-     * Volatile because the setter is public and unsynchronized while the load path reads the field
-     * from a chunk task on another thread. Without it the reader may not only miss the change, it
-     * may see a half-constructed supplier: the value is an arbitrary object handed in by a caller,
-     * and only a volatile write publishes that object safely. Synchronizing the setter instead
-     * would put a lock on the monitor of a public object, which is exactly what callers must not be
-     * able to hold against this instance.
-     * </p>
-     */
-    private volatile ChunkSupplier chunkSupplier = FalcoChunk::new;
-
-    /**
-     * The loader chunks of this instance are read from and written to, a no-op loader when the
-     * instance was built without one.
-     * <p>
-     * Volatile for the same reason as {@link #chunkSupplier}: written by a public unsynchronized
-     * setter, read on the load path from another thread, and the value is a caller object whose
-     * construction has to be visible to that reader.
-     * </p>
-     */
-    private volatile ChunkLoader chunkLoader;
-
-    private volatile boolean autoChunkLoad = true;
-
-    private volatile long lastBlockChangeTime;
-
-    /**
-     * How a chunk of this instance is told that it was loaded, or null for the built-in way.
-     * <p>
-     * {@code Chunk#onLoad()} and {@code Chunk#unload()} are {@code protected}, so this package can
-     * drive them only on {@link FalcoChunk}, a type it defines itself. A caller that owns another
-     * chunk type — a lighting chunk from {@code falco-light}, say — can reach both hooks and hands
-     * them over here. Null means the built-in pair, which requires a {@link FalcoChunk} exactly as
-     * before.
+     * The create, the read, the publish, the unload and the two settings which steer them —
+     * the chunk supplier and the auto load flag — used to be {@code private} members of this class,
+     * which meant that a publish could only be reached by driving a whole load through a loader. They
+     * are a responsibility of their own and {@link ChunkLifecycle} carries it, which is what makes
+     * each step reachable and measurable one at a time.
      * </p>
      * <p>
-     * Volatile for the same reason as {@link #chunkSupplier}: a caller object written by a public
-     * setter and read on the load path from another thread.
+     * {@link ChunkGeneration} is held by this part rather than beside it, and is reached through
+     * {@link ChunkLifecycle#generation()}. A chunk is generated exactly once and that once is inside
+     * its load, so a field here would have been a fifth reference nothing but the lifecycle ever
+     * touches.
      * </p>
      */
-    private volatile @Nullable Consumer<Chunk> chunkLoaded;
-
-    /**
-     * How a chunk of this instance is told that it left, or null for the built-in way.
-     *
-     * @see #chunkLoaded
-     */
-    private volatile @Nullable Consumer<Chunk> chunkUnloaded;
-
-    /**
-     * Whether {@link #shutdown(InstanceManager)} saves the chunks before it unregisters.
-     */
-    private volatile boolean saveOnShutdown = true;
-
-    /**
-     * Whether {@link #shutdown(InstanceManager)} closes the loader, if the loader can be closed.
-     */
-    private volatile boolean ownsLoader;
+    private final ChunkLifecycle lifecycle;
 
     /**
      * Creates an instance in the overworld dimension without a chunk loader.
@@ -311,10 +263,21 @@ public class FalcoInstance extends Instance {
     public FalcoInstance(Registries registries, UUID uuid, RegistryKey<DimensionType> dimensionType,
                          @Nullable ChunkLoader loader, Key dimensionName) {
         super(registries, uuid, dimensionType, dimensionName);
-        this.registries = registries;
-        this.chunkLoader = Objects.requireNonNullElseGet(loader, ChunkLoader::noop);
-        this.chunkLoader.loadInstance(this);
-        this.lastBlockChangeTime = System.nanoTime();
+        this.registry = new ChunkRegistry();
+        this.persistence = new ChunkPersistence(loader);
+        this.blockWriter = new BlockWriter(this);
+        // The registries are handed straight through rather than kept. They are what the biomes of a
+        // generated chunk are looked up in, generation is the only thing that asks, and this is the
+        // only line that hands them over — a field for them would be state of the facade that nothing
+        // reads twice. Taken as an argument rather than read from MinecraftServer so an instance built
+        // against a process which is not the global one generates against the registries of that
+        // process. ChunkGeneration is handed getChunkAt rather than this instance, because a neighbour
+        // a fork writes into is the only thing generation ever needs a world for.
+        this.lifecycle = new ChunkLifecycle(this, this.registry, this.persistence,
+                new ChunkGeneration(registries, this::getChunkAt));
+        // Last, and outside every constructor above: loadInstance may call back into this instance,
+        // and a callback into an object whose parts are not all built yet reads one of them as null.
+        this.persistence.loader().loadInstance(this);
     }
 
     /**
@@ -356,7 +319,7 @@ public class FalcoInstance extends Instance {
      * @throws FalcoInstanceException if the chunks could not be saved or the loader not closed
      */
     public void shutdown(InstanceManager instanceManager) {
-        if (this.saveOnShutdown) {
+        if (this.persistence.saveOnShutdown()) {
             try {
                 saveChunksToStorage().join();
             } catch (Throwable throwable) {
@@ -366,9 +329,9 @@ public class FalcoInstance extends Instance {
         }
         unregister(instanceManager);
 
-        if (!this.ownsLoader) return;
+        if (!this.persistence.ownsLoader()) return;
 
-        if (this.chunkLoader instanceof AutoCloseable closeable) {
+        if (this.persistence.loader() instanceof AutoCloseable closeable) {
             try {
                 closeable.close();
             } catch (Exception exception) {
@@ -413,549 +376,141 @@ public class FalcoInstance extends Instance {
     public void unregister(InstanceManager instanceManager) {
         if (isRegistered()) instanceManager.unregisterInstance(this);
         for (int pass = 0; pass < UNREGISTER_PASSES; pass++) {
-            for (Long index : List.copyOf(this.loadingChunks.keySet())) discardRunningLoad(index);
-            for (Chunk chunk : List.copyOf(this.chunks.values())) unloadChunk(chunk);
-            if (this.loadingChunks.isEmpty() && this.chunks.isEmpty()) {
+            for (Long index : this.registry.loadingPositions()) this.lifecycle.discard(index);
+            for (Chunk chunk : this.registry.snapshot()) this.lifecycle.unload(chunk);
+            if (this.registry.idle()) {
                 // A fork whose target chunk was never requested waits forever, and after this there
                 // is nothing left it could wait for.
-                this.generationForks.clear();
+                this.lifecycle.generation().clearPending();
                 return;
             }
         }
-        this.generationForks.clear();
+        this.lifecycle.generation().clearPending();
         LOGGER.warn("chunks kept arriving while the instance {} was unregistered; {} chunks and {} loads are left behind",
-                getUuid(), this.chunks.size(), this.loadingChunks.size());
+                getUuid(), this.registry.size(), this.registry.loading());
     }
 
     /**
-     * Takes the slot of a running load so its chunk never reaches this instance.
+     * Hands out the registry of chunk positions of this instance.
      * <p>
-     * Removing the entry is the whole claim: the loading thread publishes its chunk only while its
-     * own future is still the entry of the position, so a load which finds the slot empty or taken
-     * knows that somebody decided its result is no longer wanted. The waiting callers are told with
-     * a failure rather than with the chunk, because a chunk which is handed back after it was
-     * discarded looks usable and is not.
+     * Exposed because a facade whose parts cannot be reached is a facade whose parts cannot be
+     * tested, which is the whole reason this class was split.
      * </p>
      *
-     * @param index the chunk index of the position whose load is claimed
+     * @return the registry of this instance
+     * @since 0.4.0
      */
-    private void discardRunningLoad(long index) {
-        final CompletableFuture<Chunk> running = this.loadingChunks.remove(index);
-        if (running == null) return;
-        running.completeExceptionally(new FalcoInstanceException("the chunk "
-                + CoordConversion.chunkIndexGetX(index) + ":" + CoordConversion.chunkIndexGetZ(index)
-                + " was unloaded while it was being loaded, so the load was cancelled"));
+    public ChunkRegistry registry() {
+        return this.registry;
+    }
+
+    /**
+     * Hands out the lifecycle of the chunks of this instance.
+     *
+     * @return the lifecycle of this instance
+     * @since 0.4.0
+     */
+    public ChunkLifecycle lifecycle() {
+        return this.lifecycle;
+    }
+
+    /**
+     * Hands out the block writer of this instance.
+     * <p>
+     * Exposed for the same reason as {@link #registry()}: the ordering {@link BlockWriter} promises
+     * around the lock of a chunk can only be measured by a caller which can drive one write on its
+     * own, and no entry point of this class offers that.
+     * </p>
+     *
+     * @return the block writer of this instance
+     * @since 0.4.0
+     */
+    public BlockWriter blockWriter() {
+        return this.blockWriter;
     }
 
     @Override
     public void setBlock(int x, int y, int z, Block block, boolean doBlockUpdates) {
-        Chunk chunk = getChunkAt(x, z);
-        if (chunk == null) {
-            if (!this.autoChunkLoad) {
-                throw new IllegalStateException(
-                        "tried to set a block in the unloaded chunk " + CoordConversion.globalToChunk(x)
-                                + ":" + CoordConversion.globalToChunk(z) + " while auto chunk load is disabled");
-            }
-            chunk = loadChunk(CoordConversion.globalToChunk(x), CoordConversion.globalToChunk(z)).join();
-        }
-        if (chunk.isLoaded()) writeBlock(requireManagedChunk(chunk), x, y, z, block, null, null, doBlockUpdates, 0);
+        this.blockWriter.setBlock(x, y, z, block, doBlockUpdates);
     }
 
     @Override
     public boolean placeBlock(BlockHandler.Placement placement, boolean doBlockUpdates) {
-        final Point blockPosition = placement.getBlockPosition();
-        final Chunk chunk = getChunkAt(blockPosition);
-        if (chunk == null || !chunk.isLoaded()) return false;
-        writeBlock(requireManagedChunk(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(),
-                placement.getBlock(), placement, null, doBlockUpdates, 0);
-        return true;
+        return this.blockWriter.placeBlock(placement, doBlockUpdates);
     }
 
     @Override
     public boolean breakBlock(Player player, Point blockPosition, BlockFace blockFace, boolean doBlockUpdates) {
-        final Chunk chunk = getChunkAt(blockPosition);
-        if (chunk == null || !chunk.isLoaded() || chunk.isReadOnly()) return false;
-
-        final Block block = getBlock(blockPosition);
-        if (block.isAir()) {
-            // The client believes there is a block here; hand it the chunk it actually has.
-            chunk.sendChunk(player);
-            return false;
-        }
-        final PlayerBlockBreakEvent event = new PlayerBlockBreakEvent(player, this, block, Block.AIR,
-                blockPosition.asBlockVec(), blockFace);
-        EventDispatcher.call(event);
-        if (event.isCancelled()) return false;
-
-        final Block resultBlock = event.getResultBlock();
-        writeBlock(requireManagedChunk(chunk), blockPosition.blockX(), blockPosition.blockY(), blockPosition.blockZ(), resultBlock,
-                null, new BlockHandler.PlayerDestroy(block, resultBlock, this, blockPosition, player),
-                doBlockUpdates, 0);
-        PacketSendingUtils.sendGroupedPacket(chunk.getViewers(),
-                new WorldEventPacket(WorldEvent.PARTICLES_DESTROY_BLOCK.id(), blockPosition, block.stateId(), false),
-                // The breaking player already played the effect locally.
-                viewer -> !viewer.equals(player));
-        return true;
-    }
-
-    /**
-     * Writes a block into a chunk and tells everyone who needs to know.
-     * <p>
-     * Only the write lock of the touched chunk is held here. The container of Minestom takes its own
-     * monitor around the whole method, which turns every block write in the world into a queue
-     * behind every other one; two writes to two chunks have no reason to wait for each other.
-     * </p>
-     * <p>
-     * The chunk is taken as a {@link FalcoChunk} rather than a {@link Chunk} because the block
-     * setter carrying a placement and a destruction is {@code protected} on {@code Chunk} and only
-     * widened to public by {@code DynamicChunk}. That is a third lifecycle barrier next to the two
-     * hooks {@link FalcoChunk} re-exposes, and it is answered the same way.
-     * </p>
-     *
-     * @param chunk          the chunk which receives the block, has to be loaded
-     * @param x              the block X
-     * @param y              the block Y
-     * @param z              the block Z
-     * @param block          the block to write
-     * @param placement      the placement which caused the write, null if it was not a placement
-     * @param destroy        the destruction which caused the write, null if it was not a break
-     * @param doBlockUpdates true to let the neighbours of the block reshape themselves
-     * @param updateDistance how many neighbour updates deep this write already is
-     */
-    private void writeBlock(DynamicChunk chunk, int x, int y, int z, Block block,
-                            @Nullable BlockHandler.Placement placement, @Nullable BlockHandler.Destroy destroy,
-                            boolean doBlockUpdates, int updateDistance) {
-        if (chunk.isReadOnly()) return;
-        final DimensionType dimension = getCachedDimensionType();
-        if (y >= dimension.maxY() || y < dimension.minY()) {
-            LOGGER.warn("tried to set a block outside the world bounds, should be within [{}, {}): {}",
-                    dimension.minY(), dimension.maxY(), y);
-            return;
-        }
-        final BlockVec blockPosition = new BlockVec(x, y, z);
-        // A handler which destroys its own block would otherwise recurse until the stack ends.
-        if (Objects.equals(this.currentlyChangingBlocks.get(blockPosition), block)) return;
-        this.currentlyChangingBlocks.put(blockPosition, block);
-
-        Block placed = block;
-        chunk.lockWriteLock();
-        try {
-            this.lastBlockChangeTime = System.nanoTime();
-            final BlockPlacementRule rule = MinecraftServer.getBlockManager().getBlockPlacementRule(placed);
-            if (placement != null && rule != null && doBlockUpdates) {
-                placed = Objects.requireNonNullElse(rule.blockPlace(placementState(placement, placed, blockPosition)), Block.AIR);
-            }
-            chunk.setBlock(x, y, z, placed, placement, destroy);
-        } finally {
-            chunk.unlockWriteLock();
-        }
-
-        // Outside the chunk lock on purpose: a neighbour may live in another chunk, and taking a
-        // second chunk lock while holding the first is how two block writes deadlock each other.
-        if (doBlockUpdates) updateNeighbours(blockPosition, updateDistance);
-
-        chunk.sendPacketToViewers(new BlockChangePacket(blockPosition, placed.stateId()));
-        final BlockEntityType blockEntityType = placed.registry().blockEntityType();
-        if (blockEntityType != null) {
-            final CompoundBinaryTag data = BlockUtils.extractClientNbt(placed);
-            chunk.sendPacketToViewers(new BlockEntityDataPacket(blockPosition, blockEntityType, data));
-        }
-        EventDispatcher.call(new InstanceBlockUpdateEvent(this, blockPosition, placed));
-    }
-
-    /**
-     * Builds the state a placement rule is asked about.
-     *
-     * @param placement     the placement which caused the write
-     * @param block         the block which is about to be placed
-     * @param blockPosition the position the block goes to
-     * @return the state to hand to {@code BlockPlacementRule#blockPlace}
-     */
-    @Contract("_, _, _ -> new")
-    private BlockPlacementRule.PlacementState placementState(BlockHandler.Placement placement, Block block,
-                                                             Point blockPosition) {
-        if (placement instanceof BlockHandler.PlayerPlacement playerPlacement) {
-            final Player player = playerPlacement.getPlayer();
-            return new BlockPlacementRule.PlacementState(this, block, playerPlacement.getBlockFace(), blockPosition,
-                    new Vec(playerPlacement.getCursorX(), playerPlacement.getCursorY(), playerPlacement.getCursorZ()),
-                    player.getPosition(), player.getItemInHand(playerPlacement.getHand()), player.isSneaking());
-        }
-        return new BlockPlacementRule.PlacementState(this, block, null, blockPosition, null, null, null, false);
-    }
-
-    /**
-     * Lets the six neighbours of a changed block reshape themselves.
-     *
-     * @param blockPosition  the position of the block which changed
-     * @param updateDistance how many neighbour updates deep the causing write already was
-     */
-    private void updateNeighbours(Point blockPosition, int updateDistance) {
-        final ChunkCache cache = new ChunkCache(this, null, null);
-        final DimensionType dimension = getCachedDimensionType();
-        for (BlockFace face : BLOCK_UPDATE_FACES) {
-            final var direction = face.toDirection();
-            final int neighbourX = blockPosition.blockX() + direction.normalX();
-            final int neighbourY = blockPosition.blockY() + direction.normalY();
-            final int neighbourZ = blockPosition.blockZ() + direction.normalZ();
-            if (neighbourY < dimension.minY() || neighbourY >= dimension.maxY()) continue;
-            final Block neighbour = cache.getBlock(neighbourX, neighbourY, neighbourZ, Condition.NONE);
-            if (neighbour == null || neighbour.isAir()) continue;
-            final BlockPlacementRule rule = MinecraftServer.getBlockManager().getBlockPlacementRule(neighbour);
-            if (rule == null || updateDistance >= rule.maxUpdateDistance()) continue;
-
-            final Vec neighbourPosition = new Vec(neighbourX, neighbourY, neighbourZ);
-            final Block updated = rule.blockUpdate(new BlockPlacementRule.UpdateState(
-                    this, neighbourPosition, neighbour, face.getOppositeFace()));
-            if (neighbour.equals(updated)) continue;
-            final Chunk neighbourChunk = getChunkAt(neighbourPosition);
-            if (neighbourChunk == null || !neighbourChunk.isLoaded()) continue;
-            writeBlock(requireManagedChunk(neighbourChunk), neighbourX, neighbourY, neighbourZ, updated, null, null,
-                    true, updateDistance + 1);
-        }
+        return this.blockWriter.breakBlock(player, blockPosition, blockFace, doBlockUpdates);
     }
 
     @Override
     public CompletableFuture<Chunk> loadChunk(int chunkX, int chunkZ) {
-        return retrieveChunk(chunkX, chunkZ);
+        return this.lifecycle.retrieve(chunkX, chunkZ);
     }
 
     @Override
     public CompletableFuture<@Nullable Chunk> loadOptionalChunk(int chunkX, int chunkZ) {
         final Chunk loaded = getChunk(chunkX, chunkZ);
         if (loaded != null) return CompletableFuture.completedFuture(loaded);
-        if (!this.autoChunkLoad) return CompletableFuture.completedFuture(null);
-        return retrieveChunk(chunkX, chunkZ);
-    }
-
-    /**
-     * Hands back the chunk at the given position, loading it if it is not there yet.
-     * <p>
-     * Two callers asking for the same chunk at the same time share one load: the first one to put
-     * its future into the map of loading chunks performs the work, everyone else receives that same
-     * future. The decision is taken inside a {@link ConcurrentHashMap#compute} on the position, and
-     * the chunk map is read a second time in there. Without that second read a caller which looked
-     * at the chunk map just before a load published, and reached this point just after that load
-     * removed its entry, would start a second load for a position which already has a chunk. The
-     * second chunk then replaces the first one in the map and the first one is orphaned: still
-     * marked as loaded, still holding its tick partition and its viewers, and no longer reachable.
-     * </p>
-     * <p>
-     * The work itself starts after the decision, never inside it. A loader without parallel support
-     * runs on the calling thread, and a nested {@code compute} on the same map would deadlock.
-     * </p>
-     * <p>
-     * A failure completes the returned future exceptionally and stops there. It is deliberately not
-     * also pushed into the exception manager of the server the way the container does it, because a
-     * failure that is both reported and returned gets handled twice and logged twice.
-     * </p>
-     *
-     * @param chunkX the chunk X
-     * @param chunkZ the chunk Z
-     * @return a future completed with the chunk, or completed exceptionally if it cannot be created
-     */
-    private CompletableFuture<Chunk> retrieveChunk(int chunkX, int chunkZ) {
-        final long index = CoordConversion.chunkIndex(chunkX, chunkZ);
-        final Chunk loaded = this.chunks.get(index);
-        if (loaded != null) return CompletableFuture.completedFuture(loaded);
-
-        final CompletableFuture<Chunk> own = new CompletableFuture<>();
-        final AtomicReference<Chunk> published = new AtomicReference<>();
-        final CompletableFuture<Chunk> slot = this.loadingChunks.compute(index, (_, running) -> {
-            if (running != null) return running;
-            final Chunk cached = this.chunks.get(index);
-            if (cached != null) {
-                published.set(cached);
-                return null;
-            }
-            return own;
-        });
-        final Chunk cached = published.get();
-        if (cached != null) return CompletableFuture.completedFuture(cached);
-        if (slot != own) return slot;
-
-        final ChunkLoader loader = this.chunkLoader;
-        if (loader.supportsParallelLoading()) {
-            Thread.startVirtualThread(() -> completeLoad(index, chunkX, chunkZ, loader, own));
-        } else {
-            // A loader without parallel support is read on the calling thread, which keeps a
-            // `loadChunk(…).join()` from a tick free of a thread hand-off it would only wait for.
-            completeLoad(index, chunkX, chunkZ, loader, own);
-        }
-        return own;
-    }
-
-    /**
-     * Reads a chunk through the loader, publishes it and completes the waiting future.
-     * <p>
-     * The chunk is produced first and published second, and the publish may be refused. Everything
-     * in between the two is the window in which an unload can decide that this chunk is not wanted
-     * any more; a load which is refused therefore has to undo itself rather than complain, which is
-     * what the discard below does.
-     * </p>
-     *
-     * @param index  the chunk index of the position, the key in the map of loading chunks
-     * @param chunkX the chunk X
-     * @param chunkZ the chunk Z
-     * @param loader the loader the chunk is read from
-     * @param future the future handed to the callers waiting for this chunk
-     */
-    private void completeLoad(long index, int chunkX, int chunkZ, ChunkLoader loader, CompletableFuture<Chunk> future) {
-        final DynamicChunk falcoChunk;
-        try {
-            Chunk chunk = loader.loadChunk(this, chunkX, chunkZ);
-            if (chunk == null) {
-                chunk = createChunk(chunkX, chunkZ);
-                chunk.onGenerate();
-            }
-            falcoChunk = requireManagedChunk(chunk);
-        } catch (Throwable throwable) {
-            this.loadingChunks.remove(index, future);
-            future.completeExceptionally(throwable);
-            return;
-        }
-        if (!publishChunk(index, falcoChunk, future)) {
-            // The chunk was never part of this instance, so there is no map entry and no partition
-            // to clean up. The loader is still told, because it created the chunk and may hold
-            // bookkeeping for it, which its own documentation allows for explicitly.
-            notifyUnloaded(falcoChunk);
-            this.chunkLoader.unloadChunk(falcoChunk);
-            future.completeExceptionally(new FalcoInstanceException("the chunk " + chunkX + ":" + chunkZ
-                    + " was unloaded while it was being loaded, so the loaded chunk was discarded"));
-            return;
-        }
-        notifyLoaded(falcoChunk);
-        future.complete(falcoChunk);
-        EventDispatcher.call(new InstanceChunkLoadEvent(this, falcoChunk));
-    }
-
-    /**
-     * Makes a freshly loaded chunk part of this instance, unless somebody claimed its position.
-     * <p>
-     * Putting the chunk into the chunk map and giving it a tick partition are one step, taken while
-     * the position is held, so an unload of the same position can only run entirely before or
-     * entirely after it. Splitting them is what lets Minestom delete a partition that is created a
-     * moment later, which leaves the chunk being ticked for the rest of the life of the server even
-     * though nothing else knows about it any more.
-     * </p>
-     * <p>
-     * The loaded flag of the chunk is deliberately set outside, because it calls a hook a subclass
-     * may override, and foreign code has no business running while a position is held.
-     * </p>
-     *
-     * @param index  the chunk index of the position
-     * @param chunk  the chunk to publish
-     * @param future the future of this load, which has to still be the entry of the position
-     * @return true if the chunk is now part of this instance, false if the load was claimed
-     */
-    private boolean publishChunk(long index, DynamicChunk chunk, CompletableFuture<Chunk> future) {
-        final AtomicBoolean published = new AtomicBoolean();
-        this.loadingChunks.compute(index, (_, running) -> {
-            if (running != future) return running;
-            this.chunks.put(index, chunk);
-            MinecraftServer.process().dispatcher().createPartition(chunk);
-            published.set(true);
-            return null;
-        });
-        return published.get();
-    }
-
-    /**
-     * Creates a chunk through the chunk supplier of this instance and generates it.
-     * <p>
-     * This is the path a chunk takes which no {@link ChunkLoader} knows about. Without a generator
-     * the chunk stays empty, which is a world made of air rather than a failure.
-     * </p>
-     *
-     * @param chunkX the chunk X
-     * @param chunkZ the chunk Z
-     * @return the created chunk
-     * @throws FalcoInstanceException if the chunk supplier returned null
-     */
-    protected Chunk createChunk(int chunkX, int chunkZ) {
-        final Chunk chunk = this.chunkSupplier.createChunk(this, chunkX, chunkZ);
-        if (chunk == null) {
-            throw new FalcoInstanceException("the chunk supplier returned null for chunk " + chunkX + ":" + chunkZ);
-        }
-        final Generator current = this.generator;
-        if (current != null && chunk.shouldGenerate()) {
-            applyGenerator(chunk, current);
-        } else {
-            applyPendingForks(chunk);
-        }
-        return chunk;
-    }
-
-    /**
-     * Checks that a chunk is one this instance can manage.
-     * <p>
-     * A chunk of any other type would be accepted by everything except the unload path, where the
-     * {@code protected} lifecycle hooks are out of reach, so it would silently keep reporting itself
-     * as loaded forever. Refusing it here names the cause at the point where the wrong supplier was
-     * used.
-     * </p>
-     *
-     * @param chunk the chunk to check
-     * @return the same chunk, typed
-     * @throws FalcoInstanceException if the chunk is not a {@link FalcoChunk}
-     */
-    @Contract("_ -> param1")
-    private DynamicChunk requireManagedChunk(Chunk chunk) {
-        if (this.chunkLoaded == null || this.chunkUnloaded == null) {
-            if (chunk instanceof FalcoChunk falcoChunk) return falcoChunk;
-            throw new FalcoInstanceException("this instance only manages " + FalcoChunk.class.getName()
-                    + ", but its chunk supplier produced a " + chunk.getClass().getName()
-                    + "; the lifecycle hooks of any other chunk cannot be reached from this package."
-                    + " Configure setChunkLifecycle if you own the chunk type and can reach them");
-        }
-        if (chunk instanceof DynamicChunk dynamicChunk) return dynamicChunk;
-        throw new FalcoInstanceException("this instance manages subtypes of "
-                + DynamicChunk.class.getName() + ", but its chunk supplier produced a "
-                + chunk.getClass().getName());
-    }
-
-    /**
-     * Tells a chunk that it is now part of this instance.
-     *
-     * @param chunk the chunk which finished loading
-     */
-    private void notifyLoaded(DynamicChunk chunk) {
-        @Nullable Consumer<Chunk> configured = this.chunkLoaded;
-
-        if (configured == null) {
-            ((FalcoChunk) chunk).markLoaded();
-            return;
-        }
-        configured.accept(chunk);
-    }
-
-    /**
-     * Tells a chunk that it is no longer part of this instance.
-     *
-     * @param chunk the chunk which left the instance
-     */
-    private void notifyUnloaded(DynamicChunk chunk) {
-        @Nullable Consumer<Chunk> configured = this.chunkUnloaded;
-
-        if (configured == null) {
-            ((FalcoChunk) chunk).markUnloaded();
-            return;
-        }
-        configured.accept(chunk);
+        if (!this.lifecycle.autoLoad()) return CompletableFuture.completedFuture(null);
+        return this.lifecycle.retrieve(chunkX, chunkZ);
     }
 
     /**
      * Removes a chunk from this instance.
      * <p>
-     * Taking the chunk out of the chunk map, clearing its loaded flag and deleting its tick
-     * partition are one step, taken while the position of the chunk is held, so a load which is
-     * publishing the same position cannot interleave with it. Everything else — the packet, the
-     * event, the entities and the loader — follows outside, because all four can call back into this
-     * instance and holding a position while foreign code runs is how two chunks deadlock each other.
-     * </p>
-     * <p>
-     * A running load is not cancelled here and not waited for either, and that is not an omission: a
-     * position which is loading has no chunk in the map, so a chunk a caller can hand to this method
-     * is never the one being loaded. It is either the chunk of that position, which the atomic step
-     * below removes, or a chunk of an earlier life of that position, which was already unloaded and
-     * is refused by the first line. Cancelling a load needs a position rather than a chunk, and
-     * {@link #unregister(InstanceManager)} is where that happens.
+     * What that means step by step, and which of the steps runs while the position of the chunk is
+     * held, is documented on {@link ChunkLifecycle#unload(Chunk)}; this is the door
+     * {@code Instance} demands.
      * </p>
      * <p>
      * Unloading the same chunk twice does nothing the second time, which makes this usable in a
      * cleanup path that may run more than once.
      * </p>
      *
-     * @param chunk the chunk to remove, has to be a {@link FalcoChunk}
-     * @throws FalcoInstanceException if the chunk is not a {@link FalcoChunk}
+     * @param chunk the chunk to remove, has to be a {@link FalcoChunk} unless a lifecycle pair was
+     *              installed through {@link #setChunkLifecycle(Consumer, Consumer)}
+     * @throws FalcoInstanceException if this instance cannot drive the lifecycle of that chunk
      */
     @Override
     public void unloadChunk(Chunk chunk) {
-        if (!chunk.isLoaded()) return;
-        final DynamicChunk falcoChunk = requireManagedChunk(chunk);
-        final int chunkX = falcoChunk.getChunkX();
-        final int chunkZ = falcoChunk.getChunkZ();
-        final long index = CoordConversion.chunkIndex(chunkX, chunkZ);
-        final AtomicBoolean removed = new AtomicBoolean();
-        this.loadingChunks.compute(index, (_, running) -> {
-            if (this.chunks.remove(index, falcoChunk)) {
-                notifyUnloaded(falcoChunk);
-                MinecraftServer.process().dispatcher().deletePartition(falcoChunk);
-                removed.set(true);
-            }
-            return running;
-        });
-        if (!removed.get()) return;
-        falcoChunk.sendPacketToViewers(new UnloadChunkPacket(chunkX, chunkZ));
-        EventDispatcher.call(new InstanceChunkUnloadEvent(this, falcoChunk));
-        getEntityTracker().chunkEntities(chunkX, chunkZ, EntityTracker.Target.ENTITIES).forEach(Entity::remove);
-        this.chunkLoader.unloadChunk(falcoChunk);
+        this.lifecycle.unload(chunk);
     }
 
     @Override
     public @Nullable Chunk getChunk(int chunkX, int chunkZ) {
-        return this.chunks.get(CoordConversion.chunkIndex(chunkX, chunkZ));
+        return this.registry.chunk(chunkX, chunkZ);
     }
 
     @Override
     public @UnmodifiableView Collection<Chunk> getChunks() {
-        return Collections.unmodifiableCollection(this.chunks.values());
+        return this.registry.chunks();
     }
 
     @Override
     public CompletableFuture<Void> saveInstance() {
-        final ChunkLoader loader = this.chunkLoader;
-        return runSave(loader.supportsParallelSaving(), () -> loader.saveInstance(this));
+        return this.persistence.saveInstance(this);
     }
 
     @Override
     public CompletableFuture<Void> saveChunkToStorage(Chunk chunk) {
-        final ChunkLoader loader = this.chunkLoader;
-        return runSave(loader.supportsParallelSaving(), () -> loader.saveChunk(chunk));
+        return this.persistence.saveChunk(chunk);
     }
 
     @Override
     public CompletableFuture<Void> saveChunksToStorage() {
-        final ChunkLoader loader = this.chunkLoader;
-        final List<Chunk> snapshot = List.copyOf(this.chunks.values());
-        return runSave(loader.supportsParallelSaving(), () -> loader.saveChunks(snapshot));
-    }
-
-    /**
-     * Runs a save either on the calling thread or on a virtual thread.
-     *
-     * @param parallel true to move the work off the calling thread
-     * @param save     the work to perform
-     * @return a future completed once the work is done, completed exceptionally if it threw
-     */
-    private CompletableFuture<Void> runSave(boolean parallel, Runnable save) {
-        if (!parallel) {
-            try {
-                save.run();
-                return CompletableFuture.completedFuture(null);
-            } catch (Throwable throwable) {
-                return CompletableFuture.failedFuture(throwable);
-            }
-        }
-        final CompletableFuture<Void> future = new CompletableFuture<>();
-        Thread.startVirtualThread(() -> {
-            try {
-                save.run();
-                future.complete(null);
-            } catch (Throwable throwable) {
-                future.completeExceptionally(throwable);
-            }
-        });
-        return future;
+        return this.persistence.saveChunks(this.registry.snapshot());
     }
 
     @Override
     public void setChunkSupplier(ChunkSupplier chunkSupplier) {
-        this.chunkSupplier = Objects.requireNonNull(chunkSupplier, "the chunk supplier cannot be null");
+        this.lifecycle.supplier(chunkSupplier);
     }
 
     @Override
     public ChunkSupplier getChunkSupplier() {
-        return this.chunkSupplier;
+        return this.lifecycle.supplier();
     }
 
     /**
@@ -1173,8 +728,8 @@ public class FalcoInstance extends Instance {
                 instance.setChunkLifecycle(this.chunkLoaded, this.chunkUnloaded);
             }
             instance.enableAutoChunkLoad(this.autoChunkLoad);
-            instance.saveOnShutdown = this.saveOnShutdown;
-            instance.ownsLoader = this.ownsLoader;
+            instance.persistence.saveOnShutdown(this.saveOnShutdown);
+            instance.persistence.ownsLoader(this.ownsLoader);
 
             instanceManager.registerInstance(instance);
             return instance;
@@ -1208,22 +763,38 @@ public class FalcoInstance extends Instance {
      * Without this the instance manages {@link FalcoChunk} and nothing else, for a reason that is
      * not a preference: {@code Chunk#onLoad()} and {@code Chunk#unload()} are {@code protected}, so
      * this package can drive them only on a type it defines itself. A caller who owns another chunk
-     * type can reach both hooks and connects them here — which is how a chunk from another module,
-     * a lighting chunk for instance, becomes usable in this instance without either module having
-     * to know the other.
+     * type can reach both hooks — the type is theirs, so the {@code protected} pair is in reach of
+     * its own package — and connects them here, without either module having to know the other.
      * </p>
      * <pre>{@code
-     * instance.setChunkSupplier(scheduler.supplier());
+     * instance.setChunkSupplier(MyChunk::new);
      * instance.setChunkLifecycle(
-     *         chunk -> ((FalcoLightingChunk) chunk).markLoaded(),
-     *         chunk -> ((FalcoLightingChunk) chunk).markUnloaded());
+     *         chunk -> ((MyChunk) chunk).markLoaded(),
+     *         chunk -> ((MyChunk) chunk).markUnloaded());
      * }</pre>
+     * <p>
+     * The lighting chunk of {@code falco-light} used to be the worked example here and is one no
+     * longer: since US-3.06 {@code FalcoLightingChunk} extends {@link FalcoChunk}, so
+     * {@code instance.setChunkSupplier(scheduler.supplier())} is the whole setup and this method has
+     * nothing left to do for it. What remains for this pair is the case it was always the general
+     * answer to — a chunk type this repository never sees.
+     * </p>
      * <p>
      * Both halves are one call so the pair cannot be set half way. Set them before the first chunk
      * is loaded; a chunk that was published under one lifecycle is not told about a later change.
      * The instance stops checking for {@link FalcoChunk} from here on and requires only a
-     * {@code DynamicChunk}, so an unsuitable supplier now fails on the cast inside your own
-     * function rather than with a message from this class.
+     * {@link Chunk}, so an unsuitable supplier now fails on the cast inside your own function rather
+     * than with a message from this class.
+     * </p>
+     * <p>
+     * The two halves are not called under the same conditions, and the difference matters for what
+     * may be written into them. The loaded half runs after the position of the chunk was released and
+     * is unconstrained. The unloaded half runs <em>while</em> the position is held, because clearing
+     * the loaded flag has to be atomic with the chunk leaving the chunk map, so it runs under the
+     * rules {@link ChunkRegistry} states for such a step: it has to be short, must not block, must
+     * not call back into the chunk map of this instance — a {@code getChunk}, {@code loadChunk} or
+     * {@code unloadChunk} from in there can wedge that position for good — and must not throw, which
+     * would leave the chunk out of the map and only half unloaded.
      * </p>
      *
      * @param onLoaded   what tells a chunk that it is part of this instance
@@ -1231,10 +802,7 @@ public class FalcoInstance extends Instance {
      * @throws NullPointerException if either half is null
      */
     public void setChunkLifecycle(Consumer<Chunk> onLoaded, Consumer<Chunk> onUnloaded) {
-        Objects.requireNonNull(onLoaded, "the loaded half of the lifecycle cannot be null");
-        Objects.requireNonNull(onUnloaded, "the unloaded half of the lifecycle cannot be null");
-        this.chunkLoaded = onLoaded;
-        this.chunkUnloaded = onUnloaded;
+        this.lifecycle.hooks(onLoaded, onUnloaded);
     }
 
     /**
@@ -1243,7 +811,7 @@ public class FalcoInstance extends Instance {
      * @return the current chunk loader
      */
     public ChunkLoader getChunkLoader() {
-        return this.chunkLoader;
+        return this.persistence.loader();
     }
 
     /**
@@ -1257,7 +825,7 @@ public class FalcoInstance extends Instance {
      * @param chunkLoader the new chunk loader
      */
     public void setChunkLoader(ChunkLoader chunkLoader) {
-        this.chunkLoader = Objects.requireNonNull(chunkLoader, "the chunk loader cannot be null");
+        this.persistence.loader(chunkLoader);
     }
 
     /**
@@ -1267,7 +835,7 @@ public class FalcoInstance extends Instance {
      */
     @Override
     public @Nullable Generator generator() {
-        return this.generator;
+        return this.lifecycle.generation().generator();
     }
 
     /**
@@ -1282,7 +850,7 @@ public class FalcoInstance extends Instance {
      */
     @Override
     public void setGenerator(@Nullable Generator generator) {
-        this.generator = generator;
+        this.lifecycle.generation().generator(generator);
     }
 
     /**
@@ -1312,7 +880,8 @@ public class FalcoInstance extends Instance {
                     throw new FalcoInstanceException("the chunk " + chunkX + ":" + chunkZ
                             + " was unloaded before the generator could run over it");
                 }
-                applyGenerator(chunk, generator);
+                this.lifecycle.generation().apply(chunk, generator);
+                refreshLastBlockChangeTime();
                 chunk.sendChunk();
                 future.complete(null);
             } catch (Throwable throwable) {
@@ -1322,175 +891,14 @@ public class FalcoInstance extends Instance {
         return future;
     }
 
-    /**
-     * Runs a generator over a chunk and commits everything it produced in one step.
-     * <p>
-     * The generator writes into copies of the palettes of the chunk, not into the palettes
-     * themselves, and the copies are moved over only after the generator returned. That is the whole
-     * difference to {@code InstanceContainer#generateChunk(Chunk, Generator)}, which hands the live
-     * palettes over and catches whatever the generator throws into the exception manager of the
-     * server. A generator which fails halfway there leaves a chunk that is half built, published and
-     * reported as loaded, and the caller who asked for the chunk is told nothing. Here the failure
-     * travels to that caller and the chunk is exactly as it was.
-     * </p>
-     * <p>
-     * The copies cost one palette clone per section. On a chunk which is still empty — the case
-     * which matters, because that is where a generator normally runs — a palette is in its single
-     * value mode and holds no array at all, so the clone is a few bytes.
-     * </p>
-     * <p>
-     * The write lock of the chunk is held for the commit only. Minestom holds it across the whole
-     * generator instead, which stops every read and every write of that chunk for as long as the
-     * generator runs.
-     * </p>
-     *
-     * @param chunk     the chunk to fill
-     * @param generator the generator to run over the chunk
-     */
-    private void applyGenerator(Chunk chunk, Generator generator) {
-        final List<Section> sections = chunk.getSections();
-        final int sectionCount = sections.size();
-        final GeneratorImpl.GenSection[] staged = new GeneratorImpl.GenSection[sectionCount];
-        Arrays.setAll(staged, index -> {
-            final Section section = sections.get(index);
-            return new GeneratorImpl.GenSection(section.blockPalette().clone(), section.biomePalette().clone());
-        });
-        final GeneratorImpl.UnitImpl unit = GeneratorImpl.chunk(this.registries.biome(), staged,
-                chunk.getChunkX(), chunk.getMinSection(), chunk.getChunkZ());
-
-        generator.generate(unit);
-
-        chunk.lockWriteLock();
-        try {
-            for (int index = 0; index < sectionCount; index++) {
-                final Section section = sections.get(index);
-                final GeneratorImpl.GenSection generated = staged[index];
-                section.blockPalette().copyFrom(generated.blocks());
-                section.biomePalette().copyFrom(generated.biomes());
-                writeSpecialBlocks(chunk, generated.specials(),
-                        (chunk.getMinSection() + index) * Chunk.CHUNK_SECTION_SIZE);
-            }
-            chunk.invalidate();
-        } finally {
-            chunk.unlockWriteLock();
-        }
-
-        applyForks(chunk, unit);
-        applyPendingForks(chunk);
-        refreshLastBlockChangeTime();
-    }
-
-    /**
-     * Writes the blocks of a generated section which need more than a palette entry.
-     * <p>
-     * A palette holds a block state and nothing else, so a block which carries nbt, a handler or a
-     * block entity has to be written through the chunk as well. The generator collected those
-     * separately, keyed by a position relative to its section.
-     * </p>
-     * <p>
-     * The caller has to hold the write lock of the chunk.
-     * </p>
-     *
-     * @param chunk         the chunk which receives the blocks
-     * @param specials      the blocks of the section which need their own entry
-     * @param sectionStartY the block Y at which the section begins
-     */
-    private void writeSpecialBlocks(Chunk chunk, Int2ObjectMap<Block> specials, int sectionStartY) {
-        if (specials.isEmpty()) return;
-        for (Int2ObjectMap.Entry<Block> entry : specials.int2ObjectEntrySet()) {
-            final int position = entry.getIntKey();
-            chunk.setBlock(CoordConversion.chunkBlockIndexGetX(position),
-                    CoordConversion.chunkBlockIndexGetY(position) + sectionStartY,
-                    CoordConversion.chunkBlockIndexGetZ(position),
-                    entry.getValue());
-        }
-    }
-
-    /**
-     * Delivers the writes a generator made outside the chunk it was asked about.
-     * <p>
-     * A fork which lands in a chunk that exists is applied right away, and one which lands in a
-     * chunk that does not is remembered until that chunk is created. Dropping the second kind is
-     * what would make a generator produce a different world depending on the order in which chunks
-     * were requested, which is the property a fork exists to avoid.
-     * </p>
-     *
-     * @param chunk the chunk the generator was asked about
-     * @param unit  the unit the generator wrote into
-     */
-    private void applyForks(Chunk chunk, GeneratorImpl.UnitImpl unit) {
-        final int chunkX = chunk.getChunkX();
-        final int chunkZ = chunk.getChunkZ();
-        for (GeneratorImpl.UnitImpl fork : unit.forks()) {
-            if (!(fork.modifier() instanceof GeneratorImpl.AreaModifierImpl area)) continue;
-            for (GenerationUnit section : area.sections()) {
-                if (!(section.modifier() instanceof GeneratorImpl.SectionModifierImpl modifier)) continue;
-                if (modifier.genSection().blocks().count() == 0) continue;
-                final Point start = section.absoluteStart();
-                if (start.chunkX() == chunkX && start.chunkZ() == chunkZ) {
-                    applyFork(chunk, modifier);
-                    continue;
-                }
-                final Chunk target = getChunkAt(start);
-                if (target != null && target.isLoaded()) {
-                    applyFork(target, modifier);
-                    target.sendChunk();
-                    continue;
-                }
-                this.generationForks.compute(CoordConversion.chunkIndex(start), (_, modifiers) -> {
-                    final List<GeneratorImpl.SectionModifierImpl> pending =
-                            modifiers == null ? new ArrayList<>() : modifiers;
-                    pending.add(modifier);
-                    return pending;
-                });
-            }
-        }
-    }
-
-    /**
-     * Applies the forks which were waiting for the given chunk to exist.
-     *
-     * @param chunk the chunk which just came into being
-     */
-    private void applyPendingForks(Chunk chunk) {
-        final long index = CoordConversion.chunkIndex(chunk.getChunkX(), chunk.getChunkZ());
-        this.generationForks.compute(index, (_, modifiers) -> {
-            if (modifiers != null) {
-                for (GeneratorImpl.SectionModifierImpl modifier : modifiers) applyFork(chunk, modifier);
-            }
-            return null;
-        });
-    }
-
-    /**
-     * Writes one section of a fork into a chunk.
-     *
-     * @param chunk    the chunk which receives the blocks
-     * @param modifier the section of the fork to write
-     */
-    private void applyFork(Chunk chunk, GeneratorImpl.SectionModifierImpl modifier) {
-        final int sectionStartY = modifier.start().blockY();
-        chunk.lockWriteLock();
-        try {
-            final Palette blocks = chunk.getSectionAt(sectionStartY).blockPalette();
-            // A forked section marks an untouched position with a zero, so every block it does carry
-            // was stored with its state raised by one and has to be lowered again here.
-            modifier.genSection().blocks().getAllPresent((x, y, z, value) -> blocks.set(x, y, z, value - 1));
-            writeSpecialBlocks(chunk, modifier.genSection().specials(), sectionStartY);
-            chunk.invalidate();
-        } finally {
-            chunk.unlockWriteLock();
-        }
-    }
-
     @Override
     public void enableAutoChunkLoad(boolean enable) {
-        this.autoChunkLoad = enable;
+        this.lifecycle.autoLoad(enable);
     }
 
     @Override
     public boolean hasEnabledAutoChunkLoad() {
-        return this.autoChunkLoad;
+        return this.lifecycle.autoLoad();
     }
 
     @Override
@@ -1509,7 +917,7 @@ public class FalcoInstance extends Instance {
      * @return the time of the last block change in nanoseconds
      */
     public long getLastBlockChangeTime() {
-        return this.lastBlockChangeTime;
+        return this.blockWriter.lastChangeTime();
     }
 
     /**
@@ -1519,14 +927,14 @@ public class FalcoInstance extends Instance {
      * </p>
      */
     public void refreshLastBlockChangeTime() {
-        this.lastBlockChangeTime = System.nanoTime();
+        this.blockWriter.refreshLastChangeTime();
     }
 
     /**
      * Runs one tick of this instance.
      * <p>
-     * Beyond what the base class does, this clears the recursion guard of the block writes, which
-     * is scoped to a single tick.
+     * Beyond what the base class does, this ends the tick of {@link BlockWriter}, which clears the
+     * recursion guard of the block writes; the guard is scoped to a single tick.
      * </p>
      * <p>
      * Chunks and entities are not ticked here. They are ticked by the thread dispatcher of the
@@ -1538,6 +946,6 @@ public class FalcoInstance extends Instance {
     @Override
     public void tick(long time) {
         super.tick(time);
-        this.currentlyChangingBlocks.clear();
+        this.blockWriter.endTick();
     }
 }

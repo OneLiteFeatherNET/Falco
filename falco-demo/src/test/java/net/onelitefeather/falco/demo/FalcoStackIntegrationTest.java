@@ -20,28 +20,33 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
- * Proves that the three modules run as one stack.
+ * Proves that the three modules run as one stack, through both doors that reach it.
  * <p>
- * This is the combination the project could not build until now, and the reason it could not is
- * worth keeping in view: {@code FalcoInstance} accepted only {@code FalcoChunk} because
- * {@code Chunk#onLoad()} and {@code Chunk#unload()} are {@code protected} and unreachable across a
- * package, while a lighting chunk extends {@code DynamicChunk}. Both demo stacks therefore ran on
- * {@code InstanceContainer}, and {@code ServerStack} says so at length.
+ * This is the combination the project could not build at all, and the reason is worth keeping in
+ * view: {@code FalcoInstance} accepted only {@code FalcoChunk} because {@code Chunk#onLoad()} and
+ * {@code Chunk#unload()} are {@code protected} and unreachable across a package, while a lighting
+ * chunk extended {@code DynamicChunk} — one superclass slot, two claimants.
+ * </p>
+ * <p>
+ * Two doors, because two of them are open and each is worth pinning. {@code setChunkLifecycle} takes
+ * a pair of {@code Consumer<Chunk>} and works for a chunk type this repository never sees; that is
+ * what the first three cases drive, and it is the route a consumer with their own chunk still takes.
+ * {@code FalcoLightingChunk} no longer needs it, because US-3.06 made it a {@code FalcoChunk}, and
+ * the last case drives that: a chunk supplier and nothing else.
  * </p>
  * <p>
  * The test lives here rather than in one of the three modules because this is the only module that
- * may know all of them. The modules stay ignorant of one another: {@code falco-instance} sees a
- * {@code Consumer<Chunk>}, {@code falco-light} sees its own class, and the cast that connects them
- * is written here, in the code of the caller.
+ * may know all of them.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 2.0.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -141,6 +146,46 @@ class FalcoStackIntegrationTest {
             assertEquals(15, service.blockLightAt(chunk, 8, 40, 8));
 
             instance.saveChunksToStorage().join();
+        }
+    }
+
+    /**
+     * The whole stack with no lifecycle pair at all, which is what US-3.06 bought.
+     * <p>
+     * Every other case in this class hands {@code FalcoInstance} two {@code Consumer<Chunk>} that
+     * cast to {@code FalcoLightingChunk}. That pair was the price of the two chunk types being
+     * unrelated; now one extends the other, so the instance drives the hooks itself and the caller
+     * writes one line. The unload is asserted as well, because the pair used to be the only thing
+     * that could clear the loaded flag of this chunk type.
+     * </p>
+     */
+    @Test
+    void testTheStackNeedsNoLifecyclePairAnyMore(Env env) throws IOException {
+        ChunkLightService service = new ChunkLightService();
+        ChunkLightScheduler scheduler = ChunkLightScheduler.builder(service)
+                .executor(Runnable::run)
+                .build();
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder().build(this.worldRoot, OVERWORLD)) {
+            FalcoInstance instance =
+                    new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD, loader);
+            instance.setChunkSupplier(scheduler.supplier());
+            env.process().instance().registerInstance(instance);
+
+            Chunk chunk = instance.loadChunk(0, 0).join();
+
+            assertInstanceOf(FalcoLightingChunk.class, chunk);
+
+            place(chunk, 8, 40, 8, Block.GLOWSTONE);
+            chunk.tick(1L);
+
+            assertEquals(15, service.blockLightAt(chunk, 8, 40, 8),
+                    "the light runs without anybody wiring the two modules together");
+
+            instance.unloadChunk(chunk);
+
+            assertNull(instance.getChunk(0, 0), "the instance let the chunk go");
+            assertFalse(chunk.isLoaded(), "and reached the unload hook without a configured half");
         }
     }
 }

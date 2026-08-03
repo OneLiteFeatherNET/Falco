@@ -38,6 +38,8 @@ dependencyResolutionManagement {
             version("japicmpPlugin", "0.4.6")
             version("adventureBom", "5.1.1")
             version("archunit", "1.4.2")
+            version("jol", "0.17")
+            version("flare", "2.0.1")
 
             plugin("jmh", "me.champeau.jmh").versionRef("jmhPlugin")
             plugin("japicmp", "me.champeau.gradle.japicmp").versionRef("japicmpPlugin")
@@ -48,6 +50,7 @@ dependencyResolutionManagement {
             library("slf4j.simple", "org.slf4j", "slf4j-simple").versionRef("slf4j")
             library("annotations", "org.jetbrains", "annotations").versionRef("annotations")
             library("fastutil", "it.unimi.dsi", "fastutil").version("8.5.18")
+            library("flare.fastutil", "space.vectrix.flare", "flare-fastutil").versionRef("flare")
             library("minestom", "net.minestom", "minestom").withoutVersion()
             library("adventure.nbt", "net.kyori", "adventure-nbt").withoutVersion()
             library("adventure.bom", "net.kyori", "adventure-bom").versionRef("adventureBom")
@@ -58,6 +61,7 @@ dependencyResolutionManagement {
             library("junit.platform.launcher", "org.junit.platform", "junit-platform-launcher").withoutVersion()
 
             library("jmh.core", "org.openjdk.jmh", "jmh-core").versionRef("jmh")
+            library("jol.core", "org.openjdk.jol", "jol-core").versionRef("jol")
         }
     }
 }

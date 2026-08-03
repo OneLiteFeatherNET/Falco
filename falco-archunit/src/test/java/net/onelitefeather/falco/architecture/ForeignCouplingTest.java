@@ -45,7 +45,7 @@ class ForeignCouplingTest {
     private static final String LIGHT_BOUNDARY =
             "net\\.onelitefeather\\.falco\\.light\\."
           + "(ChunkLightService|ChunkLightArea|ChunkLightScheduler"
-          + "|FalcoLightingChunk|MinestomBlockLightSource)(\\$.*)?";
+          + "|FalcoLightingChunk|ChunkLightListener|MinestomBlockLightSource)(\\$.*)?";
 
     private static final String ANVIL_MINESTOM_BOUNDARY =
             "net\\.onelitefeather\\.falco\\.anvil\\."
@@ -81,13 +81,19 @@ class ForeignCouplingTest {
      * {@code ChunkLightService$NeighbourhoodEntry} and {@code ChunkLightArea$Entry} both carry a
      * {@code net.minestom.server.instance.Chunk} as a component. The cost of that is honest — every
      * nested type of a boundary class is exempt too, whether it needs to be or not.
+     *
+     * <p>{@code ChunkLightListener} is the sixth name on the list and it did not widen the boundary,
+     * it split one of its members: the three reports it carries were three overrides of
+     * {@code FalcoLightingChunk}, which was already exempt. It takes a
+     * {@code net.minestom.server.instance.block.Block} because
+     * {@code ChunkLifecycleListener#onBlockChange} hands it one.
      */
     @ArchTest
     static final ArchRule lightCoreKnowsNoMinestom = noClasses()
             .that().resideInAPackage(LIGHT).and().haveNameNotMatching(LIGHT_BOUNDARY)
             .should().dependOnClassesThat().resideInAnyPackage("net.minestom..")
             .because("propagation has to stay verifiable without a running server and work with any "
-                   + "chunk implementation; only those five classes are the boundary");
+                   + "chunk implementation; only those six classes are the boundary");
 
     /**
      * F2 — {@code RegionFile} reads no registry, and that is the precondition of the published

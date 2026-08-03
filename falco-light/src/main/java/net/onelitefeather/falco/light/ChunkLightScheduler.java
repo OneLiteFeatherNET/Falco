@@ -74,7 +74,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -462,6 +462,13 @@ public final class ChunkLightScheduler {
      * ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService());
      * instance.setChunkSupplier(scheduler.supplier());
      * }</pre>
+     * <p>
+     * The chunks it produces are {@link net.onelitefeather.falco.instance.FalcoChunk}s, so they work
+     * in a {@code FalcoInstance} exactly as they do in an {@code InstanceContainer} — which is what
+     * US-3.06 was about, since the two used to be mutually exclusive. That also means a caller of
+     * this method needs {@code falco-instance} on the classpath beside {@code falco-light}; the rest
+     * of this class does not, see {@link FalcoLightingChunk}.
+     * </p>
      * <p>
      * Keep the scheduler for exactly the instance it was handed to; see the class comment.
      * </p>

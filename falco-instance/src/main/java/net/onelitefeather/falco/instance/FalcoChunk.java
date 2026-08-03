@@ -1,12 +1,47 @@
 package net.onelitefeather.falco.instance;
 
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import net.kyori.adventure.nbt.CompoundBinaryTag;
+import net.kyori.adventure.nbt.LongArrayBinaryTag;
+import net.minestom.server.MinecraftServer;
+import net.minestom.server.coordinate.CoordConversion;
+import net.minestom.server.coordinate.Point;
+import net.minestom.server.entity.Entity;
 import net.minestom.server.instance.Chunk;
-import net.minestom.server.instance.DynamicChunk;
+import net.minestom.server.instance.EntityTracker;
 import net.minestom.server.instance.Instance;
 import net.minestom.server.instance.Section;
+import net.minestom.server.instance.block.Block;
+import net.minestom.server.instance.block.BlockHandler;
+import net.minestom.server.instance.heightmap.Heightmap;
+import net.minestom.server.instance.heightmap.MotionBlockingHeightmap;
+import net.minestom.server.instance.heightmap.WorldSurfaceHeightmap;
+import net.minestom.server.network.NetworkBuffer;
+import net.minestom.server.network.packet.server.CachedPacket;
+import net.minestom.server.network.packet.server.SendablePacket;
+import net.minestom.server.network.packet.server.play.ChunkDataPacket;
+import net.minestom.server.network.packet.server.play.data.ChunkData;
+import net.minestom.server.network.packet.server.play.data.LightData;
+import net.minestom.server.registry.RegistryKey;
+import net.minestom.server.snapshot.ChunkSnapshot;
+import net.minestom.server.snapshot.SnapshotImpl;
+import net.minestom.server.snapshot.SnapshotUpdater;
+import net.minestom.server.utils.ArrayUtils;
+import net.minestom.server.world.DimensionType;
+import net.minestom.server.world.biome.Biome;
 import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import static net.minestom.server.coordinate.CoordConversion.globalToSectionRelative;
 
 /**
  * The {@link FalcoChunk} class is the chunk of {@link FalcoInstance}.
@@ -24,68 +59,401 @@ import java.util.List;
  * hide the coupling instead of naming it.
  * </p>
  * <p>
- * A third member has the same problem and needs no work here: the block setter which carries a
- * placement and a destruction is {@code protected} on {@code Chunk} and only widened to public by
- * {@link DynamicChunk}. Extending {@link DynamicChunk} rather than {@code Chunk} therefore also
- * settles that one, which is a second reason for the choice of superclass.
+ * A third member has the same problem and is settled here as well: the block setter which carries a
+ * placement and a destruction is {@code protected} on {@code Chunk}. This class widens it to public,
+ * which is what lets {@link FalcoInstance} drive a placement from its own package.
+ * </p>
+ *
+ * <h2>Why the storage is a field and not a superclass</h2>
+ * <p>
+ * This chunk used to extend {@code DynamicChunk} and inherit its sections. That inheritance is what
+ * this class gave up, because it cost more than it saved: {@code FalcoChunk} and
+ * {@code FalcoLightingChunk} both extended {@code DynamicChunk}, and a class has one superclass, so
+ * the two could never be combined. A server that wanted the instance of Falco and the light engine
+ * of Falco at the same time had to pick one. The blocks now sit behind {@link BlockStorage}, which
+ * is a field, and a field can be combined with anything.
  * </p>
  * <p>
- * Everything else is inherited from {@link DynamicChunk}. This type deliberately adds no storage,
- * no light handling and no packet handling of its own, because the block storage of Minestom is not
- * the part of the instance which needed replacing.
+ * The second reason is that a memory layout is exactly the kind of decision that should be
+ * replaceable. As long as the sections were a {@code protected final} field of a Minestom class, a
+ * different layout meant a different chunk class and therefore a different everything — viewers,
+ * heightmaps, packet cache and lifecycle included. Behind the interface, a layout is a constructor
+ * argument.
  * </p>
  * <p>
- * Like its superclass, this chunk is not thread-safe on its own. Callers hold the chunk lock, which
- * {@link Chunk#lockWriteLock()} and {@link Chunk#lockReadLock()} provide.
+ * Everything that is not about where a block physically sits was carried over from
+ * {@code DynamicChunk} as it stands: the entries map, the two heightmaps, the cached chunk packet
+ * and the viewer and tag plumbing inherited from {@code Chunk}. Copying it is deliberate. This class
+ * is measured against {@code DynamicChunk}, and a difference that came from rewriting the
+ * bookkeeping would be indistinguishable from a difference that came from the storage.
+ * </p>
+ * <p>
+ * The second block map is the one post that was not carried over at all. {@code DynamicChunk} keeps
+ * a subset of its entries in a map of its own so that a tick can leave early; {@link #tickableCount}
+ * buys the same early exit without the map — see there for what that trade costs. What a tick does
+ * is unchanged, which {@code FalcoChunkTest} pins from both directions.
+ * </p>
+ * <p>
+ * The heightmaps are the one place where the copying stops at the {@code when} rather than the
+ * {@code what}. They are built on the first question instead of in a field initialiser — see
+ * {@link #motionBlockingHeightmap()}, which carries the bytes and the conditions they were measured
+ * under. In a fresh {@code DynamicChunk} the two of them are the second largest post after the
+ * sections; in a fresh chunk of this class, whose sections are shared and empty until something
+ * writes, they were the largest post there was, which is why they and not the sections are what this
+ * class defers. What they contain, and the order in which {@link #setBlock} refreshes them, is
+ * unchanged, which is what keeps the comparison against {@code DynamicChunk} honest.
+ * </p>
+ *
+ * <h2>Where the coordinates are folded</h2>
+ * <p>
+ * {@code Instance#setBlock} hands a chunk the coordinates of the world, not of the chunk: an
+ * {@code x} of {@code -3} is a legitimate argument here and means the fourteenth column of the chunk
+ * at {@code chunkX == -1}. {@code DynamicChunk} folds them itself, at every use. This class folds
+ * them once, on this side of the seam, and passes chunk-local {@code x} and {@code z} to
+ * {@link BlockStorage}, which is what that interface documents.
+ * </p>
+ * <p>
+ * The alternative — handing the storage what the instance handed the chunk — would work for
+ * {@link SectionBlockStorage}, which folds again internally, and would quietly break any
+ * implementation that indexes an array by {@code x}. A storage cannot fold on its own without
+ * knowing which chunk it belongs to, and giving it that knowledge would put the chunk position into
+ * the one part of the design that was built not to need it. The height stays absolute, because a
+ * storage does know its own vertical extent.
+ * </p>
+ * <p>
+ * Like {@code DynamicChunk}, this chunk is not thread-safe on its own. Callers hold the chunk lock,
+ * which {@link Chunk#lockWriteLock()} and {@link Chunk#lockReadLock()} provide.
+ * </p>
+ *
+ * <h2>Which of its own sections this chunk is allowed to create</h2>
+ * <p>
+ * None, on any path of its own. The packet it sends, the light data it collects, the snapshot it
+ * takes and the scan that starts a heightmap refresh all read through {@link BlockStorage#views()}
+ * and {@link BlockStorage#view(int)}, which hand out whatever the storage currently holds and create
+ * nothing. Only {@link #getSections()} and {@link #getSection(int)} materialise, because those two
+ * are what Minestom calls when it is about to write into a section — the generator of an
+ * {@code InstanceContainer}, a chunk loader, the light engine — and a storage cannot tell a reader
+ * from a writer through them.
+ * </p>
+ * <p>
+ * The one place where that boundary is crossed against this chunk's will is the heightmap.
+ * {@code Heightmap#refresh(int, int, int)} reaches its sections through {@code Chunk#getSection(int)}
+ * and cannot be overridden, because it ends in a {@code private} setter over a {@code private}
+ * array. A refresh therefore materialises every empty section it walks through below the highest
+ * non-empty one. In a generated overworld that is none; the height profile of the census puts the
+ * empty share below world height sixty-four at {@code 0,0 %}. In a world of floating islands it is
+ * not none, and {@code SectionMaterialisationTest} states the number rather than leaving it to the
+ * imagination.
  * </p>
  * <p>
  * This type is experimental. The instance module is new and its API may still change.
  * </p>
  *
+ *
+ * <h2>How something else takes part in the life of this chunk</h2>
+ * <p>
+ * Through {@link #addLifecycleListener(ChunkLifecycleListener)}, and that is US-3.03. Everything
+ * this class does that another part of a server may want to know about — being published, finishing
+ * a load, being ticked, receiving a block, leaving its instance — used to be reachable only by
+ * overriding it, which meant being the superclass of this chunk, of which there can be exactly one.
+ * A listener is a field, so two of them fit where one subclass did.
+ * </p>
+ * <p>
+ * Four of the five transitions are reported from where they happen and the fifth, the publish, from
+ * {@link #notifyPublished()}, because nothing on a chunk marks it. The load and the unload report
+ * from the {@code protected} hooks {@link #onLoad()} and {@link #unload()} rather than from the
+ * public {@link #markLoaded()} and {@link #markUnloaded()} that widen them: a chunk of this type is
+ * driven by {@link FalcoInstance} through the public pair and by an {@code InstanceContainer}
+ * through the hooks, and a report on the wrong one of the two would be silent for half the callers.
+ * </p>
+ *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 3.8.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
-public class FalcoChunk extends DynamicChunk {
+public class FalcoChunk extends Chunk {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(FalcoChunk.class);
+
+    private final BlockStorage storage;
 
     /**
-     * Creates an empty chunk at the given position.
+     * The blocks which are worth keeping as objects, keyed by {@code CoordConversion#chunkBlockIndex}.
+     * <p>
+     * A palette holds a state id and nothing else, so a block with a handler, with NBT or with a
+     * block entity would lose that part of itself on the way in. These are the ones that are kept
+     * whole, and {@link #getBlock(int, int, int, Condition)} looks here before it asks the storage.
+     * </p>
+     * <p>
+     * Private, where {@code DynamicChunk} has it {@code protected}. That modifier was inherited along
+     * with everything else this class copied while it still extended {@code DynamicChunk}, and
+     * narrowing it costs nothing even now that a subclass exists: {@code FalcoLightingChunk} carries
+     * a packet cache and needs no block object, and the seam a subclass is meant to use is
+     * {@link BlockStorage}, which is a constructor argument rather than a field to reach into.
+     * </p>
+     * <p>
+     * What {@code protected} would still cost is real. {@code final} on a map protects the reference
+     * and nothing behind it, so a visible field hands anyone who subclasses this chunk — from any
+     * package, since the class has to stay open for {@code FalcoLightingChunk} — a writable map that
+     * the write lock does not cover and that {@link #tickableCount} is counted against. A foreign
+     * {@code entries.remove} would leave the counter above zero with nothing left to tick, which is
+     * exactly the drift the counter was introduced to make impossible. A subclass that needs the
+     * block objects asks {@link #getBlock(int, int, int, Condition)} with {@link Condition#CACHED},
+     * which answers the same question without handing out the map.
+     * </p>
+     */
+    private final Int2ObjectOpenHashMap<Block> entries = new Int2ObjectOpenHashMap<>(0);
+
+    /**
+     * How many of {@link #entries} carry a handler which asked to be ticked.
+     * <p>
+     * This is what is left of the second map {@code DynamicChunk} keeps. That map held a subset of
+     * {@link #entries} under the same keys pointing at the same blocks, so it was a second copy of
+     * information the chunk already had, at the price of one {@code Int2ObjectOpenHashMap} and its two
+     * backing arrays per chunk — for every chunk in a world, whether or not it holds a single block
+     * entity.
+     * </p>
+     * <p>
+     * What that map bought was the early exit of {@link #tick(long)}: almost every chunk has nothing
+     * to tick, and a tick which had to walk the entries to find that out would make the cost of
+     * ticking depend on how many block entities a chunk happens to hold. The counter buys the same
+     * exit for four bytes. What is genuinely paid is the case that remains — a chunk which holds both
+     * tickable and non-tickable block entities now walks all of them once per tick instead of only the
+     * tickable ones.
+     * </p>
+     * <p>
+     * Volatile because the one read that matters happens without the chunk lock. Every write is under
+     * the write lock — {@link #setBlock} and {@link #reset} both open with {@code assertWriteLock()},
+     * and {@link #copy} writes only into a chunk it just created — so the writers are serialised and
+     * the non-atomic {@code +=} below cannot lose an update. The reader is the other side:
+     * {@link #tick(long)} takes no lock at all, and it cannot, because Minestom calls it from a
+     * {@code TickThread} that holds its own {@code ReentrantLock} and never the
+     * {@link Chunk#lockReadLock() read lock} of the chunk — {@code Chunk#tick} says as much in its own
+     * Javadoc, that it "doesn't necessary have to be thread-safe". A chunk is written from wherever a
+     * placement, a generator or a loader happens to run, so writer and ticker are routinely different
+     * threads with no happens-before between them.
+     * </p>
+     * <p>
+     * Without the modifier the tick thread may keep reading a cached zero after a block entity was
+     * placed, and a chunk that silently stops ticking is the kind of defect that surfaces as a
+     * complaint about furnaces months later rather than as a failing test. Four bytes were already the
+     * price of this field; the barrier is paid on a read that a chunk performs once per tick and on
+     * writes that already stop to take a lock.
+     * </p>
+     */
+    private volatile int tickableCount;
+
+    private volatile boolean needsCompleteHeightmapRefresh = true;
+
+    /**
+     * The highest block per column which stops movement, built when something first asks for it.
+     * <p>
+     * Volatile because the creation below is a double-checked lock, and a non-volatile field would
+     * let a second thread see a partly constructed {@code MotionBlockingHeightmap} — which carries a
+     * {@code short[256]} of its own that would then be read before it exists.
+     * </p>
+     */
+    private volatile Heightmap motionBlocking;
+
+    /**
+     * The highest block per column which is not air, built when something first asks for it.
+     */
+    private volatile Heightmap worldSurface;
+
+    /**
+     * The serialised chunk, kept until something invalidates it.
+     * <p>
+     * A chunk is sent to every player who walks into view of it, and serialising a full chunk is far
+     * more expensive than the write which changed it. The cache turns that into one serialisation per
+     * change instead of one per viewer.
+     * </p>
+     */
+    private final CachedPacket chunkCache = new CachedPacket(this::createChunkPacket);
+
+    /**
+     * What is told about the transitions of this chunk, null while nobody listens.
+     * <p>
+     * One reference and not a list. A list is an object per chunk and an iterator per transition, and
+     * a fresh chunk of this class retains 840 bytes in total — a per-chunk collection for a feature
+     * almost no chunk uses would give back a quarter of what stage 2 bought. More than one listener
+     * composes through {@link ChunkLifecycleListener#of}, which allocates once, at registration.
+     * </p>
+     * <p>
+     * Volatile because a listener may be installed by the thread that loads a chunk and read by the
+     * thread that ticks it.
+     * </p>
+     */
+    private volatile @Nullable ChunkLifecycleListener lifecycleListener;
+
+    /**
+     * Creates an empty chunk at the given position, storing its blocks in sections which are
+     * allocated only once something is written into them.
+     * <p>
+     * {@link LazySectionBlockStorage} is the default rather than {@link SectionBlockStorage} because
+     * an empty chunk is the state every chunk starts in and the state most sections of a finished
+     * chunk stay in; a caller who wants a section per slot regardless still gets one by passing
+     * {@link SectionBlockStorage} to {@link #FalcoChunk(Instance, int, int, BlockStorage)}.
+     * </p>
      *
      * @param instance the instance which owns the chunk
      * @param chunkX   the chunk X
      * @param chunkZ   the chunk Z
      */
     public FalcoChunk(Instance instance, int chunkX, int chunkZ) {
-        super(instance, chunkX, chunkZ);
+        super(instance, chunkX, chunkZ, true);
+        // Must be built here and not in a field initialiser: the super constructor is what computes
+        // minSection and maxSection, and the storage is sized from them.
+        this.storage = new LazySectionBlockStorage(minSection, maxSection - minSection);
     }
 
     /**
-     * Creates a chunk which takes over the given sections.
+     * Creates a chunk which takes over the given storage.
      * <p>
-     * Used by {@link #copy(Instance, int, int)}; the sections are not cloned here, so a caller has
-     * to hand over sections nobody else writes to.
+     * This is the constructor that makes the layout a choice of the caller. It is also what
+     * {@link #copy(Instance, int, int)} uses, with a storage that copied itself; the storage is not
+     * copied here, so a caller has to hand over one that nobody else writes to.
      * </p>
      *
      * @param instance the instance which owns the chunk
      * @param chunkX   the chunk X
      * @param chunkZ   the chunk Z
-     * @param sections the sections of the chunk, from the bottom one upwards
+     * @param storage  the storage which holds the blocks and biomes of the chunk
+     * @since 0.4.0
      */
-    protected FalcoChunk(Instance instance, int chunkX, int chunkZ, List<Section> sections) {
-        super(instance, chunkX, chunkZ, sections);
+    public FalcoChunk(Instance instance, int chunkX, int chunkZ, BlockStorage storage) {
+        super(instance, chunkX, chunkZ, true);
+        this.storage = storage;
+    }
+
+    /**
+     * Hands out the storage which holds the blocks of this chunk.
+     * <p>
+     * Exposed because the storage is the part a caller may want to inspect or measure without going
+     * through the chunk, and because the choice of layout is otherwise invisible from the outside.
+     * </p>
+     *
+     * @return the storage of this chunk
+     * @since 0.4.0
+     */
+    public BlockStorage storage() {
+        return this.storage;
+    }
+
+    /**
+     * Checks that a chunk can be written to through the instance module, and types it.
+     * <p>
+     * The block setter that carries a placement and a destruction is {@code protected} on
+     * {@code Chunk} and only widened to public by {@link FalcoChunk} and {@code DynamicChunk}. A chunk
+     * of any other type is therefore accepted everywhere else in this module — a caller which owns its
+     * own chunk type hands the two lifecycle hooks over through
+     * {@link FalcoInstance#setChunkLifecycle(java.util.function.Consumer, java.util.function.Consumer)}
+     * and takes part in the lifecycle without ever being a {@link FalcoChunk} — and refused here, on
+     * the one path this module cannot reach without the subclass it ships itself.
+     * </p>
+     * <p>
+     * It lives on the chunk rather than on the instance because the check belongs to the type it
+     * checks for, and because {@link BlockWriter} is its second caller; a check that two parts copy is
+     * a check that can drift.
+     * </p>
+     *
+     * @param chunk the chunk to check
+     * @return the same chunk, typed
+     * @throws FalcoInstanceException if the chunk is not a {@link FalcoChunk}
+     * @since 0.4.0
+     */
+    @Contract("_ -> param1")
+    public static FalcoChunk require(Chunk chunk) {
+        if (chunk instanceof FalcoChunk falcoChunk) return falcoChunk;
+        throw new FalcoInstanceException("the instance module writes blocks through "
+                + FalcoChunk.class.getName() + ", whose block setter carrying a placement is public,"
+                + " but its chunk supplier produced a " + chunk.getClass().getName());
+    }
+
+    /**
+     * Adds a listener to this chunk.
+     * <p>
+     * A second listener is composed with the first through {@link ChunkLifecycleListener#of} rather
+     * than appended to a collection, which is where the reason for that lives.
+     * </p>
+     * <p>
+     * Registration itself is not atomic: this reads the field and writes it back, so two threads
+     * registering at the same moment can lose one of the two. That is deliberate and it is what the
+     * field being a plain volatile reference costs. A listener is installed while a chunk is being
+     * built — {@link ChunkLifecycle#create(int, int)} does it before the generator runs — and paying
+     * for a compare-and-set on every chunk of a world to make a setup-time call thread-safe would
+     * charge the case that happens millions of times for the case that happens once.
+     * </p>
+     *
+     * @param listener the listener to add
+     * @throws NullPointerException if the listener is null
+     * @since 0.4.0
+     */
+    public void addLifecycleListener(ChunkLifecycleListener listener) {
+        final ChunkLifecycleListener current = this.lifecycleListener;
+        this.lifecycleListener = current == null ? Objects.requireNonNull(listener,
+                "the listener cannot be null") : ChunkLifecycleListener.of(current, listener);
+    }
+
+    /**
+     * Hands out what is told about the transitions of this chunk.
+     *
+     * @return the listener of this chunk, or null if nothing listens
+     * @since 0.4.0
+     */
+    public @Nullable ChunkLifecycleListener lifecycleListener() {
+        return this.lifecycleListener;
+    }
+
+    /**
+     * Tells the chunk that it has become part of its instance.
+     * <p>
+     * Separate from {@link #markLoaded()} because publishing and finishing a load are two different
+     * moments: a chunk is in the registry and has a tick partition before its loaded flag is set, and
+     * a listener that wants to see the world exactly as the instance does needs the first, not the
+     * second.
+     * </p>
+     *
+     * @since 0.4.0
+     */
+    public void notifyPublished() {
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onPublish(new ChunkLifecycleEvent(this, 0L));
     }
 
     /**
      * Tells the chunk that it has finished loading.
      * <p>
      * This is the reachable form of the {@code protected} {@code Chunk#onLoad()} hook.
-     * {@link FalcoInstance} calls it once, after the chunk has been put into the chunk map of the
+     * {@link ChunkLifecycle} calls it once, after the chunk has been put into the registry of the
      * instance and after its tick partition exists, which is the order Minestom uses as well.
+     * </p>
+     * <p>
+     * It carries no notification of its own; the hook it widens does. See {@link #onLoad()} for why
+     * the two are that way round.
      * </p>
      */
     public void markLoaded() {
         onLoad();
+    }
+
+    /**
+     * Reports the finished load to the listener of this chunk.
+     * <p>
+     * The notification sits on the {@code protected} hook rather than on {@link #markLoaded()},
+     * because this chunk is reached through two doors and only one of them is that method.
+     * {@link FalcoInstance} drives {@link #markLoaded()}, but an {@code InstanceContainer} calls this
+     * hook directly from {@code retrieveChunk} — it lives in the Minestom package and does not need
+     * the widening. A chunk in a container would otherwise report its tick and its block writes and
+     * stay silent about the one transition a light engine cannot do without, which is exactly the
+     * shape of defect Task 8 already found on the loader arm: two doors, one report.
+     * </p>
+     */
+    @Override
+    protected void onLoad() {
+        super.onLoad();
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onLoad(new ChunkLifecycleEvent(this, 0L));
     }
 
     /**
@@ -102,11 +470,397 @@ public class FalcoChunk extends DynamicChunk {
     }
 
     /**
+     * Reports the departure to the listener of this chunk, and clears the loaded flag.
+     * <p>
+     * On the hook and not on {@link #markUnloaded()}, for the reason given on {@link #onLoad()}: an
+     * {@code InstanceContainer} calls this one directly.
+     * </p>
+     */
+    @Override
+    protected void unload() {
+        super.unload();
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onUnload(new ChunkLifecycleEvent(this, 0L));
+    }
+
+    /**
+     * Writes a block into this chunk and runs the bookkeeping that goes with it.
+     * <p>
+     * Widened to public so {@link FalcoInstance}, which lives outside the Minestom package, can pass
+     * a placement and a destruction along. Everything but the one line that reaches the storage is
+     * the body {@code DynamicChunk} has, in its order: the cache is dropped first, then the block is
+     * written, then the entries and the tickable counter are brought in line with it, then the
+     * handlers of the old and the new block are told, and only then are the heightmaps refreshed.
+     * </p>
+     * <p>
+     * The order matters. A handler that reads the chunk during {@code onPlace} has to see the block
+     * that was just written, which is why the storage is written before the handlers run.
+     * </p>
+     * <p>
+     * The caller has to hold the write lock of this chunk.
+     * </p>
+     *
+     * @param x         the block X
+     * @param y         the block Y
+     * @param z         the block Z
+     * @param block     the block to write
+     * @param placement the placement which caused the write, null if it was not a placement
+     * @param destroy   the destruction which caused the write, null if it was not a break
+     */
+    @Override
+    public void setBlock(int x, int y, int z, Block block,
+                         @Nullable BlockHandler.Placement placement,
+                         @Nullable BlockHandler.Destroy destroy) {
+        assertWriteLock();
+        final DimensionType instanceDim = instance.getCachedDimensionType();
+        if (y >= instanceDim.maxY() || y < instanceDim.minY()) {
+            LOGGER.warn("tried to set a block outside the world bounds, should be within [{}, {}): {}",
+                    instanceDim.minY(), instanceDim.maxY(), y);
+            return;
+        }
+
+        this.chunkCache.invalidate();
+
+        final int sectionRelativeX = globalToSectionRelative(x);
+        final int sectionRelativeZ = globalToSectionRelative(z);
+
+        this.storage.setBlock(sectionRelativeX, y, sectionRelativeZ, block);
+
+        final int index = CoordConversion.chunkBlockIndex(x, y, z);
+        // Handler
+        final BlockHandler handler = block.handler();
+        final Block lastCachedBlock;
+        if (handler != null || block.hasNbt() || block.registry().isBlockEntity()) {
+            lastCachedBlock = this.entries.put(index, block);
+        } else {
+            lastCachedBlock = this.entries.remove(index);
+        }
+        // Block tick. A tickable block always carries a handler and is therefore always in the
+        // entries above, so the counter and the map can never disagree about who is in which.
+        final BlockHandler previousHandler = lastCachedBlock == null ? null : lastCachedBlock.handler();
+        final boolean wasTickable = previousHandler != null && previousHandler.isTickable();
+        final boolean isTickable = handler != null && handler.isTickable();
+        if (wasTickable != isTickable) {
+            this.tickableCount += isTickable ? 1 : -1;
+        }
+
+        // Update block handlers
+        if (lastCachedBlock != null && lastCachedBlock.handler() != null) {
+            // Previous destroy
+            lastCachedBlock.handler().onDestroy(Objects.requireNonNullElseGet(destroy,
+                    () -> new BlockHandler.Destroy(lastCachedBlock, block, instance,
+                            CoordConversion.chunkBlockRelativeGetGlobal(sectionRelativeX, y, sectionRelativeZ, chunkX, chunkZ))));
+        }
+        if (handler != null) {
+            // New placement
+            final Point placePoint = CoordConversion.chunkBlockRelativeGetGlobal(sectionRelativeX, y, sectionRelativeZ, chunkX, chunkZ);
+            handler.onPlace(Objects.requireNonNullElseGet(placement,
+                    () -> new BlockHandler.Placement(block,
+                            Objects.requireNonNullElseGet(lastCachedBlock, () -> this.getBlock(placePoint, Condition.TYPE)),
+                            instance, placePoint)));
+        }
+
+        // UpdateHeightMaps
+        if (this.needsCompleteHeightmapRefresh) calculateFullHeightmap();
+        motionBlockingHeightmap().refresh(sectionRelativeX, y, sectionRelativeZ, block);
+        worldSurfaceHeightmap().refresh(sectionRelativeX, y, sectionRelativeZ, block);
+
+        // Last, so a listener reading this chunk sees the finished state rather than a chunk whose
+        // heightmaps still describe the block that was overwritten.
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onBlockChange(this, x, y, z, block);
+    }
+
+    /**
+     * Reads the block at a position.
+     * <p>
+     * The entries map is consulted first, because it is the only place a handler or NBT survives; a
+     * caller which asked for {@link Condition#TYPE} skips that lookup, since a state id is all it
+     * wants. Only what the entries do not answer reaches the storage.
+     * </p>
+     * <p>
+     * A height outside the world is answered with air rather than with an exception, because the
+     * neighbour updates of a block write walk one block up and down and would otherwise fall off the
+     * world at its floor and its ceiling. Air is also what a stored state the block registry does not
+     * know reads back as, which {@link BlockStorage#getBlock(int, int, int, Condition)} guarantees —
+     * together the two are what lets this method promise a block for every height, which
+     * {@code Condition#NONE} requires of it.
+     * </p>
+     * <p>
+     * The caller has to hold the read lock of this chunk.
+     * </p>
+     *
+     * @param x         the block X
+     * @param y         the block Y
+     * @param z         the block Z
+     * @param condition what the caller is willing to accept
+     * @return the block, or null if the condition excludes it
+     */
+    @Override
+    public @Nullable Block getBlock(int x, int y, int z, Condition condition) {
+        assertReadLock();
+        if (y < minSection * CHUNK_SECTION_SIZE || y >= maxSection * CHUNK_SECTION_SIZE)
+            return Block.AIR; // Out of bounds
+
+        // Verify if the block object is present
+        if (condition != Condition.TYPE) {
+            final Block entry = !this.entries.isEmpty()
+                    ? this.entries.get(CoordConversion.chunkBlockIndex(x, y, z)) : null;
+            if (entry != null || condition == Condition.CACHED) {
+                return entry;
+            }
+        }
+        return this.storage.getBlock(globalToSectionRelative(x), y, globalToSectionRelative(z), condition);
+    }
+
+    /**
+     * Writes a biome into this chunk.
+     * <p>
+     * The cached packet has to be dropped here as well: a biome is part of the section data a client
+     * receives, so a chunk that kept its cache would keep sending the old biome.
+     * </p>
+     * <p>
+     * The caller has to hold the write lock of this chunk.
+     * </p>
+     *
+     * @param x     the block X
+     * @param y     the block Y
+     * @param z     the block Z
+     * @param biome the biome to write
+     */
+    @Override
+    public void setBiome(int x, int y, int z, RegistryKey<Biome> biome) {
+        assertWriteLock();
+        this.chunkCache.invalidate();
+        this.storage.setBiome(globalToSectionRelative(x), y, globalToSectionRelative(z), biome);
+    }
+
+    /**
+     * Reads the biome at a position.
+     * <p>
+     * The caller has to hold the read lock of this chunk.
+     * </p>
+     *
+     * @param x the block X
+     * @param y the block Y
+     * @param z the block Z
+     * @return the biome
+     */
+    @Override
+    public RegistryKey<Biome> getBiome(int x, int y, int z) {
+        assertReadLock();
+        return this.storage.getBiome(globalToSectionRelative(x), y, globalToSectionRelative(z));
+    }
+
+    /**
+     * Hands out the sections of this chunk, from the bottom one upwards.
+     *
+     * @return the sections of this chunk
+     */
+    @Override
+    public List<Section> getSections() {
+        return this.storage.sections();
+    }
+
+    /**
+     * Hands out one section of this chunk.
+     * <p>
+     * {@code Chunk#getSection(int)} counts sections in world terms, which is negative below the zero
+     * line, while {@link BlockStorage#section(int)} counts from the bottom section of the chunk.
+     * Subtracting {@code minSection} is that translation, and it is the one place where forgetting it
+     * would be silent: a wrong section still holds blocks, just not the ones that were asked for.
+     * </p>
+     *
+     * <p>
+     * No lock is asserted here, and that is not an oversight of this class but a property of its
+     * callers: {@code Instance#getBlockLight}, {@code Instance#getSkyLight} and
+     * {@code Instance#invalidateSection} all reach this method holding no chunk lock, and
+     * {@code Heightmap#refresh(int)} reaches it holding the read lock, which
+     * {@link Chunk#lockWriteLock()} refuses to be taken on top of. Materialising is therefore made
+     * safe where it happens rather than here — see {@link LazySectionBlockStorage} for the step and
+     * for why it publishes a slot the way it does.
+     * </p>
+     *
+     * @param section the section index in world terms
+     * @return the section
+     */
+    @Override
+    public Section getSection(int section) {
+        return this.storage.section(section - minSection);
+    }
+
+    /**
+     * Hands out the heightmap of the highest movement-blocking block per column, building it if this
+     * chunk does not have one yet.
+     * <p>
+     * A heightmap is a {@code short[256]} plus its carrier: four objects and {@code 1 120} bytes for
+     * the two of them together. Which share of a chunk that is depends entirely on which chunk is
+     * being talked about, so both are named here. Against a fresh {@code DynamicChunk}, which retains
+     * {@code 6 848} bytes, it is {@code 16,4 %} — the second largest post after the sections. Against
+     * a fresh chunk of this class the comparison needs no percentage at all: a fresh
+     * {@code FalcoChunk} retains {@code 840} bytes in total, which is less than the two heightmaps
+     * alone would weigh. That is why they and not the sections are the post this class defers.
+     * </p>
+     * <p>
+     * The {@code 6 848} and the {@code 840} are what {@code ChunkFootprintTest} measures with jol
+     * 0.17 through the instrumentation agent on OpenJDK 25.0.3 with a twelve byte object header and an
+     * alignment of eight ({@code falco.compactHeaders=false}), over an overworld chunk of 24 sections,
+     * counting what the chunk retains once the instance is subtracted; the {@code 1 120} is the two
+     * heightmaps of that {@code DynamicChunk} in the same walk. Under compact headers, or at another
+     * world height, they are different numbers.
+     * </p>
+     * <p>
+     * Minestom builds both heightmaps in a field initialiser, so a chunk pays for them whether or not
+     * anybody ever reads a height. Most chunks do get asked eventually —
+     * a chunk that is sent to a client hands both of them to the packet, and a chunk that is written
+     * to refreshes both — but the window between construction and that first question is exactly the
+     * window a chunk loader and a generator work in, and a chunk that is loaded, read and never sent
+     * never leaves it.
+     * </p>
+     * <p>
+     * The creation is a double-checked lock over the monitor of this chunk rather than a plain lazy
+     * field. The read lock and the write lock of a chunk do not cover this method — a caller may reach
+     * it without either — and two threads which both created a heightmap would leave one of them
+     * holding heights that the chunk then throws away.
+     * </p>
+     *
+     * @return the motion blocking heightmap
+     */
+    @Override
+    public Heightmap motionBlockingHeightmap() {
+        Heightmap heightmap = this.motionBlocking;
+
+        if (heightmap != null) return heightmap;
+        synchronized (this) {
+            heightmap = this.motionBlocking;
+            if (heightmap == null) {
+                heightmap = new MotionBlockingHeightmap(this);
+                this.motionBlocking = heightmap;
+            }
+            return heightmap;
+        }
+    }
+
+    /**
+     * Hands out the heightmap of the highest non-air block per column, building it if this chunk does
+     * not have one yet.
+     *
+     * @return the world surface heightmap
+     */
+    @Override
+    public Heightmap worldSurfaceHeightmap() {
+        Heightmap heightmap = this.worldSurface;
+
+        if (heightmap != null) return heightmap;
+        synchronized (this) {
+            heightmap = this.worldSurface;
+            if (heightmap == null) {
+                heightmap = new WorldSurfaceHeightmap(this);
+                this.worldSurface = heightmap;
+            }
+            return heightmap;
+        }
+    }
+
+    /**
+     * Reports whether this chunk has built its heightmaps yet.
+     * <p>
+     * Exposed because a property nothing can observe is a property nothing can assert, and the whole
+     * value of building them on demand is the claim that a chunk which was only loaded holds none.
+     * </p>
+     *
+     * @return whether either heightmap exists
+     * @since 0.4.0
+     */
+    public boolean hasHeightmaps() {
+        return this.motionBlocking != null || this.worldSurface != null;
+    }
+
+    /**
+     * Takes over the heightmaps a chunk loader read from disk.
+     * <p>
+     * A heightmap that is not in the tag is left alone rather than zeroed, because an absent
+     * heightmap means the file did not carry one, not that every column is empty.
+     * </p>
+     * <p>
+     * The caller has to hold the write lock of this chunk.
+     * </p>
+     *
+     * @param heightmapsNBT the heightmap compound of the chunk
+     */
+    @Override
+    public void loadHeightmapsFromNBT(CompoundBinaryTag heightmapsNBT) {
+        assertWriteLock();
+        if (heightmapsNBT.get(motionBlockingHeightmap().type().name()) instanceof LongArrayBinaryTag array) {
+            motionBlockingHeightmap().loadFrom(array.value());
+        }
+
+        if (heightmapsNBT.get(worldSurfaceHeightmap().type().name()) instanceof LongArrayBinaryTag array) {
+            worldSurfaceHeightmap().loadFrom(array.value());
+        }
+    }
+
+    /**
+     * Ticks the block handlers of this chunk which asked to be ticked.
+     * <p>
+     * The counter check up front is what keeps a world of ordinary chunks cheap: almost every chunk
+     * has no tickable block at all, and this makes its tick a single comparison. That property is the
+     * one {@link #tickableCount} exists to preserve now that the second map which used to provide it
+     * is gone; the walk below is over {@link #entries}, so a chunk which does hold tickable blocks
+     * pays for the block entities it holds beside them.
+     * </p>
+     * <p>
+     * The listener is told before that early exit and not after it. A listener which wants a
+     * heartbeat has to get one from every chunk, and almost every chunk has no tickable block at all,
+     * so a notification behind the counter check would reach exactly the chunks that need it least.
+     * The event is built only once the field has been found non-null, which is what keeps the
+     * unheard case at the single comparison it was — {@code ChunkLifecycleAllocationTest} measures
+     * both halves of that.
+     * </p>
+     *
+     * @param time the time of the tick in milliseconds
+     */
+    @Override
+    public void tick(long time) {
+        final ChunkLifecycleListener listener = this.lifecycleListener;
+        if (listener != null) listener.onTick(new ChunkLifecycleEvent(this, time));
+        if (this.tickableCount == 0) return;
+        this.entries.int2ObjectEntrySet().fastForEach(entry -> {
+            final Block block = entry.getValue();
+            final BlockHandler handler = block.handler();
+            if (handler == null || !handler.isTickable()) return;
+            final Point blockPosition = CoordConversion.chunkBlockIndexGetGlobal(entry.getIntKey(), chunkX, chunkZ);
+            handler.tick(new BlockHandler.Tick(block, instance, blockPosition));
+        });
+    }
+
+    /**
+     * Hands out the packet which carries this chunk to a client.
+     * <p>
+     * The cache itself is returned, not a packet. It serialises on the first send after a change and
+     * every further viewer receives the bytes that were already there.
+     * </p>
+     *
+     * @return the cached chunk packet
+     */
+    @Override
+    public SendablePacket getFullDataPacket() {
+        return this.chunkCache;
+    }
+
+    /**
      * Creates a copy of this chunk at the given position.
      * <p>
-     * Overridden so the copy is a {@link FalcoChunk} again. The inherited implementation returns a
-     * plain {@link DynamicChunk}, and such a chunk could never be unloaded by
-     * {@link FalcoInstance} because its hooks are out of reach.
+     * The copy is a {@link FalcoChunk} again, which matters beyond tidiness: a plain
+     * {@code DynamicChunk} could never be unloaded by {@link FalcoInstance}, because its lifecycle
+     * hooks are out of reach from this package.
+     * </p>
+     * <p>
+     * The entries and the tickable counter are both carried over. {@code DynamicChunk#copy} carries
+     * only the entries and leaves its second map behind, which leaves a copied chunk with block
+     * entities that have stopped ticking; that omission is a defect this class already corrected
+     * before the storage moved, and it stays corrected — the counter is the same correction, in the
+     * form the second map left behind.
      * </p>
      * <p>
      * The caller has to hold the read lock of this chunk.
@@ -120,10 +874,242 @@ public class FalcoChunk extends DynamicChunk {
     @Override
     public Chunk copy(Instance instance, int chunkX, int chunkZ) {
         assertReadLock();
-        final List<Section> copiedSections = this.sections.stream().map(Section::clone).toList();
-        final FalcoChunk copy = new FalcoChunk(instance, chunkX, chunkZ, copiedSections);
+        final FalcoChunk copy = new FalcoChunk(instance, chunkX, chunkZ, this.storage.copy());
+
         copy.entries.putAll(this.entries);
-        copy.tickableMap.putAll(this.tickableMap);
+        copy.tickableCount = this.tickableCount;
         return copy;
+    }
+
+    /**
+     * Empties this chunk.
+     * <p>
+     * The counter goes back to zero with the entries it counts. {@code DynamicChunk#reset} clears its
+     * entries and leaves its second map behind, so a reset chunk there keeps ticking blocks it no
+     * longer holds; here the two cannot drift apart, because clearing one without the other would
+     * leave a chunk whose tick can never take its early exit again.
+     * </p>
+     * <p>
+     * The caller has to hold the write lock of this chunk.
+     * </p>
+     */
+    @Override
+    public void reset() {
+        assertWriteLock();
+        this.storage.clear();
+        this.entries.clear();
+        this.tickableCount = 0;
+    }
+
+    /**
+     * Drops everything this chunk derived from its blocks.
+     * <p>
+     * Both the packet and the heightmaps are dropped, because the case this exists for is a change
+     * that did not go through {@link #setBlock(int, int, int, Block, BlockHandler.Placement, BlockHandler.Destroy)}
+     * — a generator or a loader writing into the sections directly — and such a change leaves no
+     * trace either of them would notice on their own.
+     * </p>
+     */
+    @Override
+    public void invalidate() {
+        this.needsCompleteHeightmapRefresh = true;
+        this.chunkCache.invalidate();
+    }
+
+    /**
+     * Takes a snapshot of this chunk.
+     * <p>
+     * The sections are cloned rather than shared, because a snapshot is read without any lock and a
+     * shared section would keep changing underneath its reader.
+     * </p>
+     *
+     * @param updater the updater which resolves the references of the snapshot
+     * @return the snapshot of this chunk
+     */
+    @Override
+    public ChunkSnapshot updateSnapshot(SnapshotUpdater updater) {
+        final List<Section> sections = this.storage.views();
+        final Section[] clonedSections = new Section[sections.size()];
+        for (int i = 0; i < clonedSections.length; i++) {
+            final Section section = sections.get(i);
+            // A shared section must not end up inside a snapshot even though it never changes: a
+            // snapshot is read without any lock and by callers this class does not know, and one that
+            // wrote into it would write into every empty section of the process. A fresh section is
+            // the same content and cannot be aliased.
+            clonedSections[i] = this.storage.shared(i) ? new Section() : section.clone();
+        }
+        final var entities = instance.getEntityTracker().chunkEntities(chunkX, chunkZ, EntityTracker.Target.ENTITIES);
+        final int[] entityIds = ArrayUtils.mapToIntArray(entities, Entity::getEntityId);
+        return new SnapshotImpl.Chunk(minSection, chunkX, chunkZ,
+                clonedSections, this.entries.clone(), entityIds, updater.reference(instance),
+                tagHandler().readableCopy());
+    }
+
+    /**
+     * Serialises this chunk into the packet a client receives.
+     * <p>
+     * The lock dance is the one {@code DynamicChunk} performs and it is not decoration. The heightmap
+     * refresh writes, so it needs the write lock; the light computation is left outside every lock,
+     * because it reaches into neighbouring chunks and taking their locks while holding this one is
+     * how two chunks deadlock each other; the section read only needs the read lock.
+     * </p>
+     *
+     * @return the chunk packet
+     */
+    private ChunkDataPacket createChunkPacket() {
+        final Map<Heightmap.Type, long[]> heightmaps;
+        lockWriteLock();
+        try {
+            heightmaps = getHeightmaps();
+        } finally {
+            unlockWriteLock();
+        }
+        // Compute light data outside any locks. This *should* prevent deadlocks
+        final LightData lightData = createLightData(true);
+
+        lockReadLock();
+        try {
+            final NetworkBuffer.Type<ChunkData.Section> sectionSerializer =
+                    ChunkData.Section.networkType(MinecraftServer.getBiomeRegistry().size());
+            final byte[] data = NetworkBuffer.makeArray(networkBuffer -> {
+                for (Section section : this.storage.views()) {
+                    final short blockCount = (short) section.blockPalette().count();
+                    final short liquidCount = (short) (blockCount > 0 ? 1 : 0); //TODO(26.1) proper fluid count
+                    networkBuffer.write(sectionSerializer,
+                            new ChunkData.Section(blockCount, liquidCount, section.blockPalette(), section.biomePalette()));
+                }
+            });
+
+            return new ChunkDataPacket(chunkX, chunkZ,
+                    new ChunkData(heightmaps, data, this.entries),
+                    lightData
+            );
+        } finally {
+            unlockReadLock();
+        }
+    }
+
+    /**
+     * Collects the light arrays of the sections into the form the protocol wants.
+     * <p>
+     * A section whose array is empty is reported as empty rather than as zeroed, which is the
+     * difference between "this section has no light data" and "this section is pitch black".
+     * </p>
+     * <p>
+     * The flag is unused here because this chunk always reports what it has. It is part of the
+     * signature so that a subclass which computes light can tell a full chunk send apart from a
+     * partial light update, which is the hook {@code LightingChunk} uses.
+     * </p>
+     *
+     * @param requiredFullChunk true if the data is meant for a full chunk send
+     * @return the light data of this chunk
+     */
+    protected LightData createLightData(boolean requiredFullChunk) {
+        final BitSet skyMask = new BitSet();
+        final BitSet blockMask = new BitSet();
+        final BitSet emptySkyMask = new BitSet();
+        final BitSet emptyBlockMask = new BitSet();
+        final List<byte[]> skyLights = new ArrayList<>();
+        final List<byte[]> blockLights = new ArrayList<>();
+
+        int index = 0;
+        for (Section section : this.storage.views()) {
+            index++;
+            final byte[] skyLight = section.skyLight().array();
+            final byte[] blockLight = section.blockLight().array();
+            if (skyLight.length != 0) {
+                skyLights.add(skyLight);
+                skyMask.set(index);
+            } else {
+                emptySkyMask.set(index);
+            }
+            if (blockLight.length != 0) {
+                blockLights.add(blockLight);
+                blockMask.set(index);
+            } else {
+                emptyBlockMask.set(index);
+            }
+        }
+        return new LightData(
+                skyMask, blockMask,
+                emptySkyMask, emptyBlockMask,
+                skyLights, blockLights
+        );
+    }
+
+    /**
+     * Hands out both heightmaps in the form the chunk packet wants.
+     *
+     * @return the heightmaps of this chunk, keyed by their type
+     */
+    protected Map<Heightmap.Type, long[]> getHeightmaps() {
+        assertReadLock();
+        if (this.needsCompleteHeightmapRefresh) calculateFullHeightmap();
+        final Heightmap motion = motionBlockingHeightmap();
+        final Heightmap surface = worldSurfaceHeightmap();
+        return Map.of(
+                motion.type(), motion.getNBT(),
+                surface.type(), surface.getNBT()
+        );
+    }
+
+    /**
+     * Reports the world height at which a heightmap scan of this chunk may start.
+     * <p>
+     * The body of {@code Heightmap#getHighestBlockSection} with one substitution: it reaches its
+     * sections through {@code Chunk#getSection(int)}, which is the boundary that hands a section to
+     * an arbitrary caller and therefore has to create one. Walking a chunk from the build limit
+     * downwards through that method materialises exactly the empty top sections this chunk exists not
+     * to hold, on the first block anybody writes into it. Reading through
+     * {@link BlockStorage#view(int)} answers the same question and creates nothing.
+     * </p>
+     * <p>
+     * The arithmetic is copied rather than re-derived, including the descent by one section per step
+     * and the break on the first palette whose count is not zero, because the two have to agree: a
+     * heightmap computed from a different starting height than Minestom's is not a faster heightmap,
+     * it is a different one.
+     * </p>
+     * <p>
+     * It is public because a copy of an algorithm needs a caller that can check it and a harness that
+     * can measure it, and neither of the two lives in this class. {@code FalcoChunkEquivalenceTest}
+     * runs the result against {@code Heightmap#getHighestBlockSection(Chunk)} on a chunk holding the
+     * same blocks, which is the only assertion that reaches this body directly rather than through
+     * whatever heightmap happens to be refreshed; and {@code ChunkComparisonBenchmark} reproduces
+     * {@code calculateFullHeightmap} through public API, so without this method its Falco arm would
+     * have to start its scan from Minestom's static helper — which walks this chunk through
+     * {@link #getSection(int)} and materialises what it walks over. That is a scan this chunk no
+     * longer performs and an allocation profile it no longer has, so the figure would describe a
+     * chunk that does not exist.
+     * </p>
+     * <p>
+     * The caller has to hold the read lock of this chunk.
+     * </p>
+     *
+     * @return the world Y at which the scan starts
+     */
+    public int highestBlockSection() {
+        assertReadLock();
+        int y = instance.getCachedDimensionType().maxY();
+
+        for (int index = this.storage.sectionCount() - 1; index >= 0; index--) {
+            if (this.storage.view(index).blockPalette().count() != 0) break;
+            y -= CHUNK_SECTION_SIZE;
+        }
+        return y;
+    }
+
+    /**
+     * Rebuilds both heightmaps from the blocks of this chunk.
+     * <p>
+     * The scan starts at the highest section that holds anything, so an empty chunk costs nothing and
+     * a chunk with a low world costs only what it fills.
+     * </p>
+     */
+    private void calculateFullHeightmap() {
+        assertWriteLock();
+        final int startY = highestBlockSection();
+        motionBlockingHeightmap().refresh(startY);
+        worldSurfaceHeightmap().refresh(startY);
+        this.needsCompleteHeightmapRefresh = false;
     }
 }
