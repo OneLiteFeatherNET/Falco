@@ -21,6 +21,16 @@
  * was unregistered while it ran.
  * </p>
  * <p>
+ * {@link net.onelitefeather.falco.instance.FalcoSharedInstance} is the one type here which does not
+ * avoid {@code InstanceContainer} but builds on it. It extends {@code SharedInstance}, because the
+ * fast path that spares a player a full chunk resend on an instance change is decided by
+ * {@code SharedInstance#areLinked}, and that method compares containers rather than classes — a
+ * subclass keeps it, a look-alike does not. What it repairs is the three setters and the save which
+ * Minestom's shared instance writes through to the container it borrows from. What it does not
+ * repair is the write path: the block owner is an {@code InstanceContainer} and its instance monitor
+ * comes with it.
+ * </p>
+ * <p>
  * This package is about clarity, not throughput. The parallelism of chunk and entity ticking lives
  * in the global {@code ThreadDispatcher} of the server process, so no instance implementation can
  * change it. What does change is that a block write is guarded by the lock of the chunk it touches
