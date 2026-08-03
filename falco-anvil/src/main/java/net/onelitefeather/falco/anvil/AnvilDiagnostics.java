@@ -223,6 +223,10 @@ public final class AnvilDiagnostics {
         LongAdder counter = this.unsupportedChunkVersions.get(version);
 
         if (counter == null) {
+            // The size check and the insertion cannot be one atomic step, so racing threads can
+            // push the version map past the cap by at most one entry each. The map is not trimmed
+            // back afterwards: a version which was already counted cannot be removed without losing
+            // the count it carries, and tracking the counts per version is the point of this map.
             if (this.unsupportedChunkVersions.size() >= MAX_TRACKED_NAMES) {
                 return false;
             }
