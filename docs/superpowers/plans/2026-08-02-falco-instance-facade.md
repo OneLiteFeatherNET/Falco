@@ -4809,10 +4809,28 @@ comparison. The combination is pinned by `FalcoStackIntegrationTest#testTheStack
 rather than demonstrated by the demo, which is a weaker form of the same claim.
 
 **The primitive chunk map is not free of costs, only of that one allocation.** `size()` and `idle()`
-walk the read map instead of reading a counter, so both are linear where they used to be constant —
-harmless, because they are reached from `unregister` and a log line, but it is a change and it is on
+do not read a counter: both call the library's `promote()` first, which takes the map's monitor and
+swaps the read map whenever the map is amended, and only then walk the read map — so they are linear
+*and* on a lock where they used to be constant and lock free. Harmless in this codebase, because they
+are reached from `unregister` and a log line and never from a tick, but it is a change and it is on
 the class. `chunks()` builds a fresh view object per call, because the fastutil base class does not
 cache one the way `ConcurrentHashMap` does.
+
+**The lookup path is not unconditionally lock free either, and the first version of this section said
+it was.** `Long2ObjectSyncMapImpl#getEntry` (flare-fastutil 2.0.1, lines 137-151) reads the read map
+without a lock, and when that returns null while the map is `amended` it enters
+`synchronized(this.lock)` and consults the dirty map. `amended` is set by any `put` of a key the read
+map does not hold — that is every chunk load — and is only cleared by a promotion, which needs as
+many misses as the dirty map has entries. So after n loads the monitor is on the miss path for up to
+n misses, and the miss path is taken for keys that are absent altogether, not only for keys sitting
+in the dirty map: `FalcoInstance#getChunk` returning null for an unloaded position is exactly that
+call. This is a documentation defect rather than a measured regression — `ChunkLookupBenchmark` walks
+keys that are present and prices the hit path, so no figure of this repository prices the miss path
+in either direction. That is precisely why the field javadoc now names it instead of asserting it
+away, and why `ChunkMapLockOnMissTest` pins it: the claim is about a dependency, so nothing here
+would have failed when flare or the Minestom bump behind it changes. It does not touch NFR-006: this
+monitor guards one map, where the monitor of `InstanceContainer` is the instance and is held across
+handlers, packets and events.
 
 **The module edge from `falco-light` to `falco-instance` is a cost, not a win.** It reverses the
 argument the old `FalcoLightingChunk` javadoc made, and it is paid so that one chunk can be both

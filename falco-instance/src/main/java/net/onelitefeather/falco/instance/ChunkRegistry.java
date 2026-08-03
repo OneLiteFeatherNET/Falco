@@ -35,7 +35,9 @@ import java.util.function.Consumer;
  * Every transition of a position — starting a load, publishing its result, unloading the chunk
  * again — happens inside a {@code compute} on the index of that position. That serialises them
  * without putting a monitor over the whole instance, which is what {@code InstanceContainer} does and
- * what NFR-006 forbids. It is worth far more than the future it holds: without it an unload and the
+ * what NFR-006 forbids. Read that as the promise it is: no monitor spans the instance, not "nothing
+ * here ever takes a monitor". The chunk map takes one of its own on a miss, and the field says where
+ * and for how long. It is worth far more than the future it holds: without it an unload and the
  * load it races can both believe they went first, and the chunk which loses ends up in the instance
  * with its loaded flag already cleared, where nothing will ever unload it again.
  * </p>
@@ -91,7 +93,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -109,18 +111,45 @@ public final class ChunkRegistry {
      * </p>
      * <p>
      * {@code Long2ObjectSyncMap} is a read map plus a dirty map in the shape of Go's {@code sync.Map},
-     * not the copy-on-write map underneath {@code InstanceContainer}. Lookups take no lock; a write
-     * after a run of misses rebuilds the dirty map, which is linear and lands on the load and unload
-     * path, where a tick partition is created and an event is dispatched anyway.
-     * {@code ChunkLookupBenchmark} prices both sides.
+     * not the copy-on-write map underneath {@code InstanceContainer}. It is in fact the very map
+     * {@code InstanceContainer#chunks} is — {@code Long2ObjectSyncMap.hashmap()} — so this field
+     * removed a difference between the two implementations rather than introducing one. A write after
+     * a run of misses rebuilds the dirty map, which is linear and lands on the load and unload path,
+     * where a tick partition is created and an event is dispatched anyway.
+     * {@code ChunkLookupBenchmark} prices the hit path and the write path against the boxed map. It
+     * does not price the miss path described next, and nothing in this repository does.
+     * </p>
+     *
+     * <h2>A lookup is not unconditionally lock free</h2>
+     * <p>
+     * A lookup which finds its key in the read map takes no lock. A lookup which does not, while the
+     * map is amended, takes one: {@code Long2ObjectSyncMapImpl#getEntry} enters
+     * {@code synchronized(lock)} and consults the dirty map (flare-fastutil 2.0.1,
+     * {@code Long2ObjectSyncMapImpl.java:137-151}). The map is amended from the first {@code put} of a
+     * key the read map does not hold until a promotion clears the flag, and promotion needs as many
+     * misses as the dirty map has entries, so after n freshly loaded chunks the monitor sits on the
+     * miss path for up to n misses. The miss path is taken for a key that is absent altogether, not
+     * only for one sitting in the dirty map, which makes {@link #chunk(int, int)} returning null — the
+     * shape of every {@code ChunkUtils#isLoaded} style probe and of {@code FalcoInstance#getChunk} for
+     * an unloaded position — exactly the call that takes it.
      * </p>
      * <p>
-     * Two costs of that map are paid by this class and named here rather than discovered later.
-     * {@link #size()} and {@link #idle()} walk the read map instead of reading a counter, so both are
-     * linear; they are reached from {@code FalcoInstance#unregister} and from a log line, never from a
-     * tick. And {@link #chunks()} builds a fresh view object per call, because the fastutil base class
-     * behind this map does not cache one the way {@code ConcurrentHashMap} does — the wrapper that
-     * method returns was allocated per call before this change too.
+     * That does not contradict what this class says above about not putting a monitor over the whole
+     * instance: this monitor belongs to this map and guards only it, where the monitor of
+     * {@code InstanceContainer} is the instance and is held across placement rules, handlers, packets
+     * and events. What is withdrawn is the stronger claim that reads never block, because they can.
+     * No figure of this repository prices that path either way, which is why it is named here instead
+     * of argued away.
+     * </p>
+     * <p>
+     * Two further costs of that map are paid by this class and named here rather than discovered
+     * later. {@link #size()} and {@link #idle()} do not read a counter: both call the library's
+     * {@code promote()} first, which takes that same monitor and swaps the read map whenever the map
+     * is amended, and then walk the read map — so they are linear <em>and</em> on the lock, not merely
+     * linear. Neither is reached from a tick; they are reached from {@code FalcoInstance#unregister}
+     * and from a log line. And {@link #chunks()} builds a fresh view object per call, because the
+     * fastutil base class behind this map does not cache one the way {@code ConcurrentHashMap} does —
+     * the wrapper that method returns was allocated per call before this change too.
      * </p>
      */
     private final Long2ObjectSyncMap<Chunk> chunks = Long2ObjectSyncMap.hashmap();

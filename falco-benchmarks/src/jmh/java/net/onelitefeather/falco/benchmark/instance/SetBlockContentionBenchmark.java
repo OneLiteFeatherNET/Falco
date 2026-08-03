@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.LongAdder;
  * excludes, so the two critical sections are equally <em>wide</em>. What still differs is how long they
  * are <em>held</em>: Falco releases before the neighbour updates, the packet and the event, the
  * container releases after them. The scenario therefore separates the two halves of the claim, and it
- * is the scenario in which the costs Falco pays for its granularity are offset by nothing at all — if
+ * is the scenario in which the cost Falco pays for its granularity is offset by nothing at all — if
  * Falco loses anywhere it loses here. It is included because a benchmark that only ran the case its
  * hypothesis predicts is not a measurement but an illustration.
  * </p>
@@ -122,15 +122,23 @@ import java.util.concurrent.atomic.LongAdder;
  *
  * <h2>What Falco pays for its granularity, and why this benchmark can show it</h2>
  * <p>
- * The finer lock is not free, and the two costs are visible in the code rather than assumed. The guard
- * map of the container is a plain {@link java.util.HashMap} and it is allowed to be one precisely
- * because the monitor already excludes every other writer; the guard map of Falco is a
+ * The finer lock is not free, and the cost is visible in the code rather than assumed. The guard map
+ * of the container is a plain {@link java.util.HashMap} and it is allowed to be one precisely because
+ * the monitor already excludes every other writer; the guard map of Falco is a
  * {@code ConcurrentHashMap} and it is touched by every thread before the chunk lock is taken, so Falco
- * pays a concurrent put per write where the container pays a plain one. Falco also resolves its chunk
- * through a {@code ConcurrentHashMap<Long, Chunk>}, which boxes the key on every write, where the
- * container uses a primitive keyed map. Under {@link Scenario#SAME_CHUNK} neither of those costs is
- * offset by anything, so if Falco loses anywhere it will lose there. That is a result about the
- * present implementation and it is reported as one.
+ * pays a concurrent put per write where the container pays a plain one. Under
+ * {@link Scenario#SAME_CHUNK} that cost is offset by nothing at all, so if Falco loses anywhere it
+ * will lose there. That is a result about the present implementation and it is reported as one.
+ * </p>
+ * <p>
+ * A second cost used to stand here and is gone, which is recorded rather than quietly deleted,
+ * because a reader holding an older run needs to know the arms changed underneath it. Falco resolved
+ * its chunk through a {@code ConcurrentHashMap<Long, Chunk>} and boxed the index on every write,
+ * where {@code InstanceContainer} used a primitive keyed map. {@code ChunkRegistry} now holds a
+ * {@code Long2ObjectSyncMap<Chunk>}, which is the same field {@code InstanceContainer#chunks} is —
+ * same library, same factory, {@code Long2ObjectSyncMap.hashmap()} on both sides. Chunk resolution is
+ * therefore no longer a difference between the arms, and a result of this benchmark must not be
+ * attributed to it.
  * </p>
  *
  * <h2>What a losing result would mean</h2>
@@ -193,7 +201,7 @@ import java.util.concurrent.atomic.LongAdder;
  * }</pre>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @State(Scope.Benchmark)
