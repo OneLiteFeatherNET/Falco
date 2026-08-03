@@ -23,7 +23,7 @@ are counted per version value in `AnvilDiagnostics`.
 - **The save path is not touched.**
 - Every new public type and member carries `@ApiStatus.Experimental`, Javadoc with `@param`/`@return`, and `@since 1.1.0`. Every modified type's `@version` is raised by one minor.
 - Javadoc runs under `-Werror`; a missing tag fails the build.
-- `checkApiCompatibility` runs on this module. Only additive changes are permitted.
+- `checkApiCompatibility` runs on this module. **Every signature change must be additive** — no member is removed, renamed, or has its parameters changed. This binds the API surface, not the behaviour: Task 3 deliberately changes what the loader *does* with a pre-1.18 world, which is why its commit carries the `!` marker, and that is not a contradiction of this line. Binary compatibility and behavioural compatibility are separate promises here, and only the first one is enforced by the build.
 - Builders in this project are immutable: every setter returns a **new** `Builder` with all fields passed through. Adding a field means touching the constructor, `build()`, and **every** existing setter.
 - Test method names in this module read as sentences: `testLoadingAnAbsentChunkReturnsNull`.
 - Commit messages are Conventional Commits, lower case, and say what changed and why.
