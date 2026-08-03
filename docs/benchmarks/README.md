@@ -122,3 +122,43 @@ is the only field the script cannot fill in, and it is left as an open question 
 file. Answer it before quoting anything from the run. The figures currently on the wiki's Project
 Status page were taken on a machine that was not idle and say so, which is the only reason they are
 still usable.
+
+## The tests of this module do not run on macOS
+
+`:falco-benchmarks:test` is skipped on macOS and only there. Everything else in the repository runs
+on all three runners as before; this module is the exception, and Gradle prints the reason next to
+the `SKIPPED` marker rather than passing over it silently.
+
+**What was observed.** On 2026-08-03 the macOS job of both open pull requests stopped in
+`:falco-benchmarks:test` and never came back. The other five modules — instance, light, anvil, demo,
+archunit — completed and wrote all 85 result files; this module wrote
+`in-progress-results-generic.bin` and `output-events.bin` at zero bytes, meaning the test JVM had
+been started and no test had reported anything at all. The job was silent for 31 minutes before it
+was cancelled, and the runner then terminated four orphan `java` processes. The same commit builds
+in 3m30s on ubuntu and 5m10s on windows, and the same macOS runner builds `main` green in 2m1s, so
+neither the runner nor the workflow is what differs.
+
+**Why this module and no other.** It is the only one whose test JVM is started with
+`-Djdk.attach.allowAttachSelf=true`, `-XX:+EnableDynamicAgentLoading`, `-Djol.magicFieldOffset=true`
+and an explicit `UseCompactObjectHeaders` setting, and with a 4 GB heap on a runner that has 7 GB.
+Those exist because jol measures retained size by attaching to its own VM. Which of them is the one
+that hangs on arm64 has not been established — the module is excluded, the cause is not diagnosed,
+and this paragraph says so rather than implying otherwise.
+
+**What is given up.** These are the tests that carry the central claim of the storage work:
+`ChunkFootprintTest` measures the 25 objects and 840 bytes of a fresh chunk, `PaletteFootprintTest`
+the palette break-even, `FalcoChunkEquivalenceTest` the behavioural equality against Minestom. They
+keep running on ubuntu and windows in every pull request, so the claim stays covered on two of three
+platforms — but a regression that only shows on arm64 would now pass unnoticed. The figures were
+never platform independent to begin with: retained size depends on the object header layout, which
+is what `UseCompactObjectHeaders` switches, so a number taken on arm64 was never interchangeable
+with the published one.
+
+**To run them on macOS anyway**, for instance to work on the hang:
+
+```bash
+./gradlew :falco-benchmarks:test -Pfalco.macOsFootprintTests
+```
+
+The property forces the task on regardless of the operating system. Expect it to hang until the
+cause is found.

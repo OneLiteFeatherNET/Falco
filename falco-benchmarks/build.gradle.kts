@@ -100,6 +100,12 @@ tasks {
 
     withType<Test>().configureEach {
         val compactHeaders = providers.gradleProperty("falco.compactHeaders").isPresent
+        val onMacOs = providers.systemProperty("os.name").getOrElse("").startsWith("Mac")
+        val forceOnMacOs = providers.gradleProperty("falco.macOsFootprintTests").isPresent
+
+        onlyIf("footprint measurement hangs on macOS; see docs/benchmarks/README.md") {
+            forceOnMacOs || !onMacOs
+        }
 
         maxHeapSize = "4g"
         jvmArgs("-Djdk.attach.allowAttachSelf=true")
