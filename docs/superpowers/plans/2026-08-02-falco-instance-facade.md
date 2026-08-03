@@ -4855,3 +4855,52 @@ compile classpath — and the rule was proven still to bite afterwards with a
 the version pin it rests on has to move with the next Minestom bump.
 
 `:falco-instance:javadoc`, `:falco-light:javadoc` and `:falco-anvil:javadoc` pass with `-Werror`.
+
+### What the closing review of the stage changed, after the numbers above were taken
+
+Two findings of the closing review are fixed in `9ec302a2` and `770301cb`, and both of them make a
+sentence of this section older than the code it describes. They are booked here rather than edited
+into the tables above, because every figure above was measured at `bf4b4e29` and is still what that
+commit had.
+
+**A throwing lifecycle listener used to hang a chunk load, and this section counted the notification
+points without asking what a throw out of one costs.** Stage 3 put third-party code between the chunk
+being ready and its future being completed — `publish` ends in `FalcoChunk#notifyPublished`,
+`notifyLoaded` ends in `ChunkLifecycleListener#onLoad`, the refused arm ends in `onUnload` — and all
+three sat outside the try/catch of `ChunkLifecycle#completeLoad`, which covers only the production of
+the chunk. A throw therefore left the future uncompleted: every `loadChunk(x, z).join()` on that
+position waited for the life of the process, while the chunk sat in the registry with a tick
+partition and no `InstanceChunkLoadEvent`. The trigger is in this repository, not hypothetical —
+`ChunkLightListener#onLoad` reaches `ChunkLightScheduler#bind`, which throws when one scheduler is
+asked to serve two instances, which is exactly the pairing US-3.06 made possible. The stretch is now
+wrapped: the throwable is handed to the waiting callers and rethrown unchanged, so an
+`InstanceContainer`'s loud failure stays loud and only the hang is gone.
+
+**The lock reach of `BlockWriter` was one entry short in its own class documentation.** It enumerated
+three pieces of foreign code under the chunk write lock and called naming them the honest thing to
+do; since `83825cc8` there were four, because `FalcoChunk#setBlock` ends in
+`listener.onBlockChange(...)` with the caller still holding that lock. It is the only one of the four
+a third party installs without touching a block, so the audit that starts at the class owning the
+lock could not find it. Nothing about the behaviour changed; the count, the re-entrancy hazard and
+the `write` javadoc did, and `BlockWriterTest` now reads `holdsWriteLock()` from inside
+`onBlockChange` the way it already did from inside the other three.
+
+The counts this moves:
+
+| | at `bf4b4e29` | now | what moved |
+| --- | ---: | ---: | --- |
+| `:falco-instance:` tests | 220 | **225** | +4 this wave, +1 the lookup-lock wave (`721a18ce`) |
+| `ChunkLifecycle.java` | 632 | **678** | the wrapped stretch and what it costs a listener |
+| `ChunkLifecycleListener.java` | 239 | **258** | what a throw costs, per arm, on both instance arms |
+| `BlockWriter.java` | 380 | **400** | the fourth piece of foreign code under the lock |
+| `ChunkRegistry.java` | 402 | **431** | `721a18ce`, not this wave |
+| `falco-instance/src/main/java` | 5 715 | **5 829** | 85 of the 114 are this wave, all of them Javadoc |
+
+The other four suites are unchanged at 210 / 43 / 217 / 42 (1 skipped) / 167, all green, and
+`:falco-instance:javadoc` and `:falco-light:javadoc` still pass with `-Werror`.
+
+**What neither fix repairs.** A listener which throws on the publish or the load arm still leaves a
+chunk in the registry that every later caller is handed while this one load was reported as failed.
+That is not a state this class can undo — the chunk got its tick partition inside the position lock,
+long before the listener ran — and it is now stated on `completeLoad` and on both listener methods
+rather than left to be discovered. The rule remains that a lifecycle listener does not throw.
