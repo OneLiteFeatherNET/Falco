@@ -4569,3 +4569,271 @@ Named here so that a reviewer does not read them as omissions.
 **It does not turn `falco-light` into a module that needs `falco-instance` at runtime for everything.** The dependency is `compileOnly` and only two classes of the module use it. A consumer of the bare light engine on a plain `InstanceContainer` adds nothing; a consumer of `ChunkLightScheduler#supplier()` adds `falco-instance`, which `falco-bom` already publishes beside it. That is a real cost and it is booked here rather than hidden.
 
 **It does not make Falco a named module.** `ChunkViewerCache` puts a class into `net.minestom.server.instance`, which is a split package with Minestom's own module. On the classpath, where every consumer runs today, this is invisible. On the module path it is fatal, and it will stay fatal until either Minestom exposes a way to release a viewer cache entry or that class moves somewhere it cannot reach the map at all.
+
+## Stage 3 result
+
+Measured 2026-08-03 on branch `feat/block-storage` at `bf4b4e29`, against Minestom
+`2026.06.20-26.1.2` as pinned by the build and JDK 25.0.3 (Temurin), on an AMD Ryzen 7 5800X with
+sixteen hardware threads.
+
+**The machine was not idle at any point of this stage.** Load average moved between 4.2 and 7.2
+across every run recorded below. That decides what may be quoted and what may not, and the split runs
+through the whole section:
+
+- **Citable.** The JOL footprint, because JOL walks a reachable object graph and counts it. The test
+  counts. The per-thread allocation counters, which came back byte-identical under `-Xint`,
+  `-XX:-DoEscapeAnalysis`, `-XX:TieredStopAtLevel=1` and the default JIT. The `gc.alloc.rate.norm`
+  column of the benchmark, which is the same kind of counting.
+- **Not citable.** Every `ns/op` in this section, without exception. They come from
+  `-Pjmh.quick` — one fork, two warmup and three measurement iterations — on that machine. They
+  answer "is there a difference large enough to see through the noise" and nothing finer.
+
+### The tests, which need two baselines rather than one
+
+| module | T4, stage 2 | after the `main` merge | now | stage 3's share |
+| --- | ---: | ---: | ---: | ---: |
+| `:falco-instance:` | 143 | 152 | **220** | +68 |
+| `:falco-anvil:` | 193 | 217 | **217** | 0 |
+| `:falco-light:` | 189 | 205 | **210** | +5 |
+| `:falco-demo:` | 139 | 166 | **167** | +1 |
+| `:falco-benchmarks:` | 38 | 42 | **42** (1 skipped) | 0 |
+| `:falco-archunit:` | — | 42 | **43** | +1 |
+
+All green, no failure, no error. The one skip is `EmptySectionCensusTest`, which needs a real Anvil
+world next to the repository and aborts its assumption when there is none — unchanged since stage 1.
+
+The middle column exists because **`ea776874` merged `main` into this branch between the plan commit
+and the first task of the stage**. T4 is therefore not the number stage 3 started from, and a range
+diff against T4 attributes the merge's tests to this stage. The column was taken by checking the
+worktree out at `e25802f8` — the last commit before task 1 — and running the six suites there, then
+returning to the branch. `:falco-archunit:` did not exist in T4 at all; it arrived with the merge.
+
+No count fell in either step. That was the one thing the stage was not allowed to do.
+
+### The footprint, which is citable and which sees less than it appears to
+
+Legacy object headers of twelve bytes, eight byte alignment, sizes through the JOL instrumentation
+agent, `falco.compactHeaders=false`:
+
+| | objects | bytes |
+| --- | ---: | ---: |
+| fresh chunk, `DynamicChunk` | 192 | 6 848 |
+| fresh chunk, `FalcoChunk` | **25** | **840** |
+| difference | −167 | **−6 008** |
+
+The same measurement under `-XX:+UseCompactObjectHeaders` (`falco.compactHeaders=true`, eight byte
+headers): 192 / 6 176 against 25 / 760, a difference of −5 416. The two modes must not be quoted
+beside each other.
+
+The instance-side cost per chunk, which is T3:
+
+| | legacy headers | compact headers |
+| --- | ---: | ---: |
+| `InstanceContainer` | 185 B | 161 B |
+| `FalcoInstance` | **161 B** | **145 B** |
+
+**Both tables are unchanged from stage 2, and that is a statement about the instrument, not only
+about the stage.** Task 8 gave `FalcoChunk` a listener field. The fresh-chunk figure did not move,
+because the field is a reference that is `null` on a fresh chunk — no object — and it fitted into
+padding the object already carried, so the shallow size did not move either. This is precisely the
+seventh injected defect of the stage 2 result, the one that was *not* caught: a comparison built on
+object counts and shallow sizes cannot see a field of this shape. The right reading of "the footprint
+is unchanged" is "nothing this instrument can see has changed", and the DoD item that asked for the
+table to be *re-declared* for the new field turned out to have nothing to re-declare.
+
+`ChunkFootprintTest` also prints its own residue, unchanged: proving the two chunks equivalent leaves
+the fresh Falco chunk at 36 objects and 2 168 bytes, because the check materialises both heightmaps
+and one section. That runs after the measurement and lands outside every table above.
+
+`FalcoChunkEquivalenceTest` — 18 fixtures, every position and both heightmaps of every column —
+green. Nothing in this stage touches block storage, which is exactly why it had to be run.
+
+### What a lifecycle transition allocates, which is US-3.04
+
+`ChunkLifecycleAllocationTest`, 200 000 transitions per arm, per-thread allocation from
+`com.sun.management.ThreadMXBean`, on the machine named at the top:
+
+```
+lifecycle transitions: 200.000 without a listener ->       704 B ( 0,004 B each)
+lifecycle transitions: 200.000 with one listener  -> 4.800.000 B (24,000 B each)
+```
+
+The second arm is the positive control and is the reason the first one means anything: it publishes
+its event into a `static volatile` field, so no compiler may delete the allocation, and it shows the
+counter can see one. A null arm on its own would be green against an implementation that allocates on
+every transition and merely lets escape analysis remove it.
+
+### What a chunk lookup allocates, which is US-3.05
+
+`ChunkLookupAllocationTest`, 500 000 lookups:
+
+| | bytes | per lookup |
+| --- | ---: | ---: |
+| `ConcurrentHashMap<Long, Chunk>` | 8 327 736 | **16.655 B** |
+| `Long2ObjectSyncMap<Chunk>` | 240 | **0.000 B** |
+
+**The before figure only exists at the right position, and the plan named the wrong one.** The test
+as drafted measured chunk 0/0, and `CoordConversion#chunkIndex(0, 0)` is `0L` — the one index in the
+whole world that `Long#valueOf` serves out of its cache. Over that position the boxed map reports
+`0,000 B` as well, so the test was green against the implementation it was written to condemn. It
+measures chunk 4/7 instead, whose index is above 2³², and the class javadoc says why the position may
+not be moved back.
+
+Two mutations, because one was not enough. Boxing the key by hand and going through fastutil's
+`get(Object)` default **did not** make it red: that box is unwrapped immediately and escape analysis
+deletes it. Putting the field back to a `ConcurrentHashMap` **did**, at 13.512 B per lookup. The test
+therefore discriminates between the two map implementations, which is what it claims to do, and not
+"some boxing somewhere".
+
+### `ChunkLookupBenchmark`, and a correction to what it was expected to show
+
+`-Pjmh.quick -Pjmh.include="ChunkLookupBenchmark"`, average time, one full pass over the key set per
+operation on the lookup arms and one put plus one remove on the write arms.
+
+| arm | positions | ns/op (**not citable**) | `gc.alloc.rate.norm` B/op |
+| --- | ---: | ---: | ---: |
+| `boxedLookup` | 289 | 7 924.6 ± 468.6 | 20 024.0 |
+| `boxedLookup` | 1 089 | 36 487.3 ± 818.3 | 80 952.0 |
+| `boxedLookup` | 4 096 | 197 171.8 ± 34 205.6 | 322 560.1 |
+| `primitiveLookup` | 289 | 1 430.1 ± 11.7 | **0.001** |
+| `primitiveLookup` | 1 089 | 5 087.4 ± 85.6 | **0.004** |
+| `primitiveLookup` | 4 096 | 20 678.5 ± 3 654.0 | **0.014** |
+| `boxedLoadAndUnload` | 289 / 1 089 / 4 096 | 82.9 / 88.4 / 97.2 | 208.0 each |
+| `primitiveLoadAndUnload` | 289 / 1 089 / 4 096 | 61.0 / 43.6 / 36.8 | 37.8 / 38.7 / 40.0 |
+
+Two things in this table contradict what the task expected, and both are recorded rather than
+smoothed over.
+
+**The write side did not get worse.** The benchmark exists because `Long2ObjectSyncMap` pays for a
+dirty-map rebuild on writes after a run of misses, and the task was written to put that cost on the
+record. In this configuration the primitive map is the cheaper one on the write arm too, and it
+allocates a fifth of what the boxed one does. That is a scouting number on a loaded machine and it is
+not evidence that the rebuild is free; it is evidence that this benchmark did not provoke it.
+
+**The boxed lookup arm does not allocate sixteen bytes per position — it allocates 69 to 79 — and
+most of that is not boxing.** Traced outside JMH with the same per-thread counter:
+
+- a box costs 24 B, and 272 of the 289 keys lie outside the autobox cache: 6 528 B per pass, exactly
+  what the counter reports for a loop that only boxes;
+- the remaining ~46.7 B per lookup appear **with a pre-boxed key as well**, so no autoboxing is
+  involved in them at all;
+- they vanish when the keys are spread by a mixing multiplier (0.00 B), and they appear precisely
+  when the grid crosses the treeify threshold: side 4, 6 and 8 give 0.00 B, side 17 and 33 give
+  46.7 and 51.1 B.
+
+The cause is that `Long#hashCode` of a chunk index is `chunkX ^ chunkZ`, so a view-distance grid maps
+onto a handful of buckets, the bins treeify, and `HashMap`/`ConcurrentHashMap` then call
+`comparableClassFor` → `Class#getGenericInterfaces` on every lookup, which allocates reflectively.
+Identical under `-Xint`, `-XX:-DoEscapeAnalysis` and C1, so it is not a JIT artefact. The primitive
+map escapes both costs, because fastutil mixes the long key itself and never treeifies.
+
+**None of this makes the change a speed change.** `getChunk` is reached on a chunk change rather than
+per block, because `ChunkCache` memoises in between, so the counted allocation is established and its
+cost to a running server still is not.
+
+### The viewer cache, T6 and T7
+
+`ChunkViewerCacheLeakTest`, entries added to the tracker's cache:
+
+| constructions | `InstanceContainer` | `FalcoInstance` |
+| ---: | ---: | ---: |
+| 16 | 16 | **1** |
+| 160 | 160 | **0** |
+| 1 600 | 1 600 | **0** |
+
+T7 said one entry per *position*, never removed. `ChunkViewerCacheTest#testALoadAndUnloadCycleIsNeutral`
+now says the entry goes back: the cache ends a run of load-and-unload cycles exactly where it started,
+and commenting the `ChunkViewerCache.release(...)` call out of `ChunkLifecycle#unload` makes it fail
+with `expected: <0> but was: <32>`. **The definition of done says 64 cycles and the test does 32.**
+The 64-cycle variant lived in `falco-benchmarks`, where it destabilised `ChunkFootprintTest` through
+JUnit ordering, and task 9 removed it rather than leave a flaky assertion standing. T6 is untouched
+and cannot be touched from outside Minestom.
+
+### What the split cost, in lines
+
+`falco-instance/src/main/java/net/onelitefeather/falco/instance/` plus the one class that had to live
+in a Minestom package:
+
+| file | lines |
+| --- | ---: |
+| `FalcoChunk.java` | 1 115 |
+| `FalcoInstance.java` | **951** |
+| `ChunkLifecycle.java` | 632 |
+| `ChunkGeneration.java` | 450 |
+| `ChunkRegistry.java` | 402 |
+| `LazySectionBlockStorage.java` | 389 |
+| `BlockWriter.java` | 380 |
+| `ChunkPersistence.java` | 262 |
+| `ChunkLifecycleListener.java` | 239 |
+| `BlockStorage.java` | 238 |
+| `SectionBlockStorage.java` | 213 |
+| `PaletteCompaction.java` | 212 |
+| `net/minestom/server/instance/ChunkViewerCache.java` | 96 |
+| `FalcoInstanceException.java` | 58 |
+| `package-info.java` | 46 |
+| `ChunkLifecycleEvent.java` | 32 |
+
+`FalcoInstance` went from **1 721 lines to 951**, a fall of 770, and it now declares exactly four
+fields — `registry`, `blockWriter`, `persistence`, `lifecycle` — with `InstanceFacadeTest` failing
+when a fifth appears. Beside it, nine new main-source files hold **2 611 lines** — eight in
+`falco-instance`, one (`ChunkLightListener`) in `falco-light` — and `FalcoChunk` grew from 948 to
+1 115 for the five notification points. The whole of `falco-instance/src/main/java` went from 3 825
+to 5 715 lines.
+
+**That is the weakest number of this stage and it belongs here.** Behaviour did not change; the
+module is 1 890 lines larger for it. **1 657 of the 2 611 new lines — 63 % — are Javadoc**, counted
+rather than estimated, because the extracted classes had to write down rules that used to be
+implicit in one file: what a step handed inside the position lock may do, how far the chunk write
+lock reaches, which of the two instance arms is the stricter one to write a lifecycle listener for.
+The remaining 954 lines are the price of naming things — five responsibilities that were `private`
+methods sharing fields are now five classes with parameters and return types.
+
+What the stage bought is not in this table. It is that `FalcoChunk` can carry a lifecycle listener at
+all, which is what made US-3.06 possible — `FalcoLightingChunk extends FalcoChunk`, so one chunk
+object now carries both the lifecycle and the light, where two classes used to have to be paired by
+hand. That was the structural reason the whole undertaking existed, and it is not a line count.
+
+### What stage 3 did not achieve
+
+**The tick race is still open.** `FalcoChunk#tick(long)` iterates `entries` with no lock while the
+tick thread holds only its own, so a concurrent `setBlock` that rehashes the map can make the walk
+yield garbage. Upstream `DynamicChunk` has the identical race with its `tickableMap`, so it is
+inherited rather than introduced — but this stage owns the lifecycle and did not fix it, and ArchUnit
+cannot see it, because the field is `final` and `sharedStateIsSafelyPublished` skips it by
+construction. It is recorded in `docs/superpowers/HANDOFF-instance-chunk.md` under *Open defect*.
+
+**The demo does not run its Falco stack on a `FalcoInstance`.** The definition of done asks for it.
+Task 10 changed the prose and `ServerStack#note()` instead and left the demo on an
+`InstanceContainer`, because switching it would have put a third variable into a two-stack
+comparison. The combination is pinned by `FalcoStackIntegrationTest#testTheStackNeedsNoLifecyclePairAnyMore`
+rather than demonstrated by the demo, which is a weaker form of the same claim.
+
+**The primitive chunk map is not free of costs, only of that one allocation.** `size()` and `idle()`
+walk the read map instead of reading a counter, so both are linear where they used to be constant —
+harmless, because they are reached from `unregister` and a log line, but it is a change and it is on
+the class. `chunks()` builds a fresh view object per call, because the fastutil base class does not
+cache one the way `ConcurrentHashMap` does.
+
+**The module edge from `falco-light` to `falco-instance` is a cost, not a win.** It reverses the
+argument the old `FalcoLightingChunk` javadoc made, and it is paid so that one chunk can be both
+things. `compileOnly` and the ArchUnit rule that keeps it to the two classes that need it are the
+containment, not a cancellation.
+
+**`ChunkViewerCache` still splits a package with Minestom.** `net.minestom.server.instance` is the
+only place from which the tracker's cache is reachable at all. On the classpath, where every consumer
+runs today, that is invisible; on the module path it is fatal, and it stays fatal until Minestom
+exposes a way to release an entry.
+
+**The container's own viewer cache growth (M14) is untouched**, because it cannot be reached from
+outside Minestom. `ChunkViewerCacheLeakTest` keeps measuring it as the reason the Falco side was
+worth cleaning up.
+
+**The stage widened an architecture rule.** `space.vectrix.flare..` joined the allowlist of
+`publishedModulesOnlyUseDeclaredDependencies`, which had gone red with eleven violations. Both halves
+of the justification were checked rather than assumed — the published POM lists `slf4j-api` and
+nothing else, and Minestom brings flare 2.0.1 to every runtime classpath while hiding it from its own
+compile classpath — and the rule was proven still to bite afterwards with a
+`javax.xml.namespace.QName`. It is still one allowed package more than the stage started with, and
+the version pin it rests on has to move with the next Minestom bump.
+
+`:falco-instance:javadoc`, `:falco-light:javadoc` and `:falco-anvil:javadoc` pass with `-Werror`.
