@@ -184,6 +184,131 @@ Minestom's own events are unaffected: `InstanceChunkLoadEvent`, `InstanceChunkUn
 `PlayerBlockBreakEvent` are dispatched here exactly as they are by a container, so listeners on the
 `GlobalEventHandler` keep working.
 
+## Everything the three modules offer
+
+The five steps above are one path through Falco. This is the rest of it, so that what exists is
+visible without reading three wiki pages first. Every snippet here is compiled by
+`DocumentationSnippets` in `falco-demo`.
+
+### falco-anvil — reading and writing Anvil worlds
+
+The two-argument constructor is the whole of it for most servers. The builder is there when the
+defaults do not fit:
+
+```java
+FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+        .openRegionLimit(64)          // region files kept open at once
+        .compressionLevel(2)          // 1..9, the trade between write time and file size
+        .saveParallelism(4)           // threads a saveChunks call may use
+        .dataVersion(4189)            // what a written chunk claims to be
+        .diagnostics(new AnvilDiagnostics())
+        .exceptionHandler(throwable -> log.warn("chunk load failed", throwable))
+        .build(Path.of("worlds", "lobby"), DimensionType.OVERWORLD.key());
+```
+
+**`diagnostics()` is the one to know about for a live server.** A world written by a different
+version, or by a mod, contains blocks and biomes this loader cannot resolve — it substitutes and
+counts rather than failing, and the counters are how you find out:
+
+```java
+AnvilDiagnostics diagnostics = loader.diagnostics();
+diagnostics.reportUnknownBlock("mod:strange_block");   // true the first time, false after
+```
+
+`regionDirectory()` says which directory was resolved, `legacyLayout()` whether it fell back to the
+pre-26.1 layout, and `openRegionCount()` how many files are open right now. `close()` flushes every
+one of them and is what `ownsLoader(true)` calls for you.
+
+### falco-light — block and sky light
+
+Three entry points, in order of how much they do:
+
+```java
+ChunkLightService lighting = new ChunkLightService();
+
+lighting.calculate(chunk);                              // block light, this chunk
+lighting.calculateSky(chunk);                           // sky light, this chunk
+lighting.calculateWithNeighbours(instance, 0, 0);       // both, and the ring around it
+
+int level = lighting.blockLightAt(chunk, 8, 40, 8);     // read one position back
+```
+
+`calculateWithNeighbours` is the one to use when a chunk arrives from disk, because light crosses
+chunk borders and a chunk lit alone has a dark seam.
+
+For a world that keeps itself lit, the scheduler does the bookkeeping. Its builder carries the knobs
+that matter under load:
+
+```java
+ChunkLightScheduler scheduler = ChunkLightScheduler.builder(lighting)
+        .executor(ChunkLightScheduler.defaultExecutor())
+        .maxAreaSize(4)               // chunks per side of one lighting area
+        .maxCachedChunks(256)         // opacity tables kept between passes
+        .skyLight(ChunkLightScheduler.SkyLight.FROM_DIMENSION)
+        .onFailure(throwable -> log.error("lighting failed", throwable))
+        .build();
+```
+
+Two ways to drive it. On a `FalcoInstance`, `scheduler.supplier()` as in step 5 and nothing else. On
+an `InstanceContainer`, hang a `ChunkLightListener` on the chunks and tick it yourself:
+
+```java
+container.setChunkSupplier((instance, x, z) -> {
+    FalcoChunk chunk = new FalcoChunk(instance, x, z);
+    chunk.addLifecycleListener(new ChunkLightListener(scheduler));
+    return chunk;
+});
+MinecraftServer.getSchedulerManager().buildTask(() -> scheduler.onTick(container, System.currentTimeMillis()))
+        .repeat(TaskSchedule.tick(1))
+        .schedule();
+```
+
+And when something outside Falco changed the world, tell it:
+
+```java
+scheduler.markChanged(instance, 0, 0);              // this chunk needs relighting
+scheduler.markChanged(instance, 0, 0, 8, 40, 8);    // this position did
+scheduler.markDirty(instance, 0, 0);                // relight without an incremental path
+```
+
+### falco-instance — the instance, the chunk, shared views
+
+The builder is in step 5. Beyond it, the instance exposes its four parts, and the chunk exposes its
+storage:
+
+```java
+instance.registry();      // which chunks are loaded, by position
+instance.lifecycle();     // loading, publishing, unloading, and the listeners
+instance.blockWriter();   // the write path, including placement and destruction
+
+chunk.storage().views();               // read the sections without materialising them
+chunk.storage().materialisedSections(); // how many actually exist
+chunk.storage().shared(0);             // is section 0 still the shared empty one
+```
+
+Lifecycle listeners are the extension point that replaced subclassing. Every method has a default:
+
+```java
+instance.lifecycle().addListener(new ChunkLifecycleListener() {
+    @Override
+    public void onLoad(ChunkLifecycleEvent event) {
+        log.info("loaded {} {}", event.chunk().getChunkX(), event.chunk().getChunkZ());
+    }
+});
+```
+
+They run **inside** the transition, before anybody else sees the chunk, which is what the light
+engine needs — and why a throw from one fails the chunk load. For ordinary application code the
+Minestom events named above are the right tool.
+
+Generation is the usual Minestom API, with one difference worth knowing: the generator is handed
+copies of the section palettes and they are moved over only when it returns, so a generator that
+fails halfway leaves the chunk exactly as it was rather than half built and published.
+
+```java
+instance.setGenerator(unit -> unit.modifier().fillHeight(0, 40, Block.STONE));
+```
+
 ## Shared worlds
 
 Shared worlds are the one case `FalcoInstance` cannot serve, because `SharedInstance` takes an
