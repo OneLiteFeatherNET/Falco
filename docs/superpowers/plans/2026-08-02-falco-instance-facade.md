@@ -4896,8 +4896,47 @@ The counts this moves:
 | `ChunkRegistry.java` | 402 | **431** | `721a18ce`, not this wave |
 | `falco-instance/src/main/java` | 5 715 | **5 829** | 85 of the 114 are this wave, all of them Javadoc |
 
-The other four suites are unchanged at 210 / 43 / 217 / 42 (1 skipped) / 167, all green, and
+The other five suites are unchanged at 210 / 43 / 217 / 42 (1 skipped) / 167, all green, and
 `:falco-instance:javadoc` and `:falco-light:javadoc` still pass with `-Werror`.
+
+### The gate itself, re-taken at the last commit of the stage
+
+Everything above was measured at `bf4b4e29` or reported per wave afterwards. The stage may only be
+called done against the commit it actually ends at, so the whole set was run once more at `87ffd652`:
+
+| module | tests | failures | errors | skipped |
+| --- | ---: | ---: | ---: | ---: |
+| `:falco-instance:` | 225 | 0 | 0 | 0 |
+| `:falco-anvil:` | 217 | 0 | 0 | 0 |
+| `:falco-light:` | 210 | 0 | 0 | 0 |
+| `:falco-demo:` | 167 | 0 | 0 | 0 |
+| `:falco-benchmarks:` | 42 | 0 | 0 | 1 |
+| `:falco-archunit:` | 43 | 0 | 0 | 0 |
+
+Counted out of the JUnit XML rather than read off the console, together with `:falco-instance:`,
+`:falco-light:` and `:falco-anvil:javadoc` under `-Werror`. No count fell against any earlier column.
+
+**That run was not made in the stage's own worktree, and the reason is a finding rather than a
+footnote.** Two attempts there failed — the first with `java.io.EOFException` from two test workers,
+the second with `java.nio.file.NoSuchFileException` on
+`build/test-results/test/binary/in-progress-results-generic.bin` — while every test that reported at
+all reported `PASSED`. A second session was running Gradle against the same project directory and
+removing `build/` underneath the run, and the load average moved from 1.5 to 19.7 across it. A green
+run in a directory a second writer is clearing is not evidence of anything, so the acceptance was
+taken in a worktree detached at `87ffd652` and removed afterwards, which is the same precaution the
+lookup-lock wave had to take.
+
+**The gate was then attacked, because an acceptance which cannot fail measures nothing.** Two
+mutations, both against the two claims of the definition of done that carry the most weight, each
+reverted afterwards:
+
+| mutation | result |
+| --- | --- |
+| a fifth field on `FalcoInstance` (`private final Object mutationProbe = new Object();`) | **killed** — `InstanceFacadeTest > declares exactly the four parts it delegates to` |
+| `ChunkViewerCache.release(...)` removed from `ChunkLifecycle#unload` | **killed** — `ChunkViewerCacheTest > leaves the cache where it found it across a load and an unload` |
+
+The second one is the more informative of the two: its three sibling cases stayed green under the
+same mutation, so the cycle assertion is the only thing in that class which sees the release at all.
 
 **What neither fix repairs.** A listener which throws on the publish or the load arm still leaves a
 chunk in the registry that every later caller is handed while this one load was reported as failed.
