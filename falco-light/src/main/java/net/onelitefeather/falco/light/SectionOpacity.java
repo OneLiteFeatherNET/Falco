@@ -315,6 +315,37 @@ public final class SectionOpacity {
     }
 
     /**
+     * Writes the occluded faces of every block of this section into one flat array.
+     * <p>
+     * A propagation over a whole chunk reads the occlusion of a neighbour once per face per queued
+     * position, and reaching it through the section costs an index into the list, an interface call
+     * and a null test before the byte itself. Laying the whole column out flat once turns all of
+     * that into a single array read for the rest of the pass.
+     * </p>
+     * <p>
+     * A uniform section is filled rather than copied, which is why it is still cheaper than one that
+     * carries a table: the fill writes the same byte over a contiguous range and never touches a
+     * per position table, because a uniform section holds none.
+     * </p>
+     * <p>
+     * Package private on purpose. This hands out the internal layout of the table and is meant for
+     * the two propagators of this package, not for callers.
+     * </p>
+     *
+     * @param target the array which receives the occluded faces
+     * @param offset the index in the target at which this section begins
+     */
+    void copyOcclusionInto(byte[] target, int offset) {
+        byte[] table = this.occlusion;
+
+        if (table == null) {
+            Arrays.fill(target, offset, offset + LightNibbles.BLOCK_COUNT, this.uniformOcclusion);
+            return;
+        }
+        System.arraycopy(table, 0, target, offset, LightNibbles.BLOCK_COUNT);
+    }
+
+    /**
      * Returns the amount of light the block at the given position emits.
      *
      * @param x the x coordinate inside the section

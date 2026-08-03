@@ -35,10 +35,11 @@ import org.jetbrains.annotations.ApiStatus;
  * </p>
  * <p>
  * <b>This class holds no computation logic on purpose.</b> Two overrides now, and both of them are
- * about a packet rather than about light: everything the chunk used to report — the block change,
- * the load, the tick — moved into {@link ChunkLightListener}, and the dirty set, the areas, the
- * executor and the back pressure live in {@link ChunkLightScheduler}. A reader looking for the
- * behaviour finds it in one place rather than spread across a chunk and a scheduler.
+ * about a packet rather than about light: {@code invalidate} drops the cached light packet and
+ * {@code onLightUpdated} drops it and sends a fresh one. Everything the chunk used to report — the
+ * block change, the load, the tick — moved into {@link ChunkLightListener}, and the dirty set, the
+ * areas, the executor and the back pressure live in {@link ChunkLightScheduler}. A reader looking
+ * for the behaviour finds it in one place rather than spread across a chunk and a scheduler.
  * </p>
  * <p>
  * <b>What the change of superclass bought.</b> A {@link FalcoChunk} allocates no section until

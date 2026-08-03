@@ -1,6 +1,7 @@
 package net.onelitefeather.falco.light;
 
 import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Contract;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -36,14 +37,122 @@ public final class ChunkLightPropagator {
     private static final BlockFace[] FACES = BlockFace.values();
     private static final int MASK = LightNibbles.DIMENSION - 1;
 
+    /**
+     * The opposite of every face, in the order of {@link #FACES}.
+     * <p>
+     * {@code BlockFace#opposite()} is a switch over the enum, and the inner loop calls it once per
+     * face per queued position — six times for every block the light reaches. Resolving it once at
+     * class load turns that into an array read.
+     * </p>
+     */
+    private static final BlockFace[] OPPOSITES = opposites();
+
+    /**
+     * Resolves the opposite of every face once.
+     *
+     * @return the opposite of every face, indexed like {@link #FACES}
+     */
+    private static BlockFace[] opposites() {
+        BlockFace[] opposites = new BlockFace[FACES.length];
+
+        for (int index = 0; index < FACES.length; index++) {
+            opposites[index] = FACES[index].opposite();
+        }
+        return opposites;
+    }
+
+    /**
+     * The index into {@link #FACES} of the opposite of every face.
+     * <p>
+     * A queued position remembers the face that points back at whoever queued it, and a face is
+     * cheaper to carry as its index than as a reference. This is that index.
+     * </p>
+     */
+    private static final int[] OPPOSITE_INDEX = oppositeIndexes();
+
+    /**
+     * Resolves the index of the opposite of every face once.
+     *
+     * @return the index of the opposite of every face, indexed like {@link #FACES}
+     */
+    private static int[] oppositeIndexes() {
+        int[] indexes = new int[FACES.length];
+
+        for (int index = 0; index < FACES.length; index++) {
+            indexes[index] = OPPOSITES[index].ordinal();
+        }
+        return indexes;
+    }
+
+    /**
+     * The amount of bits a queued position occupies, leaving the ones above it for the face.
+     * <p>
+     * A position index is {@code (y << 8) | (z << 4) | x} over a column of at most a few hundred
+     * blocks, so twenty-four bits carry a column of 65 536 sections — four orders of magnitude past
+     * anything a dimension declares.
+     * </p>
+     */
+    private static final int POSITION_BITS = 24;
+
+    /**
+     * The bits of a queue entry which carry the position.
+     */
+    private static final int POSITION_MASK = (1 << POSITION_BITS) - 1;
+
+    /**
+     * The face value of an entry which nobody queued, so no direction may be skipped for it.
+     * Six faces occupy the indexes zero to five, which leaves this one free.
+     */
+    private static final int NO_FACE = 7;
+
+    /**
+     * The bit of the opposite of every face, ready to be tested against a flat occlusion byte.
+     */
+    private static final int[] OPPOSITE_BIT = oppositeBits();
+
+    /**
+     * Resolves the occlusion bit of the opposite of every face once.
+     *
+     * @return the bit of the opposite of every face, indexed like {@link #FACES}
+     */
+    private static int[] oppositeBits() {
+        int[] bits = new int[FACES.length];
+
+        for (int index = 0; index < FACES.length; index++) {
+            bits[index] = 1 << OPPOSITE_INDEX[index];
+        }
+        return bits;
+    }
+
+    /**
+     * The occlusion bit of the face light enters a block through when it falls straight down.
+     */
+    private static final int TOP_BIT = 1 << BlockFace.TOP.ordinal();
+
+    /**
+     * The amount of columns a chunk holds.
+     */
+    private static final int COLUMN_COUNT = LightNibbles.DIMENSION * LightNibbles.DIMENSION;
+
     private byte[] levels;
+    private byte[] occlusion;
     private int[] queue;
+
+    /**
+     * The lowest position of every column which still sees the open sky.
+     * <p>
+     * One entry per column, so the size does not depend on the height of the chunk and the array is
+     * allocated once with the propagator.
+     * </p>
+     */
+    private final int[] skyBottom = new int[COLUMN_COUNT];
 
     /**
      * Creates a new propagator without any buffer. The buffers are sized on the first run.
      */
     public ChunkLightPropagator() {
         this.levels = new byte[0];
+        this.occlusion = new byte[0];
         this.queue = new int[0];
     }
 
@@ -74,7 +183,7 @@ public final class ChunkLightPropagator {
      */
     public List<LightNibbles> propagateSky(List<SectionOpacity> sections) {
         int height = prepare(sections);
-        return search(sections, height, seedSky(sections, height));
+        return search(sections, height, seedSky(height));
     }
 
     /**
@@ -90,8 +199,16 @@ public final class ChunkLightPropagator {
         }
 
         int height = sections.size() * LightNibbles.DIMENSION;
-        ensureCapacity(height * LightNibbles.DIMENSION * LightNibbles.DIMENSION);
-        Arrays.fill(this.levels, 0, height * LightNibbles.DIMENSION * LightNibbles.DIMENSION, (byte) 0);
+        int blockCount = height * LightNibbles.DIMENSION * LightNibbles.DIMENSION;
+        ensureCapacity(blockCount);
+        Arrays.fill(this.levels, 0, blockCount, (byte) 0);
+
+        // The whole column is laid out flat once, so the search reads one array instead of walking
+        // list, section and null test per face per queued position. It is paid for by one fill or
+        // one copy per section, both of which the JIT turns into vector stores.
+        for (int section = 0; section < sections.size(); section++) {
+            sections.get(section).copyOcclusionInto(this.occlusion, section * LightNibbles.BLOCK_COUNT);
+        }
         return height;
     }
 
@@ -108,7 +225,9 @@ public final class ChunkLightPropagator {
         int head = 0;
 
         while (head < tail) {
-            int index = this.queue[head++];
+            int entry = this.queue[head++];
+            int index = entry & POSITION_MASK;
+            int arrivedFrom = entry >>> POSITION_BITS;
             int level = this.levels[index];
 
             if (level <= 1) {
@@ -120,7 +239,14 @@ public final class ChunkLightPropagator {
             int y = index >> 8;
             int next = level - 1;
 
-            for (BlockFace face : FACES) {
+            for (int faceIndex = 0; faceIndex < FACES.length; faceIndex++) {
+                // Whoever queued this position sits on the far side of that face and already holds
+                // a level one higher, so the test below could never pass for it. Skipping the face
+                // outright is the same result for a sixth less work.
+                if (faceIndex == arrivedFrom) {
+                    continue;
+                }
+                BlockFace face = FACES[faceIndex];
                 int neighbourX = x + face.offsetX();
                 int neighbourY = y + face.offsetY();
                 int neighbourZ = z + face.offsetZ();
@@ -128,18 +254,20 @@ public final class ChunkLightPropagator {
                 if (isOutside(neighbourX, neighbourY, neighbourZ, height)) {
                     continue;
                 }
-                if (blocksFace(sections, neighbourX, neighbourY, neighbourZ, face.opposite())) {
-                    continue;
-                }
-
                 int neighbourIndex = index(neighbourX, neighbourY, neighbourZ);
 
+                // The level is one array read, the occlusion is two and a branch, and the level
+                // rejects far more often — a position is reached from up to six directions and only
+                // the first of them raises it. Cheapest and most selective test first.
                 if (this.levels[neighbourIndex] >= next) {
+                    continue;
+                }
+                if ((this.occlusion[neighbourIndex] & OPPOSITE_BIT[faceIndex]) != 0) {
                     continue;
                 }
                 this.levels[neighbourIndex] = (byte) next;
                 ensureRoom(tail);
-                this.queue[tail++] = neighbourIndex;
+                this.queue[tail++] = neighbourIndex | (OPPOSITE_INDEX[faceIndex] << POSITION_BITS);
             }
         }
         return collect(sections.size());
@@ -169,6 +297,7 @@ public final class ChunkLightPropagator {
     private void ensureCapacity(int blockCount) {
         if (this.levels.length < blockCount) {
             this.levels = new byte[blockCount];
+            this.occlusion = new byte[blockCount];
             this.queue = new int[blockCount];
         }
     }
@@ -201,7 +330,7 @@ public final class ChunkLightPropagator {
                     int index = index(x, y, z);
                     this.levels[index] = (byte) emission;
                     ensureRoom(tail);
-                    this.queue[tail++] = index;
+                    this.queue[tail++] = index | (NO_FACE << POSITION_BITS);
                 }
             }
         }
@@ -209,30 +338,57 @@ public final class ChunkLightPropagator {
     }
 
     /**
-     * Puts every block which sees the open sky into the queue.
+     * Lights every block which sees the open sky and queues the few of them that can spread it.
      * <p>
      * Every column is walked from the top of the chunk downwards. As long as light can enter the
      * block from above it receives the full level, which is why an open column is lit to the very
-     * bottom. The walk of a column ends at the first block that stops the light.
+     * bottom. The walk of a column ends at the first block that stops the light, and where it ended
+     * is kept per column — that is the heightmap this method builds on the way past.
+     * </p>
+     * <p>
+     * <b>Lighting a position and queueing it are two different things, and this is the one place
+     * where the difference is worth most.</b> An open position whose four horizontal neighbours are
+     * open at the same height can raise nobody: above and below it the column is already at the
+     * full level or is blocked, and so is every neighbour. Queueing it costs a pop and six face
+     * tests to establish that. On an open chunk that used to be every position of every column.
+     * </p>
+     * <p>
+     * What has to be queued is exactly the positions with a darker neighbour, and the heightmap
+     * gives that as a range rather than a test: a neighbouring column is dark at every height below
+     * where its own sky stops, so the positions of a column that need queueing are the ones from its
+     * own bottom up to the deepest bottom among its four neighbours. Above that line every neighbour
+     * is open, and there is nothing left to give.
      * </p>
      *
-     * @param sections the light properties of every section
-     * @param height   the amount of blocks the column spans vertically
+     * @param height the amount of blocks the column spans vertically
      * @return the amount of queued positions
      */
-    private int seedSky(List<SectionOpacity> sections, int height) {
+    private int seedSky(int height) {
+        for (int z = 0; z < LightNibbles.DIMENSION; z++) {
+            for (int x = 0; x < LightNibbles.DIMENSION; x++) {
+                int y = height - 1;
+
+                for (; y >= 0; y--) {
+                    int index = index(x, y, z);
+
+                    if ((this.occlusion[index] & TOP_BIT) != 0) {
+                        break;
+                    }
+                    this.levels[index] = LightNibbles.MAX_LEVEL;
+                }
+                this.skyBottom[column(x, z)] = y + 1;
+            }
+        }
+
         int tail = 0;
 
         for (int z = 0; z < LightNibbles.DIMENSION; z++) {
             for (int x = 0; x < LightNibbles.DIMENSION; x++) {
-                for (int y = height - 1; y >= 0; y--) {
-                    if (blocksFace(sections, x, y, z, BlockFace.TOP)) {
-                        break;
-                    }
-                    int index = index(x, y, z);
-                    this.levels[index] = LightNibbles.MAX_LEVEL;
+                int until = deepestNeighbourBottom(x, z);
+
+                for (int y = this.skyBottom[column(x, z)]; y < until; y++) {
                     ensureRoom(tail);
-                    this.queue[tail++] = index;
+                    this.queue[tail++] = index(x, y, z) | (NO_FACE << POSITION_BITS);
                 }
             }
         }
@@ -240,17 +396,46 @@ public final class ChunkLightPropagator {
     }
 
     /**
-     * Checks whether light cannot enter the given position through the given face.
+     * Returns the height below which at least one horizontal neighbour of a column is dark.
+     * <p>
+     * A column outside the chunk is left out rather than treated as dark. Light does not leave the
+     * chunk through the search — the border exchange carries it — and a position at the edge is lit
+     * either way, because lighting it and queueing it are separate.
+     * </p>
      *
-     * @param sections the light properties of every section
-     * @param x        the x coordinate inside the chunk
-     * @param y        the y coordinate inside the column
-     * @param z        the z coordinate inside the chunk
-     * @param face     the face light would enter through
-     * @return true if light cannot pass the face, otherwise false
+     * @param x the x coordinate of the column
+     * @param z the z coordinate of the column
+     * @return the deepest sky bottom among the horizontal neighbours inside the chunk
      */
-    private static boolean blocksFace(List<SectionOpacity> sections, int x, int y, int z, BlockFace face) {
-        return sections.get(y >> 4).blocksFace(x, y & MASK, z, face);
+    @Contract(pure = true)
+    private int deepestNeighbourBottom(int x, int z) {
+        int deepest = 0;
+
+        if (x > 0) {
+            deepest = Math.max(deepest, this.skyBottom[column(x - 1, z)]);
+        }
+        if (x < MASK) {
+            deepest = Math.max(deepest, this.skyBottom[column(x + 1, z)]);
+        }
+        if (z > 0) {
+            deepest = Math.max(deepest, this.skyBottom[column(x, z - 1)]);
+        }
+        if (z < MASK) {
+            deepest = Math.max(deepest, this.skyBottom[column(x, z + 1)]);
+        }
+        return deepest;
+    }
+
+    /**
+     * Calculates the index of a column inside the heightmap.
+     *
+     * @param x the x coordinate inside the chunk
+     * @param z the z coordinate inside the chunk
+     * @return the index of the column
+     */
+    @Contract(pure = true)
+    private static int column(int x, int z) {
+        return (z << 4) | x;
     }
 
     /**
