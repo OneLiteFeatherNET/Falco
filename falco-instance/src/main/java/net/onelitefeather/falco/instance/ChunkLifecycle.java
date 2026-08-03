@@ -80,7 +80,7 @@ import java.util.function.Consumer;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.3.0
+ * @version 1.4.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -257,6 +257,37 @@ public final class ChunkLifecycle {
      * moment before its blocks that this class can reach.
      * </p>
      *
+     * <p>
+     * <b>What a listener which throws on this path costs.</b>
+     * Everything after the chunk exists is foreign code that this class does not own: {@link #publish}
+     * ends in {@link FalcoChunk#notifyPublished()}, {@link #notifyLoaded(Chunk)} ends in
+     * {@link ChunkLifecycleListener#onLoad(ChunkLifecycleEvent)}, and the refused arm ends in
+     * {@link ChunkLifecycleListener#onUnload(ChunkLifecycleEvent)}. A throw out of any of the three
+     * used to leave {@code future} uncompleted, and an uncompleted future is not an error a caller can
+     * see — every {@code loadChunk(x, z).join()} on that position waits for the life of the process,
+     * while the chunk sits in the registry with a tick partition and no {@code InstanceChunkLoadEvent}
+     * ever fires. The trigger is not hypothetical: {@code ChunkLightListener#onLoad} reaches
+     * {@code ChunkLightScheduler#bind}, which throws when one scheduler is asked to serve two
+     * instances.
+     * </p>
+     * <p>
+     * The throw is therefore caught, handed to the waiting callers and rethrown unchanged. Both halves
+     * are deliberate. The future has to be completed because nothing else will complete it; the
+     * throwable has to keep going because it is a defect of the listener rather than a state of the
+     * world, and because rethrowing is what this method did before — on the calling thread it reaches
+     * whoever asked for the chunk, on a virtual thread of a parallel loader the default handler of
+     * that thread. Only the hang is new behaviour, and only in that it is gone.
+     * </p>
+     * <p>
+     * What the catch cannot repair is the state the chunk is left in. A throw on the publish arm or on
+     * the load arm happens <em>after</em> the chunk entered the registry, so the position carries a
+     * chunk which every later caller is handed while this load is reported as failed. A publish which
+     * threw inside the position lock itself — which {@link ChunkRegistry#publish} forbids and
+     * describes — additionally leaves the slot of the position standing; the entry in it is now a
+     * failed future rather than one nobody completes, so a later caller of that position is refused
+     * instead of blocked, which is less bad and still wrong.
+     * </p>
+     *
      * @param index  the chunk index of the position, the key in the registry
      * @param chunkX the chunk X
      * @param chunkZ the chunk Z
@@ -283,17 +314,32 @@ public final class ChunkLifecycle {
             future.completeExceptionally(throwable);
             return;
         }
-        if (!publish(index, managed, future)) {
-            // The chunk was never part of this instance, so there is no registry entry and no
-            // partition to clean up. The loader is still told, because it created the chunk and may
-            // hold bookkeeping for it, which its own documentation allows for explicitly.
-            notifyUnloaded(managed);
-            this.persistence.unloaded(managed);
-            future.completeExceptionally(new FalcoInstanceException("the chunk " + chunkX + ":" + chunkZ
-                    + " was unloaded while it was being loaded, so the loaded chunk was discarded"));
-            return;
+        try {
+            if (!publish(index, managed, future)) {
+                // The chunk was never part of this instance, so there is no registry entry and no
+                // partition to clean up. The callers are told before the chunk is: a discard which
+                // took this position completed this future already, but one which took it and was
+                // followed by a new load did not, and then this line is the only completion there is.
+                future.completeExceptionally(new FalcoInstanceException("the chunk " + chunkX + ":" + chunkZ
+                        + " was unloaded while it was being loaded, so the loaded chunk was discarded"));
+                try {
+                    notifyUnloaded(managed);
+                } finally {
+                    // In a finally because the line above is foreign code: the loader created this
+                    // chunk and may hold bookkeeping for it, which its own documentation allows for
+                    // explicitly, and a listener which throws must not turn that into a leak.
+                    this.persistence.unloaded(managed);
+                }
+                return;
+            }
+            notifyLoaded(managed);
+        } catch (Throwable throwable) {
+            // The waiting callers first, the throw afterwards, both for the reasons above. Completing
+            // is a no-op when one of the two arms already completed this future, which is what makes
+            // it safe to do here for every throw of the stretch rather than per arm.
+            future.completeExceptionally(throwable);
+            throw throwable;
         }
-        notifyLoaded(managed);
         future.complete(managed);
         EventDispatcher.call(new InstanceChunkLoadEvent(this.owner, managed));
     }

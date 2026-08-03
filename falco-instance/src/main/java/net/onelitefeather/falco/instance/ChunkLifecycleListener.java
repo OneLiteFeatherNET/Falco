@@ -51,7 +51,7 @@ import java.util.Objects;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.4.0
  */
 @ApiStatus.Experimental
@@ -68,6 +68,13 @@ public interface ChunkLifecycleListener {
      * a step of {@link ChunkLifecycle} and nothing on a chunk marks it, so a chunk driven by an
      * {@code InstanceContainer} is told that it loaded and never that it was published. A listener
      * which wants one moment per chunk and has to work in both takes {@link #onLoad}.
+     * </p>
+     * <p>
+     * A throw out of this method fails the load it belongs to: {@link ChunkLifecycle#completeLoad}
+     * hands the throwable to every caller waiting on that position and rethrows it. The chunk stays
+     * where it is — it entered the registry and got its tick partition before this call — so the
+     * position ends up carrying a chunk which a load reported as failed. There is no arrangement in
+     * which throwing here is useful, and this is what it costs.
      * </p>
      *
      * @param event what happened, to which chunk
@@ -93,6 +100,14 @@ public interface ChunkLifecycleListener {
      * So neither arm holds a lock here, and a listener may call back into its instance. What both
      * arms do pay is time: this call sits between the chunk being ready and the caller of
      * {@code loadChunk} being told, so a slow listener slows down every chunk load.
+     * </p>
+     * <p>
+     * A throw is paid for on both arms as well, and differently. Under an {@code InstanceContainer}
+     * it leaves {@code retrieveChunk} before the future is completed and before the load event is
+     * dispatched. Under a {@link FalcoInstance} it is caught once, handed to every caller waiting on
+     * that position and rethrown unchanged — the load fails, the chunk stays published, and no
+     * {@code InstanceChunkLoadEvent} is dispatched for it. Both arms leave a chunk which is in its
+     * instance and which nobody was told about; neither of them undoes the load.
      * </p>
      *
      * @param event what happened, to which chunk
@@ -149,6 +164,10 @@ public interface ChunkLifecycleListener {
      * The single exception to the sentence above is the discarded load on the {@link FalcoInstance}
      * arm, which holds nothing because the position was released before the chunk was disowned — see
      * {@link ChunkLifecycle#completeLoad}. A listener may not tell that case apart and must not try.
+     * It is also the one arm on which a throw does not cost the caller anything: the callers of that
+     * load are told it failed before this method is reached, and the loader is told about the
+     * discarded chunk from a {@code finally} afterwards. The throw itself still leaves the load path
+     * for whoever installed the listener.
      * </p>
      * <p>
      * It is also the one which can arrive without {@link #onPublish} and {@link #onLoad} ever having

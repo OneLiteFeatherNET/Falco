@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -41,9 +42,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * close by running a thousand loads and unloads against each other and hoping the window is hit;
  * these cases hit it every time, deterministically, in a single thread.
  * </p>
+ * <p>
+ * Three cases hand the load path a listener which throws, one per arm. They exist because stage 3 put
+ * arbitrary third-party code between the chunk being ready and its future being completed, and a
+ * throw out of that stretch used to leave the future uncompleted — which is a hang rather than a
+ * failure, and a hang no assertion of this class would have noticed. Each of them therefore asserts
+ * both halves: that the caller is told, and that the throw still leaves the load path.
+ * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.4.0
  */
 @ExtendWith(MicrotusExtension.class)
@@ -199,6 +207,97 @@ class ChunkLifecycleTest {
         assertThrows(CompletionException.class, own::join);
         assertEquals(0, instance.registry().loading(),
                 "a failed load must not leave its position marked as busy forever");
+    }
+
+    @Test
+    @DisplayName("fails the load rather than hanging it when the publish listener throws")
+    void testAThrowingPublishListenerFailsTheLoad(Env env) {
+        final FalcoInstance instance = registered(env);
+        final ChunkLifecycle lifecycle = instance.lifecycle();
+        final IllegalStateException refusal = new IllegalStateException("this scheduler already serves another instance");
+        lifecycle.addListener(new ChunkLifecycleListener() {
+
+            @Override
+            public void onPublish(ChunkLifecycleEvent event) {
+                throw refusal;
+            }
+        });
+        final CompletableFuture<Chunk> own = new CompletableFuture<>();
+        instance.registry().acquire(INDEX, own);
+
+        assertSame(refusal, assertThrows(IllegalStateException.class,
+                        () -> lifecycle.completeLoad(INDEX, 0, 0, ChunkLoader.noop(), own)),
+                "the throw is a defect of the listener and keeps going, exactly as it did before");
+
+        // Asked before it is joined, and this order is the point of the case: completeLoad ran on
+        // this thread, so a future which is not done here is never going to be, and a join would be
+        // the very wait for the life of the process this case is about rather than a failure.
+        assertTrue(own.isCompletedExceptionally(),
+                "every caller waiting on this position has to be told; an uncompleted future is not an"
+                        + " error anybody can see, it is a wait for the life of the process");
+        assertSame(refusal, assertThrows(CompletionException.class, own::join).getCause());
+        assertNotNull(instance.getChunk(0, 0),
+                "the chunk entered the registry before the listener ran and the catch does not undo that");
+    }
+
+    @Test
+    @DisplayName("fails the load rather than hanging it when the load listener throws")
+    void testAThrowingLoadListenerFailsTheLoad(Env env) {
+        final FalcoInstance instance = registered(env);
+        final ChunkLifecycle lifecycle = instance.lifecycle();
+        final IllegalStateException refusal = new IllegalStateException("this scheduler already serves another instance");
+        lifecycle.addListener(new ChunkLifecycleListener() {
+
+            @Override
+            public void onLoad(ChunkLifecycleEvent event) {
+                throw refusal;
+            }
+        });
+        final AtomicInteger events = new AtomicInteger();
+        instance.eventNode().addListener(InstanceChunkLoadEvent.class, event -> events.incrementAndGet());
+        final CompletableFuture<Chunk> own = new CompletableFuture<>();
+        instance.registry().acquire(INDEX, own);
+
+        assertSame(refusal, assertThrows(IllegalStateException.class,
+                () -> lifecycle.completeLoad(INDEX, 0, 0, ChunkLoader.noop(), own)));
+
+        assertTrue(own.isCompletedExceptionally(),
+                "the second arm of the load has the same hole as the first and is closed the same way");
+        assertSame(refusal, assertThrows(CompletionException.class, own::join).getCause());
+        assertEquals(0, events.get(),
+                "the load never finished, so nothing may have been told that it did");
+    }
+
+    @Test
+    @DisplayName("tells the loader about a discarded chunk even when the unload listener throws")
+    void testAThrowingUnloadListenerStillReleasesTheDiscardedChunk(Env env) {
+        final Removals removals = new Removals();
+        final FalcoInstance instance = registered(env, removals);
+        final ChunkLifecycle lifecycle = instance.lifecycle();
+        lifecycle.addListener(new ChunkLifecycleListener() {
+
+            @Override
+            public void onUnload(ChunkLifecycleEvent event) {
+                throw new IllegalStateException("the listener of this chunk refuses to be torn down");
+            }
+        });
+        final CompletableFuture<Chunk> own = new CompletableFuture<>();
+        // The position belongs to somebody else's load, which is what a discard followed by a new
+        // request leaves behind. A plain discard would complete `own` itself and hide the question
+        // this case asks: on this arm the refusal below is the only completion there is.
+        instance.registry().acquire(INDEX, new CompletableFuture<>());
+
+        assertThrows(IllegalStateException.class,
+                () -> lifecycle.completeLoad(INDEX, 0, 0, ChunkLoader.noop(), own));
+
+        assertTrue(own.isCompletedExceptionally(),
+                "nobody else is going to complete this future, so the refused arm has to");
+        final CompletionException thrown = assertThrows(CompletionException.class, own::join);
+        assertSame(FalcoInstanceException.class, thrown.getCause().getClass(),
+                "the callers are told that their load was discarded before the chunk is told anything");
+        assertEquals(1, removals.chunks.size(),
+                "the loader may hold bookkeeping for a chunk it never handed out, and a listener which"
+                        + " throws on the way out must not turn that into a leak");
     }
 
     @Test
