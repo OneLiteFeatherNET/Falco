@@ -34,8 +34,8 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noCodeUnits;
  * {@link #onlyTheChunkOfTheLightModuleKnowsTheInstanceModule} for what keeps it from spreading. Every
  * other direction is unenforced by the compiler, so a single {@code import} plus a single line in a
  * build file would silently turn three artefacts into
- * one. The same holds for the surface towards third parties: Minestom, adventure-nbt, annotations
- * and fastutil are {@code compileOnly} everywhere and never reach the published POM, so an
+ * one. The same holds for the surface towards third parties: Minestom, adventure-nbt, annotations,
+ * fastutil and flare are {@code compileOnly} everywhere and never reach the published POM, so an
  * accidental new {@code implementation} dependency is invisible inside this repository and lands on
  * every Minestom server that pulls one of the artefacts.
  *
@@ -170,12 +170,30 @@ class ModuleBoundaryTest {
      * package name is empty, and an empty package name matches none of the patterns above. Listing
      * the three Falco packages here is only safe because M1 already forbids every dependency
      * between them.
+     *
+     * <h2>Why flare is on this list</h2>
+     * <p>{@code space.vectrix.flare} joined for {@code ChunkRegistry}, whose chunk map is a
+     * {@code Long2ObjectSyncMap} so that a lookup does not box its index. It qualifies on the same
+     * two counts fastutil does, and both were checked rather than assumed. It is
+     * {@code compileOnly} in {@code falco-instance}, so it is absent from the published POM —
+     * {@code :falco-instance:generatePomFileForMavenPublication} lists {@code slf4j-api} and
+     * nothing else. And it is present at runtime wherever Minestom is, because Minestom depends on
+     * it and merely hides it from its own compile classpath:
+     * {@code :falco-instance:dependencies --configuration compileClasspath} prints no flare while
+     * {@code --configuration testRuntimeClasspath} prints {@code flare:2.0.1} and
+     * {@code flare-fastutil:2.0.1}.
+     *
+     * <p>That second half is the load-bearing one and it is a version pin, not a guarantee: the
+     * catalog names 2.0.1 because that is what Minestom resolves to today. A Minestom bump that
+     * moves flare has to move {@code version("flare", ...)} in {@code settings.gradle.kts} with it,
+     * or {@code falco-instance} compiles against one flare and runs against another.
      */
     private static final DescribedPredicate<JavaClass> ALLOWED_DEPENDENCY =
             resideInAnyPackage(ANVIL, LIGHT, INSTANCE,
                     "java..", "net.minestom..",
                     "net.kyori.adventure.nbt..", "net.kyori.adventure.key..",
-                    "it.unimi.dsi.fastutil..", "org.slf4j..", "org.jetbrains.annotations..")
+                    "it.unimi.dsi.fastutil..", "space.vectrix.flare..",
+                    "org.slf4j..", "org.jetbrains.annotations..")
                     .or(describe("a primitive", JavaClass::isPrimitive));
 
     /**
