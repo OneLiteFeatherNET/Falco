@@ -111,6 +111,14 @@ project(":falco-bom") {
 
 val apiBaselineVersion: String = providers.gradleProperty("apiBaselineVersion").get()
 
+val apiBreaksFile: File = rootProject.file("gradle/api-breaks.properties")
+
+val apiBreaks: Map<String, String> = if (!apiBreaksFile.exists()) emptyMap() else
+    java.util.Properties()
+        .apply { apiBreaksFile.inputStream().use { load(it) } }
+        .entries
+        .associate { it.key.toString() to it.value.toString().trim() }
+
 configure(publishedModules - project(":falco-bom")) {
     apply(plugin = "me.champeau.gradle.japicmp")
 
@@ -120,16 +128,32 @@ configure(publishedModules - project(":falco-bom")) {
         isTransitive = false
     }
 
+    val declaredBreaks: List<String> = apiBreaks["${project.name}.classExcludes"]
+        ?.split(",")
+        ?.map(String::trim)
+        ?.filter(String::isNotEmpty)
+        .orEmpty()
+
     val checkApiCompatibility = tasks.register<me.champeau.gradle.japicmp.JapicmpTask>("checkApiCompatibility") {
         oldClasspath.from(apiBaseline)
         newClasspath.from(tasks.named<Jar>("jar").flatMap { it.archiveFile })
         onlyBinaryIncompatibleModified.set(true)
         failOnModification.set(true)
         ignoreMissingClasses.set(true)
+        classExcludes.set(declaredBreaks)
         htmlOutputFile.set(layout.buildDirectory.file("reports/japicmp/${project.name}.html"))
         txtOutputFile.set(layout.buildDirectory.file("reports/japicmp/${project.name}.txt"))
 
         doFirst {
+            if (apiBreaks.keys.any { it.endsWith(".classExcludes") }) {
+                require(apiBreaks["baseline"] == apiBaselineVersion) {
+                    "${apiBreaksFile.name} declares accepted API breaks against baseline " +
+                            "${apiBreaks["baseline"]}, but apiBaselineVersion is $apiBaselineVersion. " +
+                            "Every exception in that file was judged against the older baseline and " +
+                            "excludes its type from the check entirely, so each one has to be " +
+                            "re-examined and either deleted or re-justified before the version moves."
+                }
+            }
             val resolved = apiBaseline.resolve()
             require(resolved.isNotEmpty()) {
                 "the API baseline net.onelitefeather:${project.name}:$apiBaselineVersion resolved to nothing"
