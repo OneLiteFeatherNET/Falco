@@ -15,7 +15,7 @@ import org.jetbrains.annotations.ApiStatus;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 1.0.0
  */
 @ApiStatus.Experimental
@@ -30,7 +30,7 @@ public final class ChunkDataException extends AnvilFormatException {
      * </p>
      *
      * @author TheMeinerLP
-     * @version 1.0.0
+     * @version 1.1.0
      * @since 1.0.0
      */
     @ApiStatus.Experimental
@@ -64,7 +64,14 @@ public final class ChunkDataException extends AnvilFormatException {
         /**
          * A key the format requires is absent, or holds a tag of another type.
          */
-        MISSING_OR_MISTYPED_KEY
+        MISSING_OR_MISTYPED_KEY,
+
+        /**
+         * The chunk comes from a Minecraft version this loader cannot read. Either it carries the
+         * pre-1.18 layout, which keeps everything under {@code Level}, or its stored
+         * {@code DataVersion} is below the configured floor.
+         */
+        UNSUPPORTED_CHUNK_VERSION
     }
 
     /**

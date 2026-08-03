@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.LongAdder;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -58,9 +58,15 @@ public final class AnvilDiagnostics {
      */
     public static final String UNKNOWN_STATUS = "<unknown>";
 
+    /**
+     * The value an unsupported chunk is counted under when it stored no {@code DataVersion} at all.
+     */
+    public static final String UNKNOWN_DATA_VERSION = "<none>";
+
     private final Set<String> unknownBlocks;
     private final Set<String> unknownBiomes;
     private final Map<String, LongAdder> partialChunkStatuses;
+    private final Map<String, LongAdder> unsupportedChunkVersions;
     private final AtomicBoolean missingRegionFileReported;
     private final AtomicBoolean missingChunkEntryReported;
     private final AtomicBoolean sectionRangeReported;
@@ -70,6 +76,7 @@ public final class AnvilDiagnostics {
     private final LongAdder chunksWithoutRegionFile;
     private final LongAdder chunksWithoutEntry;
     private final LongAdder partialChunks;
+    private final LongAdder unsupportedChunks;
 
     /**
      * Creates a new diagnostics instance with empty counters.
@@ -78,6 +85,7 @@ public final class AnvilDiagnostics {
         this.unknownBlocks = ConcurrentHashMap.newKeySet();
         this.unknownBiomes = ConcurrentHashMap.newKeySet();
         this.partialChunkStatuses = new ConcurrentHashMap<>();
+        this.unsupportedChunkVersions = new ConcurrentHashMap<>();
         this.missingRegionFileReported = new AtomicBoolean();
         this.missingChunkEntryReported = new AtomicBoolean();
         this.sectionRangeReported = new AtomicBoolean();
@@ -87,6 +95,7 @@ public final class AnvilDiagnostics {
         this.chunksWithoutRegionFile = new LongAdder();
         this.chunksWithoutEntry = new LongAdder();
         this.partialChunks = new LongAdder();
+        this.unsupportedChunks = new LongAdder();
     }
 
     /**
@@ -194,6 +203,41 @@ public final class AnvilDiagnostics {
      */
     public boolean reportPartialChunk() {
         return reportPartialChunk(UNKNOWN_STATUS);
+    }
+
+    /**
+     * Reports a chunk which comes from a version this loader cannot read.
+     * <p>
+     * The throttling is per version value rather than per loader, so a world holding several
+     * versions names each of them exactly once. A version beyond the cap is still counted in
+     * {@link #chunksSkippedAsUnsupported()} and only loses its own entry in
+     * {@link #unsupportedChunkVersions()}.
+     * </p>
+     *
+     * @param version the stored data version, or {@link #UNKNOWN_DATA_VERSION} if none was stored
+     * @return true if the caller should log the problem, otherwise false
+     * @since 1.1.0
+     */
+    public boolean reportUnsupportedChunkVersion(String version) {
+        this.unsupportedChunks.increment();
+        LongAdder counter = this.unsupportedChunkVersions.get(version);
+
+        if (counter == null) {
+            if (this.unsupportedChunkVersions.size() >= MAX_TRACKED_NAMES) {
+                return false;
+            }
+            LongAdder created = new LongAdder();
+            LongAdder previous = this.unsupportedChunkVersions.putIfAbsent(version, created);
+
+            if (previous == null) {
+                created.increment();
+                return true;
+            }
+            previous.increment();
+            return false;
+        }
+        counter.increment();
+        return false;
     }
 
     /**
@@ -323,6 +367,34 @@ public final class AnvilDiagnostics {
         // A LinkedHashMap rather than Map#copyOf, because the order of the entries is part of what
         // is promised here: a summary which lists the status values in a different order on every
         // shutdown cannot be compared between two runs.
+        return Collections.unmodifiableMap(snapshot);
+    }
+
+    /**
+     * Returns how many chunks were refused because their version could not be read.
+     *
+     * @return the amount of refused chunks
+     * @since 1.1.0
+     */
+    @Contract(pure = true)
+    public long chunksSkippedAsUnsupported() {
+        return this.unsupportedChunks.sum();
+    }
+
+    /**
+     * Returns the amount of refused chunks per stored data version, sorted by the version value.
+     *
+     * @return the amount of refused chunks per version
+     * @since 1.1.0
+     */
+    @Contract(pure = true)
+    public @Unmodifiable Map<String, Long> unsupportedChunkVersions() {
+        Map<String, Long> snapshot = new LinkedHashMap<>();
+
+        this.unsupportedChunkVersions.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> snapshot.put(entry.getKey(), entry.getValue().sum()));
+
         return Collections.unmodifiableMap(snapshot);
     }
 

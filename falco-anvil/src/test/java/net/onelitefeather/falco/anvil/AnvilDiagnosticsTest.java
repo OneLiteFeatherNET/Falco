@@ -241,4 +241,37 @@ class AnvilDiagnosticsTest {
         }
         assertEquals((long) threadCount * perThread, diagnostics.chunksLoaded());
     }
+
+    @Test
+    void testAnUnsupportedVersionIsCountedUnderItsOwnValue() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+
+        assertTrue(diagnostics.reportUnsupportedChunkVersion("1976"));
+        assertFalse(diagnostics.reportUnsupportedChunkVersion("1976"));
+        assertTrue(diagnostics.reportUnsupportedChunkVersion("2724"));
+
+        assertEquals(3, diagnostics.chunksSkippedAsUnsupported());
+        assertEquals(Map.of("1976", 2L, "2724", 1L), diagnostics.unsupportedChunkVersions());
+    }
+
+    @Test
+    void testAChunkWithoutAStoredVersionIsCountedApart() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+
+        diagnostics.reportUnsupportedChunkVersion(AnvilDiagnostics.UNKNOWN_DATA_VERSION);
+
+        assertEquals(Map.of(AnvilDiagnostics.UNKNOWN_DATA_VERSION, 1L),
+                diagnostics.unsupportedChunkVersions());
+    }
+
+    @Test
+    void testTheVersionBreakdownIsSortedByValue() {
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+
+        diagnostics.reportUnsupportedChunkVersion("2724");
+        diagnostics.reportUnsupportedChunkVersion("1976");
+
+        assertEquals(List.of("1976", "2724"),
+                List.copyOf(diagnostics.unsupportedChunkVersions().keySet()));
+    }
 }
