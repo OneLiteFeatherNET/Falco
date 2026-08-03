@@ -1,6 +1,8 @@
 name: Build PR
 
-on: [pull_request]
+on:
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -10,9 +12,15 @@ permissions:
 jobs:
   build:
     # Reuse the OneLiteFeather org build workflow (Java 25, OS matrix, tests, coverage).
+    #
+    # force-build on a manual run: the reusable workflow decides whether to build from a
+    # dorny/paths-filter comparison, and that comparison has no base outside a pull request. A
+    # manual run is one somebody asked for regardless of what changed, so it skips the filter
+    # instead of depending on what the filter would answer without a base.
     uses: OneLiteFeatherNET/workflows/.github/workflows/gradle-build-pr.yml@v2.4.0
     with:
       java-version: "25"
       java-distribution: "temurin"
       run-tests: true
+      force-build: ${{ github.event_name == 'workflow_dispatch' }}
     secrets: inherit
