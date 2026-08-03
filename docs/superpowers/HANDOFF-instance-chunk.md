@@ -1,16 +1,22 @@
 # Handoff: Falco's own chunk, instance and shared instance
 
-Written 2026-08-02, while stage 2 was still finishing. Read this first if you are picking the work
-up in a new session; it says where things are, what is proven, and which mistakes this project has
-already paid for twice.
+Written 2026-08-02 while stage 2 was still finishing, updated 2026-08-03 after all four stages
+landed and both pull requests went green. Read this first if you are picking the work up in a new
+session; it says where things are, what is proven, and which mistakes this project has already paid
+for twice.
 
 ## Where the work lives
 
 | Path | Branch | Contents |
 |---|---|---|
-| `Falco-worktrees/block-storage` | `feat/block-storage` | **the implementation.** Stages 1 and 2. |
+| `Falco-worktrees/block-storage` | `feat/block-storage` | **the implementation.** Stages 1 to 3. PR #39. |
+| `Falco-worktrees/shared-instance` | `feat/shared-instance` | stage 4, stacked on the branch above. PR #40. |
+| `Falco-worktrees/ci-dispatch` | `ci/build-pr-dispatch` | PR #42, a manual trigger for the build. Unrelated to the storage work. |
 | `Falco-worktrees/falco-bom` | `feat/falco-bom` | spec, stage 1 plan, the benchmark suite. Also carries ~38 uncommitted files of a *foreign* docs migration — not this work's, do not commit them. |
 | `/mnt/projects/oss/onelitefeather/Falco` | varies | the main tree. **Another session works here.** Never write to it. |
+
+**#40 targets `feat/block-storage`, not `main`.** They merge in that order, and a change that has to
+reach both goes into `block-storage` first and is then merged forward.
 
 Everything below refers to the `block-storage` worktree unless stated otherwise.
 
@@ -18,15 +24,21 @@ Everything below refers to the `block-storage` worktree unless stated otherwise.
 
 1. `docs/superpowers/research/2026-08-01-instance-chunk-research.md` — the research, 531 lines.
    Chapter 9 lists the 19 of 44 claims that an adversarial pass killed. Read it before trusting any
-   assertion about Minestom that is not in a test.
+   assertion about Minestom that is not in a test. **It exists only in the `falco-bom` worktree**,
+   not in this one and not on any branch that has an open pull request, so nothing currently on its
+   way to `main` carries it. Everything below points back at it; if that branch is dropped, the
+   reasoning behind every design decision here goes with it.
 2. `docs/superpowers/specs/2026-08-01-falco-instance-chunk-design.md` — the spec. Four stages,
    22 user stories in EARS syntax, 9 non-functional requirements. Chapter 2 is the measurement table
    every architectural choice points back at.
 3. `docs/superpowers/plans/2026-08-01-falco-block-storage.md` — stage 1, with `## Stage 1 result`.
 4. `docs/superpowers/plans/2026-08-02-falco-lazy-sections.md` — stage 2, ten tasks.
-5. `.superpowers/sdd/2026-08-02-falco-lazy-sections/progress.md` — the ledger. One line per commit,
-   written by the implementers themselves. **This is the recovery map**; trust it and `git log` over
-   any recollection.
+5. `docs/superpowers/plans/2026-08-02-falco-instance-facade.md` — stage 3, twelve tasks.
+6. `docs/superpowers/plans/2026-08-02-falco-shared-instance.md` — stage 4, eight tasks (in the
+   `shared-instance` worktree).
+7. `.superpowers/sdd/*/progress.md` — the ledgers, one directory per stage. One line per commit,
+   written by the implementers themselves. **These are the recovery map**; trust them and `git log`
+   over any recollection.
 
 ## State
 
@@ -48,9 +60,20 @@ three lock-free Minestom call sites and could lose a block silently, and the gen
 special blocks inside the commit loop, which latched both heightmaps over a half-committed chunk for
 the life of the chunk. The other two were figures that had gone stale, one of them in the table below.
 
-**Stages 3 and 4 — specified, not planned.** Stage 3 is the facade split of `FalcoInstance`
-(1119 lines doing registry, loading, block writing, generation and persistence) plus lifecycle
-listeners and the viewer-cache cleanup. Stage 4 is `FalcoSharedInstance extends SharedInstance`.
+**Stage 3 — done and reviewed.** The facade split of `FalcoInstance`, which had grown to 1 119 lines
+doing registry, loading, block writing, generation and persistence, into four parts it delegates to,
+plus lifecycle listeners and the viewer-cache cleanup. `InstanceFacadeTest` pins that it declares
+exactly four instance fields, so a fifth kills the test. The stage also moved `FalcoLightingChunk`
+from `DynamicChunk` onto `FalcoChunk` (US-3.06) — the point the whole rewrite was aiming at, and the
+change that broke binary compatibility, see below. Acceptance in `## Stage 3 result`, ledger at
+`.superpowers/sdd/2026-08-02-falco-instance-facade/progress.md`.
+
+**Stage 4 — done and reviewed.** `FalcoSharedInstance`, with the constructor guard and the save path
+that reports through the returned future alone. Acceptance in `## Stage 4 result`, ledger at
+`.superpowers/sdd/2026-08-02-falco-shared-instance/progress.md`.
+
+**Both pull requests are green and out of draft** as of 2026-08-03 14:00, on all three runners.
+Neither has been reviewed by a human yet.
 
 ## What is measured, and what is not
 
@@ -122,6 +145,42 @@ prove their tests bite by mutation, and several have caught their own briefs bei
 - **Region file size says nothing about terrain density.** Anvil pads every chunk to whole 4096-byte
   sectors; a 4.3 MB file held 601 KB of payload.
 
+## What the build and the CI do that will surprise you
+
+Four things cost most of an afternoon on 2026-08-03. None is in the code this work wrote.
+
+**A conflicted pull request produces no CI run at all.** Not a failed one, not a skipped one — none.
+GitHub cannot form `refs/pull/N/merge` for a PR that conflicts with its base, and no run is created.
+When `272cb0b3` landed on `main` at 21:07 UTC and put `FalcoLightingChunk.java` into conflict, both
+PRs sat without CI for fifteen hours and the Actions page said nothing. The symptom looks exactly
+like a disabled repository or an exhausted quota, and both were checked before the real cause was
+found. **If runs stop appearing, check `gh pr view N --json mergeable` first.**
+
+**`:falco-benchmarks:test` hangs on macOS and is skipped there.** The test JVM starts and no test
+ever reports; the module writes zero-byte result files, the job goes silent for as long as you let
+it, and the runner terminates orphan `java` processes at the end. It is the only module whose test
+JVM runs with `allowAttachSelf`, `EnableDynamicAgentLoading`, `jol.magicFieldOffset` and a 4 GB heap
+on a 7 GB runner, which is what jol needs to measure retained size. **Which of those hangs on arm64
+is not diagnosed.** `-Pfalco.macOsFootprintTests` forces the task back on for whoever picks it up;
+`docs/benchmarks/README.md` has the observation and what the skip costs.
+
+**`ChunkFootprintTest` has a rare flake, and its shape is worth knowing.** One ubuntu run reported
+`-2 objects of [B` where a difference of zero was expected. The value is the set of objects that
+exist because the chunk exists, computed as (chunk + instance) minus (instance alone) from two
+separate walks — and a set has no negative cardinality, so the two walks did not see the same
+instance state. Reproduced neither locally (8 runs, 3 of them pinned to two cores) nor on the rerun
+of the same job. Recorded as a comment on PR #39. The tempting wrong fix is to loosen the assertion;
+the right one is to make both walks see the same state and to report a negative difference as an
+invalid measurement rather than compare it.
+
+**japicmp exceptions live in `gradle/api-breaks.properties` and expire on their own.** The file lists
+each deliberately accepted break with its reason and names the baseline it was judged against; the
+build fails if that drifts from `apiBaselineVersion`, so an exception cannot outlive the release
+that absorbs it. Currently one entry: `FalcoLightingChunk` became `final` under US-3.06. Two of the
+three findings japicmp reports for that class are wrong — `setBlock(…, Placement, Destroy)` and
+`tick(long)` are still public on `FalcoChunk` and reach callers by inheritance, which japicmp cannot
+see because that class is in another module and `ignoreMissingClasses` is on.
+
 ## Open defect, found during the merge and deliberately not fixed
 
 `FalcoChunk#tick(long)` iterates `this.entries` with no lock, and `Int2ObjectOpenHashMap` is not
@@ -143,14 +202,22 @@ reader meets it as a known open item rather than as a surprise.
 
 ```bash
 cd /mnt/projects/oss/onelitefeather/Falco-worktrees/block-storage
-git log --oneline 6ec6973..HEAD                     # what stages 1 and 2 did
-cat .superpowers/sdd/2026-08-02-falco-lazy-sections/progress.md   # the ledger
-./gradlew :falco-instance:test :falco-light:test :falco-anvil:test
+git log --oneline 6ec6973..HEAD                     # everything the four stages did
+cat .superpowers/sdd/*/progress.md                  # the ledgers, in stage order
+./gradlew build                                     # not :module:test — see below
 ```
 
-`ChunkFootprintTest` was deliberately red from stage 1 until task 9 reset its expectation. If it is
-still red, check the ledger for whether task 9 landed before assuming a regression.
+**Run `./gradlew build`, not the individual test tasks.** A whole session ran `:module:test` only
+and never saw that `:falco-light:checkApiCompatibility` had been failing since stage 3. The test
+tasks are green while the build is red, and the difference is exactly the checks that guard the
+published API.
 
-To plan stage 3 or 4, use the same shape that worked here: one plan per stage under
+`ChunkFootprintTest` was deliberately red from stage 1 until task 9 of stage 2 reset its
+expectation. If it is red now, check the ledger before assuming a regression — and if it says
+`-2 objects`, it is the flake described above, not a defect in the code.
+
+All four stages are implemented. What is left is listed under the open items above: the tick race,
+the macOS hang, the footprint flake, and the JMH baseline that has still never run. Should more
+implementation follow, the shape that worked here was: one plan per stage under
 `docs/superpowers/plans/`, tasks with full code and TDD cycles, then a workflow of at most two tasks
 per run with a fresh implementer and a fresh reviewer each.
