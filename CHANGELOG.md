@@ -1,5 +1,44 @@
 # Changelog
 
+## [1.0.0](https://github.com/OneLiteFeatherNET/Falco/compare/v0.3.0...v1.0.0) (2026-08-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **anvil:** RegionFile.open and RegionFile.readRaw declare RegionFormatException, and the format classes declare ChunkDataException instead of IOException. Binary compatible - a checked exception is not part of the binary signature - but a caller that catches IOException around them has to widen the catch.
+* FalcoAnvilLoader.Builder slots return a new builder instead of the same one. Chained calls are unaffected; a caller who relied on mutating a builder through a stored reference has to keep the returned value. The type was never published in a release.
+
+### Features
+
+* **anvil:** give every failure of the stored data its own type ([#21](https://github.com/OneLiteFeatherNET/Falco/issues/21)) ([54a9c65](https://github.com/OneLiteFeatherNET/Falco/commit/54a9c6579a5205bd41f144057deb6f783315c223))
+* **archunit:** enforce the architecture rules the compiler cannot see ([#12](https://github.com/OneLiteFeatherNET/Falco/issues/12)) ([cb30cf0](https://github.com/OneLiteFeatherNET/Falco/commit/cb30cf0a44efa0d4eb700c0f4b69271bf7fdc72b))
+* **bom:** add falco-bom, a platform pinning the published modules ([#5](https://github.com/OneLiteFeatherNET/Falco/issues/5)) ([33f220f](https://github.com/OneLiteFeatherNET/Falco/commit/33f220f4b27d2791b691ca65dee3afa8413bd34c))
+* **demo:** put the sun where you want to judge the light from ([#6](https://github.com/OneLiteFeatherNET/Falco/issues/6)) ([94b287c](https://github.com/OneLiteFeatherNET/Falco/commit/94b287cf2aaf774ad1c0b7e78bc06d3378151ab5))
+* give the three modules a fluent construction API ([#16](https://github.com/OneLiteFeatherNET/Falco/issues/16)) ([86f098b](https://github.com/OneLiteFeatherNET/Falco/commit/86f098bfe68d4bb51eb07df8eb3adbba71a3a00c))
+* **instance:** a chunk that owns its storage, and an instance split along what it does ([#39](https://github.com/OneLiteFeatherNET/Falco/issues/39)) ([b357944](https://github.com/OneLiteFeatherNET/Falco/commit/b357944a03e7f41ad84d5c4a9b70b0a883fc92ba))
+* **instance:** a shared instance that repairs what it inherits ([#40](https://github.com/OneLiteFeatherNET/Falco/issues/40)) ([144a609](https://github.com/OneLiteFeatherNET/Falco/commit/144a6098c1f3f7959a5656ef64210b53a651bb64))
+
+
+### Bug Fixes
+
+* **build:** drop the JUnit parallelism that was never in effect ([#17](https://github.com/OneLiteFeatherNET/Falco/issues/17)) ([96276f7](https://github.com/OneLiteFeatherNET/Falco/commit/96276f7004d7513f4e5d9d3ff36b10896762ecc5))
+* close three latent defects found while modernising for Java 25 ([#10](https://github.com/OneLiteFeatherNET/Falco/issues/10)) ([124d21d](https://github.com/OneLiteFeatherNET/Falco/commit/124d21da23cc4192bddd2bd8b3cc0008094d6f0b))
+* **demo:** compare report paths independently of the platform separator ([#8](https://github.com/OneLiteFeatherNET/Falco/issues/8)) ([6907459](https://github.com/OneLiteFeatherNET/Falco/commit/6907459380df9303f97ab44f944add25b98ca6c4))
+* **demo:** put the player where the world is, not at the origin ([#18](https://github.com/OneLiteFeatherNET/Falco/issues/18)) ([f405968](https://github.com/OneLiteFeatherNET/Falco/commit/f405968cf5123c105510b03101e44e0a0e3d762d))
+* **instance:** publish the chunk supplier and loader safely ([#11](https://github.com/OneLiteFeatherNET/Falco/issues/11)) ([e45dc1e](https://github.com/OneLiteFeatherNET/Falco/commit/e45dc1e101088e60af3c5ec7705808cf5db72a1b))
+* **light:** forget chunks that left the instance ([#14](https://github.com/OneLiteFeatherNET/Falco/issues/14)) ([1f72962](https://github.com/OneLiteFeatherNET/Falco/commit/1f72962af41d5ccd2e1188ca240dff273bd869a5))
+* **light:** read the diagonal chunks of an area's ring ([#24](https://github.com/OneLiteFeatherNET/Falco/issues/24)) ([6e59cb7](https://github.com/OneLiteFeatherNET/Falco/commit/6e59cb7c44c42c47e7f681578b136202a5ef1e18))
+* **test:** stop comparing rows that no walk could measure ([#43](https://github.com/OneLiteFeatherNET/Falco/issues/43)) ([c4239bd](https://github.com/OneLiteFeatherNET/Falco/commit/c4239bdf6acfcd3e8feceec5d0046ca895d16afc))
+
+
+### Performance Improvements
+
+* **light:** keep the opacity tables of a chunk with its light ([#34](https://github.com/OneLiteFeatherNET/Falco/issues/34)) ([ec35f61](https://github.com/OneLiteFeatherNET/Falco/commit/ec35f612e4fcda08ed2bad1f63297820584f0dde))
+* **light:** resolve the opposite face once in the chunk propagator ([#32](https://github.com/OneLiteFeatherNET/Falco/issues/32)) ([d717ec8](https://github.com/OneLiteFeatherNET/Falco/commit/d717ec873491d088ed9f1a07cfb5aab889b77d1c))
+* **light:** resolve the opposite face once instead of per neighbour ([#28](https://github.com/OneLiteFeatherNET/Falco/issues/28)) ([13ccbfb](https://github.com/OneLiteFeatherNET/Falco/commit/13ccbfba40966d3daa857b30d3f08c8b20ebd92f))
+* **light:** seed the sky from the heightmap instead of every open cell ([#41](https://github.com/OneLiteFeatherNET/Falco/issues/41)) ([272cb0b](https://github.com/OneLiteFeatherNET/Falco/commit/272cb0b309709f08987eeed5684a7148cb6004de))
+* **light:** three changes to the propagation loop from item 2 of Open ([#36](https://github.com/OneLiteFeatherNET/Falco/issues/36)) ([c206ef3](https://github.com/OneLiteFeatherNET/Falco/commit/c206ef33f34a6b3bda36a09d2b297ac9fe39191e))
+
 ## [0.3.0](https://github.com/OneLiteFeatherNET/Falco/compare/v0.2.1...v0.3.0) (2026-07-31)
 
 
