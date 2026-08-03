@@ -296,6 +296,30 @@ class FalcoAnvilLoaderBuilderTest {
     }
 
     @Test
+    void testTheMinimumDataVersionDefaultsToTheFirstRootLayout() {
+        assertEquals(2844, FalcoAnvilLoader.DEFAULT_MINIMUM_DATA_VERSION);
+    }
+
+    @Test
+    void testANegativeMinimumDataVersionIsRefused() {
+        assertThrows(IllegalArgumentException.class,
+                () -> FalcoAnvilLoader.builder().minimumDataVersion(-1));
+    }
+
+    @Test
+    void testTheMinimumDataVersionSurvivesEveryOtherSetter(@TempDir Path worldRoot) throws Exception {
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .minimumDataVersion(1519)
+                .openRegionLimit(4)
+                .compressionLevel(3)
+                .saveParallelism(2)
+                .build(worldRoot, OVERWORLD)) {
+
+            assertEquals(1519, loader.minimumDataVersion());
+        }
+    }
+
+    @Test
     void testTheBuilderCanBeReusedAfterASlotChanged() throws Exception {
         FalcoAnvilLoader.Builder builder = FalcoAnvilLoader.builder().openRegionLimit(8);
 

@@ -78,7 +78,7 @@ import java.util.stream.Stream;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -105,6 +105,14 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      */
     public static final int DEFAULT_OPEN_REGION_LIMIT = 64;
 
+    /**
+     * The lowest data version the loader reads by default: {@code 21w43a}, the first version whose
+     * chunks carry {@code sections} on the root compound instead of under {@code Level}.
+     *
+     * @since 1.1.0
+     */
+    public static final int DEFAULT_MINIMUM_DATA_VERSION = 2844;
+
     private final int openRegionLimit;
     private final int compressionLevel;
     private final Path regionDirectory;
@@ -117,6 +125,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     private final Map<Long, Set<Long>> trackedChunks;
     private final Semaphore saveLimit;
     private final int dataVersion;
+    private final int minimumDataVersion;
 
     /**
      * Where failures are reported, or null for the exception manager of the running server.
@@ -205,6 +214,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         this.trackedChunks = new ConcurrentHashMap<>();
         this.saveLimit = new Semaphore(settings.saveParallelism);
         this.dataVersion = settings.dataVersion;
+        this.minimumDataVersion = settings.minimumDataVersion;
         this.exceptionHandler = settings.exceptionHandler;
         this.closeLock = new ReentrantLock();
 
@@ -256,7 +266,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     public static Builder builder() {
         return new Builder(DEFAULT_OPEN_REGION_LIMIT, ChunkCompression.DEFAULT_LEVEL,
                 Math.max(Runtime.getRuntime().availableProcessors(), 2), MinecraftServer.DATA_VERSION,
-                null, null, null, null);
+                DEFAULT_MINIMUM_DATA_VERSION, null, null, null, null);
     }
 
     /**
@@ -295,19 +305,22 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         private final int compressionLevel;
         private final int saveParallelism;
         private final int dataVersion;
+        private final int minimumDataVersion;
         private final @Nullable AnvilDiagnostics diagnostics;
         private final @Nullable PaletteEntryResolver blockResolver;
         private final @Nullable PaletteEntryResolver biomeResolver;
         private final @Nullable Consumer<Throwable> exceptionHandler;
 
         private Builder(int openRegionLimit, int compressionLevel, int saveParallelism, int dataVersion,
-                        @Nullable AnvilDiagnostics diagnostics, @Nullable PaletteEntryResolver blockResolver,
+                        int minimumDataVersion, @Nullable AnvilDiagnostics diagnostics,
+                        @Nullable PaletteEntryResolver blockResolver,
                         @Nullable PaletteEntryResolver biomeResolver,
                         @Nullable Consumer<Throwable> exceptionHandler) {
             this.openRegionLimit = openRegionLimit;
             this.compressionLevel = compressionLevel;
             this.saveParallelism = saveParallelism;
             this.dataVersion = dataVersion;
+            this.minimumDataVersion = minimumDataVersion;
             this.diagnostics = diagnostics;
             this.blockResolver = blockResolver;
             this.biomeResolver = biomeResolver;
@@ -334,6 +347,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.compressionLevel,
                     this.saveParallelism,
                     this.dataVersion,
+                    this.minimumDataVersion,
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
@@ -364,6 +378,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     compressionLevel,
                     this.saveParallelism,
                     this.dataVersion,
+                    this.minimumDataVersion,
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
@@ -390,6 +405,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.compressionLevel,
                     saveParallelism,
                     this.dataVersion,
+                    this.minimumDataVersion,
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
@@ -413,6 +429,37 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.compressionLevel,
                     this.saveParallelism,
                     dataVersion,
+                    this.minimumDataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler);
+        }
+
+        /**
+         * Sets the lowest data version the loader accepts when reading a chunk.
+         * <p>
+         * This is the read side and has nothing to do with {@link #dataVersion(int)}, which is the
+         * version written into every saved chunk. A chunk below this floor is refused rather than
+         * read, because the layout it carries would otherwise decode to air.
+         * </p>
+         *
+         * @param minimumDataVersion the lowest data version the loader accepts
+         * @return a new builder with this value
+         * @throws IllegalArgumentException if the version is negative
+         * @since 1.1.0
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder minimumDataVersion(int minimumDataVersion) {
+            if (minimumDataVersion < 0) {
+                throw new IllegalArgumentException(
+                        "The minimum data version must not be negative but was " + minimumDataVersion);
+            }
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    minimumDataVersion,
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
@@ -441,6 +488,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.compressionLevel,
                     this.saveParallelism,
                     this.dataVersion,
+                    this.minimumDataVersion,
                     diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
@@ -466,6 +514,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.compressionLevel,
                     this.saveParallelism,
                     this.dataVersion,
+                    this.minimumDataVersion,
                     this.diagnostics,
                     blockResolver,
                     this.biomeResolver,
@@ -488,6 +537,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.compressionLevel,
                     this.saveParallelism,
                     this.dataVersion,
+                    this.minimumDataVersion,
                     this.diagnostics,
                     this.blockResolver,
                     biomeResolver,
@@ -519,6 +569,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.compressionLevel,
                     this.saveParallelism,
                     this.dataVersion,
+                    this.minimumDataVersion,
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
@@ -997,6 +1048,20 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     @Contract(pure = true)
     public boolean legacyLayout() {
         return this.legacyLayout;
+    }
+
+    /**
+     * Returns the lowest data version this loader accepts when reading a chunk.
+     * <p>
+     * Package-private on purpose: this reader exists for the Gegenprobe of the builder slot and for
+     * the guard a later change adds to the load path, not for a caller outside this package.
+     * </p>
+     *
+     * @return the lowest data version the loader accepts
+     */
+    @Contract(pure = true)
+    int minimumDataVersion() {
+        return this.minimumDataVersion;
     }
 
     /**
