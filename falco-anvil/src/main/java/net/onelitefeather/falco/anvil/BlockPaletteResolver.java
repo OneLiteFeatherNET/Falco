@@ -30,7 +30,7 @@ import java.util.Map;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -70,7 +70,11 @@ public final class BlockPaletteResolver implements PaletteEntryResolver {
     /**
      * {@inheritDoc}
      *
-     * @throws AnvilChunkException if the configured policy refuses an unknown block
+     * @throws AnvilChunkException   if the configured policy refuses an unknown block
+     * @throws IllegalStateException if the name the policy substitutes is itself unknown; not an
+     *                               {@link AnvilChunkException}, because {@code FalcoAnvilLoader} is
+     *                               the only place that constructs one, and it wraps this into one
+     *                               when a chunk is read through the loader
      */
     @Override
     public int toId(String name, @Nullable CompoundBinaryTag properties) {
@@ -80,7 +84,17 @@ public final class BlockPaletteResolver implements PaletteEntryResolver {
             if (this.diagnostics.reportUnknownBlock(name)) {
                 LOGGER.warn("The block '{}' is unknown, further chunks with it are not reported", name);
             }
-            return this.policy.onUnknownBlock(name, properties);
+            String substituteName = this.policy.onUnknownBlock(name, properties);
+            Block substitute = Block.fromKey(substituteName);
+
+            // The policy is not consulted a second time for its own substitute: doing so could loop
+            // if a policy ever named itself as the replacement, and a substitute the running server
+            // does not know either is exactly the kind of failure a chunk should not carry silently.
+            if (substitute == null) {
+                throw new IllegalStateException("The block '" + name + "' is unknown and its substitute '"
+                        + substituteName + "' is unknown too");
+            }
+            return substitute.stateId();
         }
         if (properties == null || properties.size() == 0) {
             return block.stateId();

@@ -33,7 +33,7 @@ import java.util.function.Supplier;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -83,7 +83,7 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
      * @param registrySupplier the supplier which provides the registry of the known biomes
      */
     public BiomePaletteResolver(AnvilDiagnostics diagnostics, Supplier<DynamicRegistry<Biome>> registrySupplier) {
-        this(diagnostics, new DefaultUnknownEntryPolicy(registrySupplier), registrySupplier);
+        this(diagnostics, new DefaultUnknownEntryPolicy(), registrySupplier);
     }
 
     /**
@@ -93,10 +93,7 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
      * Package-private on purpose: nothing in this module needs both a custom policy and a custom
      * registry at once, and there is no reason to promise that combination as public API before a
      * caller actually needs it. It exists for this package's own tests, which use it to exercise
-     * {@link #toId(String, CompoundBinaryTag)} against a fake registry without a running server,
-     * exactly the way {@link DefaultUnknownEntryPolicy}'s own two-argument constructor lets its
-     * biome fallback be tested — see the note on {@link #registry()} for why the two lazy
-     * resolutions are not shared.
+     * {@link #toId(String, CompoundBinaryTag)} against a fake registry without a running server.
      * </p>
      *
      * @param diagnostics      the diagnostics which throttle the reports
@@ -113,13 +110,6 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
 
     /**
      * Returns the registry of this resolver and resolves it on the first call.
-     * <p>
-     * This is the same lazy, double-checked-locking derivation {@link DefaultUnknownEntryPolicy} uses
-     * to resolve its own plains fallback from the same kind of supplier. The two are not shared: a
-     * shared holder would need a third class injected into both, for roughly ten lines saved, and
-     * this resolver's copy also has to hand the result to {@link #toEntry(int)} for the id-to-name
-     * direction, which the policy has no reason to do.
-     * </p>
      *
      * @return the registry of the known biomes
      */
@@ -144,7 +134,11 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
     /**
      * {@inheritDoc}
      *
-     * @throws AnvilChunkException if the configured policy refuses an unknown biome
+     * @throws AnvilChunkException   if the configured policy refuses an unknown biome
+     * @throws IllegalStateException if the name the policy substitutes is itself unknown; not an
+     *                               {@link AnvilChunkException}, because {@code FalcoAnvilLoader} is
+     *                               the only place that constructs one, and it wraps this into one
+     *                               when a chunk is read through the loader
      */
     @Override
     public int toId(String name, @Nullable CompoundBinaryTag properties) {
@@ -157,7 +151,17 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
         if (this.diagnostics.reportUnknownBiome(name)) {
             LOGGER.warn("The biome '{}' is unknown, further chunks with it are not reported", name);
         }
-        return this.policy.onUnknownBiome(name);
+        String substituteName = this.policy.onUnknownBiome(name);
+        int substituteId = registry.getId(RegistryKey.unsafeOf(substituteName));
+
+        // The policy is not consulted a second time for its own substitute, for the same reason
+        // BlockPaletteResolver does not: a second call could loop, and a substitute the registry
+        // does not know either is a failure that has to reach the caller, not carry on silently.
+        if (substituteId == -1) {
+            throw new IllegalStateException("The biome '" + name + "' is unknown and its substitute '"
+                    + substituteName + "' is unknown too");
+        }
+        return substituteId;
     }
 
     /**
