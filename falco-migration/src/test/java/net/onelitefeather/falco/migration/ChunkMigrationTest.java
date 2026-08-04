@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins down the step chain {@link ChunkMigration#migrate(CompoundBinaryTag, int)} runs, and the three
@@ -34,6 +35,29 @@ class ChunkMigrationTest {
         assertEquals(3, migrated.getInt("xPos"));
         assertEquals("minecraft:full", migrated.getString("Status"));
         assertNotNull(migrated.get("sections"));
+        // Pins today's value, not a claim that it is the right one: yPos = 0 is UnfoldLevel's
+        // provisional stand-in until Task 5's SettleYRange decides what yPos means for the target
+        // version (see UnfoldLevel's javadoc). This assertion exists so that change is visible as a
+        // deliberate edit to this test rather than slipping past unnoticed.
+        assertEquals(0, migrated.getInt("yPos"));
+    }
+
+    @Test
+    void testALevelFieldThatWouldOverwriteAnExistingRootFieldIsRejectedRatherThanSilentlyOverwritten() {
+        CompoundBinaryTag collision = CompoundBinaryTag.builder()
+                .putInt("DataVersion", 2566)
+                .putInt("xPos", 99)
+                .put("Level", CompoundBinaryTag.builder()
+                        .putInt("xPos", 3)
+                        .put("Sections", ListBinaryTag.empty())
+                        .build())
+                .build();
+
+        MigrationException exception = assertThrows(MigrationException.class,
+                () -> ChunkMigration.migrate(collision, 4790));
+
+        assertTrue(exception.getMessage().contains("xPos"),
+                "the failure should name the field it refused to silently overwrite");
     }
 
     @Test
