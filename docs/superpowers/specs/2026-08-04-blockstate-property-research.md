@@ -1,5 +1,34 @@
 # How much of 1.13 to 26.x is block-state properties
 
+> ## ⚠ Every `V####` number below is unverified. Three were wrong.
+>
+> Implementing the rules meant checking each `DataVersion` against the snapshot this document names,
+> and **three of its six `V####` citations did not survive**:
+>
+> | This document says | Actually | Snapshot |
+> | --- | --- | --- |
+> | V1802 | **1901** | 18w43a |
+> | V2503 | **2504** | 20w06a |
+> | V2679 | **2681** | 20w45a |
+>
+> All three too low, by 99, 1 and 2 — no fixed offset, so there is nothing to correct by, only a
+> reason to distrust the integers. **The snapshot *names* went 5 for 5** and are a good starting
+> point; the numbers beside them are not.
+>
+> One of the three mattered. `1802` made the rename rules fire too *late*: a chunk from DataVersion
+> 1802–1900 still stores `sign`, the rule would not have touched it, and an unknown block name is a
+> `NullPointerException` on Minestom — see the compatibility table further down, which this document
+> got right.
+>
+> A separate error, not from here: `2724` for `grass_path` and `3698` for `grass` were **release**
+> versions put where a snapshot was meant (correct: 2681 and 3693). Different direction, different
+> cause — that one came from reading the design document's "1.17" and "1.20.3" and filling in the
+> release. Worth knowing because it is the mistake to expect wherever a source names a version but no
+> number.
+>
+> Everything structural here held up: which cases exist, that there are zero property renames, and
+> that `stone_slab` and `redstone_wire` are invisible to a registry diff.
+
 Research of 2026-08-04, four independent routes: a computed diff over the ViaVersion block-state
 lists, Chunker source, PaperMC/DataConverter fix classes, and the wiki history. It answers the
 question the migration design names as the plan's first job.
