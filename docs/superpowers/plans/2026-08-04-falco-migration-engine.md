@@ -414,7 +414,7 @@ git commit -m "feat(migration): versioned rules over whole block states, with th
 - Consumes: nothing from Task 3 yet — the chain is independent of the rules until Task 5.
 - Produces: `record MigrationContext(int sourceVersion, int targetVersion)`;
   `interface MigrationStep { boolean appliesTo(int sourceVersion); CompoundBinaryTag apply(CompoundBinaryTag chunk, MigrationContext context); }`;
-  `static CompoundBinaryTag ChunkMigration.migrate(CompoundBinaryTag chunk, int targetVersion) throws MigrationException`.
+  `static CompoundBinaryTag ChunkMigration.migrate(CompoundBinaryTag chunk, int targetVersion)` — unchecked, see Step 3.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -489,8 +489,22 @@ Expected: compilation failure.
 `ChunkMigration.migrate` reads `DataVersion`, declines below 1519 with `MigrationException`, runs
 every step whose `appliesTo` is true in declared order, and stamps the target version at the end.
 
-`MigrationException` is a new checked type in this module — do **not** reuse `falco-anvil`'s sealed
-`AnvilFormatException` hierarchy, which permits exactly two subtypes and is published API.
+**`MigrationException extends RuntimeException`, unchecked — corrected after Task 1's review.** This
+plan first called for a checked type. That is impossible here, and reading the rules rather than
+hitting them gives two reasons:
+
+- `ErrorHandlingTest.checkedFaultsStayInsideTheHierarchy` runs over the whole
+  `net.onelitefeather.falco..` tree, not only the published modules, and requires every **checked**
+  throwable in it to be assignable to `AnvilFormatException`.
+- That hierarchy is `sealed … permits ChunkDataException, RegionFormatException` and lives in another
+  package, so it cannot be extended from here at all.
+
+Unchecked is the house style anyway, and it comes with a requirement:
+`ErrorHandlingTest.ownExceptionsAreUncheckedAndCarryACause` demands every `RuntimeException` in the
+tree be public **and** carry a public `(String, Throwable)` constructor. Give `MigrationException`
+exactly that, or that rule fails instead.
+
+Drop `throws MigrationException` from the signature in the Interfaces block above accordingly.
 
 - [ ] **Step 4: Implement the three steps**
 
@@ -739,7 +753,7 @@ Step 2's result, because writing a fixture before establishing the fact would be
 **Type consistency.** `BlockState(String name, Map<String,String> properties)` in Tasks 1, 3 and 5.
 `MigrationContext(int sourceVersion, int targetVersion)` in Tasks 4 and 6, gaining the counter in 6.
 `BlockStateRules.translate(BlockState, int sourceVersion)` — always the **source** version, which is
-what Task 5's Gegenprobe attacks. `MigrationException` is this module's own type, never
+what Task 5's Gegenprobe attacks. `MigrationException` is this module's own **unchecked** type, never
 `falco-anvil`'s sealed hierarchy.
 
 **One risk this plan cannot remove.** The `redstone_wire` rule is 144 states of cross-property logic
