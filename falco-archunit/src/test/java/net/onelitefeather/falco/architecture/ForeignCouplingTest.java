@@ -54,7 +54,9 @@ class ForeignCouplingTest {
     private static final String ANVIL_NBT_LAYER =
             "net\\.onelitefeather\\.falco\\.anvil\\."
           + "(FalcoAnvilLoader|SectionCodec|NbtReads|PaletteEntryResolver"
-          + "|BlockPaletteResolver|BiomePaletteResolver)(\\$.*)?";
+          + "|BlockPaletteResolver|BiomePaletteResolver"
+          + "|ChunkVersionPolicy|DefaultChunkVersionPolicy"
+          + "|UnknownEntryPolicy|DefaultUnknownEntryPolicy)(\\$.*)?";
 
     private static final String ANVIL_FILE_BOUNDARY =
             "net\\.onelitefeather\\.falco\\.anvil\\.(RegionFile|FalcoAnvilLoader)(\\$.*)?";
@@ -251,9 +253,14 @@ class ForeignCouplingTest {
      * import down here is not untidy, it is the door through which the loss of predictability under
      * concurrency comes back.
      *
-     * <p>Phrased as a complement rather than a hand-maintained allow list, so it covers
-     * {@code PaletteData}, {@code AnvilChunkException} and nested types such as
-     * {@code RegionFile$RawChunk} without maintenance when a class is added.
+     * <p>{@code ANVIL_NBT_LAYER} is a hand-maintained list, not a complement: it names the ten
+     * classes of the NBT layer as of this writing &mdash; {@code FalcoAnvilLoader},
+     * {@code SectionCodec}, {@code NbtReads}, {@code PaletteEntryResolver},
+     * {@code BlockPaletteResolver}, {@code BiomePaletteResolver}, {@code ChunkVersionPolicy},
+     * {@code DefaultChunkVersionPolicy}, {@code UnknownEntryPolicy} and
+     * {@code DefaultUnknownEntryPolicy} &mdash; and a class added to that layer later has to be
+     * added here too, the way the four policy classes were not when they were first written.
+     * Nested types need no separate entry; they come along through the {@code (\$.*)?} suffix.
      */
     @ArchTest
     static final ArchRule byteLayerKnowsNoNbt = noClasses()

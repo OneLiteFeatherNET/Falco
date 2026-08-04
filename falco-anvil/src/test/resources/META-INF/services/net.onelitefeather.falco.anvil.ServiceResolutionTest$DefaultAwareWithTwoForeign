@@ -1,0 +1,3 @@
+net.onelitefeather.falco.anvil.ServiceResolutionTest$AnotherShippedDefault
+net.onelitefeather.falco.anvil.ServiceResolutionTest$FirstForeignProvider
+net.onelitefeather.falco.anvil.ServiceResolutionTest$SecondForeignProvider

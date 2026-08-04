@@ -20,10 +20,12 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins down the builder of the loader.
@@ -316,6 +318,120 @@ class FalcoAnvilLoaderBuilderTest {
                 .build(worldRoot, OVERWORLD)) {
 
             assertEquals(1519, loader.minimumDataVersion());
+        }
+    }
+
+    @Test
+    void testAnExplicitVersionPolicySurvivesEveryOtherSetter(@TempDir Path worldRoot) throws Exception {
+        ChunkVersionPolicy policy = (data, minimum) -> {
+        };
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .versionPolicy(policy)
+                .openRegionLimit(4)
+                .compressionLevel(3)
+                .saveParallelism(2)
+                .build(worldRoot, OVERWORLD)) {
+
+            assertSame(policy, loader.versionPolicy());
+        }
+    }
+
+    @Test
+    void testDiscoverVersionPolicySurvivesEveryOtherSetterAfterClearingAnExplicitOne(@TempDir Path worldRoot) throws Exception {
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .versionPolicy((data, minimum) -> {
+                })
+                .discoverVersionPolicy()
+                .openRegionLimit(4)
+                .compressionLevel(3)
+                .saveParallelism(2)
+                .build(worldRoot, OVERWORLD)) {
+
+            assertInstanceOf(DefaultChunkVersionPolicy.class, loader.versionPolicy());
+        }
+    }
+
+    @Test
+    void testAnExplicitUnknownEntryPolicySurvivesEveryOtherSetter(@TempDir Path worldRoot) throws Exception {
+        UnknownEntryPolicy policy = new DefaultUnknownEntryPolicy();
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .unknownEntryPolicy(policy)
+                .openRegionLimit(4)
+                .compressionLevel(3)
+                .saveParallelism(2)
+                .build(worldRoot, OVERWORLD)) {
+
+            assertSame(policy, loader.unknownEntryPolicy());
+        }
+    }
+
+    @Test
+    void testDiscoverUnknownEntryPolicySurvivesEveryOtherSetterAfterClearingAnExplicitOne(@TempDir Path worldRoot) throws Exception {
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .unknownEntryPolicy(new DefaultUnknownEntryPolicy())
+                .discoverUnknownEntryPolicy()
+                .openRegionLimit(4)
+                .compressionLevel(3)
+                .saveParallelism(2)
+                .build(worldRoot, OVERWORLD)) {
+
+            assertInstanceOf(DefaultUnknownEntryPolicy.class, loader.unknownEntryPolicy());
+        }
+    }
+
+    /**
+     * The combination this class exists to refuse: an explicit {@link UnknownEntryPolicy} and a
+     * custom resolver together. A resolver supplied through {@link Builder#blockResolver} is used
+     * exactly as given, so the configured policy would never actually be consulted while
+     * {@link FalcoAnvilLoader#unknownEntryPolicy()} kept reporting it as active — the exact trap a
+     * caller who names both slots would otherwise fall into silently.
+     */
+    @Test
+    void testCombiningAnExplicitUnknownEntryPolicyWithACustomBlockResolverIsRefused() {
+        FalcoAnvilLoader.Builder builder = FalcoAnvilLoader.builder()
+                .unknownEntryPolicy(new DefaultUnknownEntryPolicy())
+                .blockResolver(new RefusingResolver());
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> builder.build(this.worldRoot, OVERWORLD));
+        assertTrue(failure.getMessage().contains("UnknownEntryPolicy"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("blockResolver"), failure.getMessage());
+    }
+
+    /**
+     * The mirror of the block resolver case, and the other slot the guard has to consider: an
+     * explicit request for classpath discovery combined with a custom biome resolver is refused for
+     * the same reason a resolved instance is — a resolver supplied through
+     * {@link Builder#biomeResolver} never sees whatever discovery would have found.
+     */
+    @Test
+    void testCombiningDiscoverUnknownEntryPolicyWithACustomBiomeResolverIsRefused() {
+        FalcoAnvilLoader.Builder builder = FalcoAnvilLoader.builder()
+                .discoverUnknownEntryPolicy()
+                .biomeResolver(new RefusingResolver());
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> builder.build(this.worldRoot, OVERWORLD));
+        assertTrue(failure.getMessage().contains("UnknownEntryPolicy"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("biomeResolver"), failure.getMessage());
+    }
+
+    /**
+     * The existing case the guard must not break: a custom resolver on its own, without either
+     * {@link Builder#unknownEntryPolicy} or {@link Builder#discoverUnknownEntryPolicy} ever being
+     * called, still builds. {@link #testAGivenBlockResolverIsTheOneTheLoaderDecodesWith(Env)} already
+     * exercises this shape end to end; this test pins the construction itself so the guard's
+     * "configured" flag, not merely a null check, is what the refusal above keys on.
+     */
+    @Test
+    void testACustomBlockResolverWithoutAnyPolicyConfigurationStillBuilds() throws Exception {
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .blockResolver(new RefusingResolver())
+                .build(this.worldRoot, OVERWORLD)) {
+
+            assertNotNull(loader);
         }
     }
 
