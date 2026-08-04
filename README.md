@@ -219,6 +219,15 @@ diagnostics.reportUnknownBlock("mod:strange_block");   // true the first time, f
 pre-26.1 layout, and `openRegionCount()` how many files are open right now. `close()` flushes every
 one of them and is what `ownsLoader(true)` calls for you.
 
+The version guard and the unknown-entry fallback above are both policies, not fixed behaviour:
+`ChunkVersionPolicy` decides whether a chunk is readable at all, `UnknownEntryPolicy` decides what an
+unknown block or biome becomes, and `falco-anvil` ships a default for each — `DefaultChunkVersionPolicy`
+is the 21w43a guard, `DefaultUnknownEntryPolicy` is the air/plains substitution — discovered from the
+classpath via `ServiceLoader` unless the builder's `versionPolicy()`/`unknownEntryPolicy()` slots are
+used instead. The guard can be removed: `versionPolicy(null)` turns the check off, and nothing stands
+in for it — a loader with no guard reads a pre-21w43a world as air again, with no error and no log
+line.
+
 ### falco-light — block and sky light
 
 Three entry points, in order of how much they do:
