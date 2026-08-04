@@ -78,7 +78,7 @@ import java.util.stream.Stream;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -90,6 +90,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     private static final BinaryTagIO.Writer TAG_WRITER = BinaryTagIO.writer();
 
     private static final String SECTIONS_KEY = "sections";
+    private static final String LEGACY_LEVEL_KEY = "Level";
+    private static final String DATA_VERSION_KEY = "DataVersion";
     private static final String BLOCK_STATES_KEY = "block_states";
     private static final String BIOMES_KEY = "biomes";
     private static final String BLOCK_ENTITIES_KEY = "block_entities";
@@ -703,6 +705,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             }
 
             CompoundBinaryTag data = TAG_READER.read(new ByteArrayInputStream(raw.decompress()), BinaryTagIO.Compression.NONE);
+            requireReadableVersion(data);
             String status = chunkStatus(data);
 
             if (!isFullyGenerated(status)) {
@@ -1404,6 +1407,48 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     @Contract(pure = true)
     public int openRegionCount() {
         return this.regions.size();
+    }
+
+    /**
+     * Refuses a chunk which comes from a version this loader cannot read.
+     * <p>
+     * The layout is checked before the version, because a version number is a claim about the data
+     * while the layout is the data: a chunk may carry no version at all, and one that carries a
+     * version may not hold what that version promises. A root compound without {@code sections} but
+     * with a {@code Level} compound is the pre-1.18 shape, which would otherwise decode to an empty
+     * section list and reach the caller as a chunk of air.
+     * </p>
+     *
+     * @param data the root compound of the chunk
+     * @throws ChunkDataException if the chunk cannot be read
+     */
+    private void requireReadableVersion(CompoundBinaryTag data) throws ChunkDataException {
+        int version = NbtReads.optionalInteger(data, DATA_VERSION_KEY, -1);
+        String reported = version < 0 ? AnvilDiagnostics.UNKNOWN_DATA_VERSION : Integer.toString(version);
+        boolean legacyChunkLayout = data.get(SECTIONS_KEY) == null
+                && NbtReads.optionalCompound(data, LEGACY_LEVEL_KEY) != null;
+
+        if (!legacyChunkLayout && (version < 0 || version >= this.minimumDataVersion)) {
+            return;
+        }
+
+        if (this.diagnostics.reportUnsupportedChunkVersion(reported)) {
+            LOGGER.warn(
+                    "Refusing a chunk from data version {} in {}: {}",
+                    reported, this.regionDirectory,
+                    legacyChunkLayout
+                            ? "the chunk data sits under Level, which this loader does not read"
+                            : "the loader accepts " + this.minimumDataVersion + " and above"
+            );
+        }
+
+        throw new ChunkDataException(
+                ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION,
+                legacyChunkLayout
+                        ? "The chunk stores its data under Level, which means a version before 1.18"
+                        : "The chunk stores data version " + version
+                                + " but the loader accepts " + this.minimumDataVersion + " and above"
+        );
     }
 
     /**

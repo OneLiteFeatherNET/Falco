@@ -32,6 +32,7 @@ import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -580,6 +581,74 @@ class FalcoAnvilLoaderIntegrationTest {
 
         try (RegionFile file = RegionFile.open(directory.resolve("r." + (chunkX >> 5) + "." + (chunkZ >> 5) + ".mca"))) {
             file.writeRaw(chunkX, chunkZ, ChunkCompression.ZLIB, ChunkCompression.ZLIB.compress(target.toByteArray()));
+        }
+    }
+
+    @Test
+    void testAPreRootLayoutChunkIsRefusedInsteadOfReadAsAir(Env env) throws Exception {
+        // A custom (swallowing) exception handler is required here, not just style: the default
+        // handler reaches MinecraftServer's exception manager, which the test environment turns
+        // into its own "Server threw exception" assertion failure before the loader's own exception
+        // ever reaches this lambda. See testACorruptedChunkFailsInsteadOfLookingAbsent for the same
+        // trap hit head-on.
+        CompoundBinaryTag legacy = CompoundBinaryTag.builder()
+                .put("Level", CompoundBinaryTag.builder()
+                        .putString("Status", "minecraft:full")
+                        .put("Sections", ListBinaryTag.empty())
+                        .build())
+                .build();
+        writeRawChunk(3, 3, legacy);
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            AnvilChunkException failure = assertThrows(AnvilChunkException.class,
+                    () -> loader.loadChunk(instance, 3, 3));
+            ChunkDataException cause = assertInstanceOf(ChunkDataException.class, failure.getCause());
+            assertEquals(ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION, cause.reason());
+        }
+    }
+
+    @Test
+    void testAChunkBelowTheFloorIsRefused(Env env) throws Exception {
+        CompoundBinaryTag old = CompoundBinaryTag.builder()
+                .putInt("DataVersion", 2724)
+                .putString("Status", "minecraft:full")
+                .put("sections", ListBinaryTag.empty())
+                .build();
+        writeRawChunk(4, 4, old);
+
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            AnvilChunkException failure = assertThrows(AnvilChunkException.class,
+                    () -> loader.loadChunk(instance, 4, 4));
+            ChunkDataException cause = assertInstanceOf(ChunkDataException.class, failure.getCause());
+            assertEquals(ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION, cause.reason());
+            assertEquals(Map.of("2724", 1L), diagnostics.unsupportedChunkVersions());
+        }
+    }
+
+    @Test
+    void testAChunkWithoutAStoredVersionStillLoads(Env env) throws Exception {
+        CompoundBinaryTag toolWritten = CompoundBinaryTag.builder()
+                .putString("Status", "minecraft:full")
+                .put("sections", ListBinaryTag.empty())
+                .build();
+        writeRawChunk(5, 5, toolWritten);
+
+        try (FalcoAnvilLoader loader = loader()) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNotNull(loader.loadChunk(instance, 5, 5));
         }
     }
 
