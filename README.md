@@ -17,7 +17,7 @@ nothing to do with speed — and it claims none.
 
 | Module | What it is |
 | --- | --- |
-| [`falco-anvil`](https://github.com/OneLiteFeatherNET/Falco/wiki/Anvil-Chunk-Loader) | A `ChunkLoader` for the Anvil region format. Genuinely parallel: reading, decompression and NBT parsing do not share one lock. A read failure throws instead of reporting the chunk as absent, so the server cannot overwrite real data with a freshly generated chunk. |
+| [`falco-anvil`](https://github.com/OneLiteFeatherNET/Falco/wiki/Anvil-Chunk-Loader) | A `ChunkLoader` for the Anvil region format. Genuinely parallel: reading, decompression and NBT parsing do not share one lock. A read failure throws instead of reporting the chunk as absent, so the server cannot overwrite real data with a freshly generated chunk. It reads worlds from snapshot 21w43a onwards and refuses older ones instead of reading them as air. |
 | [`falco-light`](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine) | A block and sky light engine. Thread-safe per call and tied to no chunk implementation, so it works with chunk types Minestom's own engine ignores. Call it yourself, or let a chunk keep its own light up to date. |
 | [`falco-instance`](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Instances-And-Chunks) | An `Instance` and its `Chunk`. **No speed gain is claimed and none is measured** — ticking lives in the server's global `ThreadDispatcher`, not in the instance. What it buys is an unload path of its own, where `InstanceManager.unregisterInstance` leaks every chunk a foreign instance ever loaded. It cannot back a `SharedInstance`; shared worlds are served by `FalcoSharedInstance` on a plain container instead. |
 
