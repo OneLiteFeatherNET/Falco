@@ -821,8 +821,13 @@ class FalcoAnvilLoaderIntegrationTest {
                 .versionPolicy(null)
                 .build(this.worldRoot, OVERWORLD)) {
             Instance instance = env.createEmptyInstance(loader);
+            Chunk chunk = loader.loadChunk(instance, 12, 12);
 
-            assertNotNull(loader.loadChunk(instance, 12, 12));
+            assertNotNull(chunk);
+            // The claim of this test's own javadoc: not merely that a chunk comes back, but that it
+            // is the chunk of air the legacy Level layout decodes to when sections is absent and no
+            // policy caught it.
+            assertEquals(Block.AIR, blockAt(chunk, 0, 40, 0));
         }
     }
 
