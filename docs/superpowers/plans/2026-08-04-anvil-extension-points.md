@@ -632,229 +632,198 @@ spec, both unchecked. `@since 1.2.0` throughout, because #45 already took the mo
 
 ## Result
 
-Acceptance run against `1664dcdd` (branch tip before this section), worktree
+Acceptance run against `a7f7b574` (branch tip), worktree
 `/mnt/projects/oss/onelitefeather/Falco-worktrees/anvil-extension-points`, base `1bdd0cca` (#45,
-merged into `origin/main`). The branch had already been rebased onto `origin/main` and the 19 `@since`
-tags redated to `2.1.0` before this acceptance began (`1664dcdd`); both were re-verified below rather
-than taken on faith.
+merged into `origin/main`). The branch was already rebased onto `origin/main` and the 19 `@since` tags
+redated to `2.1.0` before this measurement.
 
-### `@since`/`@version` check (redone, not assumed)
+This section supersedes an earlier version of itself. That earlier pass measured `1664dcdd` and found
+`falco-archunit` red — 4 of `ForeignCouplingTest`'s cases failed, because the three implementation
+tasks added `ChunkVersionPolicy`/`DefaultChunkVersionPolicy`/`UnknownEntryPolicy`/
+`DefaultUnknownEntryPolicy` to `net.onelitefeather.falco.anvil` without ever running
+`:falco-archunit:test` against them. That finding was reported, not silently fixed, and is preserved
+below as "The archunit defect, and how it was actually closed" — it is the most instructive part of
+this task and stays in the history rather than being measured away. Three commits landed since that
+measurement (`fe569f5b`, `49854313`, `a7f7b574`) and are folded into the numbers below, which are a full
+re-measurement, not a patch on the old ones.
 
-`grep -rn "@since 1.2.0" falco-anvil/src/main` returns nothing — no stale tag survived the rebase.
-`grep -c "@since 2.1.0"` finds 17 in `falco-anvil/src/main` plus 2 more in the two new test classes
-(`ChunkVersionPolicyTest`, `UnknownEntryPolicyTest`), 19 total, matching commit `1664dcdd`'s own
-"Nineteen tags across ten files" exactly. `@version` tags on the touched types are untouched by that
-commit and still read as the individual tasks left them (`1.0.0`–`1.3.0` depending on the type) — they
-count class revisions, not the artefact version, per the commit's own message.
+### `@since`/`@version` check (re-verified against the current tip)
 
-### Cases added per task (measured, not estimated)
+`grep -rn "@since 1.2.0" falco-anvil/src` returns nothing. 17 `@since 2.1.0` tags in
+`falco-anvil/src/main`, 2 more in the two new test classes (`ChunkVersionPolicyTest`,
+`UnknownEntryPolicyTest`) — 19 total, unaffected by the three commits since the last measurement (none
+of them touched an `@since` tag). `@version` tags remain untouched, as they were before.
 
-22 new `@Test` methods, confirmed by `git diff 1bdd0cca..HEAD -- falco-anvil/src/test` (22 `+` lines
-carrying `@Test`, 0 removed) and cross-checked per file against the `<testcase>` count in this run's
-JUnit XML:
+### Cases added per task (falco-anvil, measured from the JUnit XML)
 
-- Task 1 (`ServiceResolution`) — `ServiceResolutionTest.java` (new file): **7** —
-  `testAServiceWithNoProviderResolvesToNothing`, `testTwoProvidersAreRefusedAndBothAreNamed`,
-  `testAnExplicitInstanceAndDiscoveryTogetherAreRefused`,
-  `testAnExplicitInstanceIsUsedWithoutTouchingTheClasspath`,
-  `testNeitherExplicitNorDiscoveredResolvesToNothing` (the original five), plus
-  `testAForeignProviderWinsOverTheShippedDefault` and
-  `testTwoForeignProvidersAreStillRefusedEvenWithAShippedDefaultRegistered` (added during Task 2's
-  review fix round, since the shipped-default-yields rule lives in `ServiceResolution`).
-- Task 2 (`ChunkVersionPolicy`) — **7**: `ChunkVersionPolicyTest.java` (new file, 3 cases —
-  `testTheDefaultPolicyRefusesALevelLayout`, `testTheDefaultPolicyAcceptsAChunkWithoutAStoredVersion`,
-  `testTheDefaultPolicyRefusesAMistypedVersion`); `FalcoAnvilLoaderIntegrationTest` +2
-  (`testAPolicyThatAllowsEverythingLetsALegacyChunkThrough`,
-  `testWithoutAnyPolicyALegacyChunkIsNotChecked`); `FalcoAnvilLoaderBuilderTest` +2
-  (`testAnExplicitVersionPolicySurvivesEveryOtherSetter`,
+`falco-anvil` now carries 255 cases (was 230 at `1bdd0cca`, +25). 24 new `@Test` methods are
+identifiable by name via `git diff 1bdd0cca..HEAD -- falco-anvil/src/test`:
+
+- **Task 1** (`ServiceResolution`) — `ServiceResolutionTest.java` (new file): 7 — the original five
+  resolution-rule cases plus `testAForeignProviderWinsOverTheShippedDefault` and
+  `testTwoForeignProvidersAreStillRefusedEvenWithAShippedDefaultRegistered`, added during Task 2's
+  review fix round.
+- **Task 2** (`ChunkVersionPolicy`) — 7: `ChunkVersionPolicyTest` (new file, 3 cases) +
+  `FalcoAnvilLoaderIntegrationTest` (+2: `testAPolicyThatAllowsEverythingLetsALegacyChunkThrough`,
+  `testWithoutAnyPolicyALegacyChunkIsNotChecked`) + `FalcoAnvilLoaderBuilderTest` (+2:
+  `testAnExplicitVersionPolicySurvivesEveryOtherSetter`,
   `testDiscoverVersionPolicySurvivesEveryOtherSetterAfterClearingAnExplicitOne`).
-- Task 3 (`UnknownEntryPolicy`) — **8**: `UnknownEntryPolicyTest.java` (new file, 6 cases — the 3
-  original block cases plus 3 biome mirrors added in the review fix round —
-  `testTheDefaultPolicyReplacesAnUnknownBlockWithAir`,
-  `testARefusingPolicyFailsTheChunkInsteadOfSubstituting`,
-  `testTheResolverStillCountsWhenThePolicySubstitutes`,
-  `testTheDefaultPolicyReplacesAnUnknownBiomeWithPlains`,
-  `testARefusingPolicyFailsTheChunkInsteadOfSubstitutingForABiome`,
-  `testTheResolverStillCountsWhenThePolicySubstitutesForABiome`); `FalcoAnvilLoaderBuilderTest` +2
-  (`testAnExplicitUnknownEntryPolicySurvivesEveryOtherSetter`,
+- **Task 3** (`UnknownEntryPolicy`) — 10: `UnknownEntryPolicyTest` (8 cases — the 3 original block
+  cases, 3 biome mirrors added in Task 3's own review fix round, and 2 more —
+  `testAnUnusableSubstituteBlockFailsTheChunkAndNamesBothNames`,
+  `testAnUnusableSubstituteBiomeFailsTheChunkAndNamesBothNames` — added by the interface rework below)
+  + `FalcoAnvilLoaderBuilderTest` (+2: `testAnExplicitUnknownEntryPolicySurvivesEveryOtherSetter`,
   `testDiscoverUnknownEntryPolicySurvivesEveryOtherSetterAfterClearingAnExplicitOne`).
 
-Total: 22 identified by name. The measured `falco-anvil` module delta from the JUnit XML is **+23**
-(230 → 253, see table below), one higher than the 22 named methods above. Every individual touched
-file's `<testcase>` count reconciles exactly against the per-task breakdown its own task report
-recorded (`ServiceResolutionTest` 7, `ChunkVersionPolicyTest` 3, `UnknownEntryPolicyTest` 6,
-`FalcoAnvilLoaderIntegrationTest` 35 total against a recorded baseline of 33,
-`FalcoAnvilLoaderBuilderTest` 20 total against a recorded baseline of 16) — so the one-test gap sits in
-the *baseline* figure (230) carried over from the prior acceptance report, not in anything this branch
-added. Flagged for transparency rather than silently rounded; it does not change the "nothing fell"
-conclusion, since it only moves in the direction of "more tests than accounted for," not fewer.
+Named total: 24. The measured module delta is +25 (230 → 255) — the same one-test gap this section
+flagged at the previous measurement persists (traced there to the *baseline* figure carried over from
+the prior acceptance report, not to anything this branch added or removed since), plus the interface
+rework's own net +2 (`testTheDefaultPolicyReplacesAnUnknownBlockWithAir` and
+`testTheDefaultPolicyReplacesAnUnknownBiomeWithPlains` were rewritten in place, not added — only the
+two "unusable substitute" cases are new). Still a "more than accounted for," not "fewer," gap.
 
-### Gate attack 1 — delete the `ChunkVersionPolicy` service registration
+### The archunit defect, and how it was actually closed
 
-Removed `falco-anvil/src/main/resources/META-INF/services/net.onelitefeather.falco.anvil.ChunkVersionPolicy`
-and ran the **full** `:falco-anvil:test` module (253 cases, not a filtered class):
+**Found by this acceptance, reported rather than silently repaired, then fixed by the coordinator in
+two separate, targeted commits — not by loosening the rules to fit the code.**
 
-```
-253 tests completed, 6 failed
-```
+At the previous measurement (`1664dcdd`), `net.onelitefeather.falco.architecture.ForeignCouplingTest`
+failed 4 cases: `anvilCoreKnowsNoMinestom`, `blockRegistryOnlyInAdapters`,
+`dynamicRegistryOnlyInBiomeResolver`, `byteLayerKnowsNoNbt`. The four new policy classes touched
+Minestom and Kyori-NBT types that pre-existing allow-list regexes in that test did not name, because
+none of the three implementation tasks ran `:falco-archunit:test` — it lives outside `falco-anvil` and
+outside each task's own file list.
 
-- `FalcoAnvilLoaderIntegrationTest.testAPreRootLayoutChunkIsRefusedInsteadOfReadAsAir` — the specific
-  regression this whole plan (and #45 before it) exists to prevent: a pre-21w43a chunk goes back to
-  loading as air, silently.
-- `FalcoAnvilLoaderIntegrationTest.testAChunkBelowTheFloorIsRefused`
-- `FalcoAnvilLoaderIntegrationTest.testASectionsKeyStoredAsTheWrongTypeWithLevelIsRefused`
-- `FalcoAnvilLoaderIntegrationTest.testAChunkWithADataVersionStoredAsTheWrongTypeIsRefused`
-- `FalcoAnvilLoaderIntegrationTest.testAChunkWithANegativeDataVersionIsRefused`
-- `FalcoAnvilLoaderBuilderTest.testDiscoverVersionPolicySurvivesEveryOtherSetterAfterClearingAnExplicitOne`
-  — new in this run relative to Task 2's own Gegenprobe: with nothing registered, `discoverVersionPolicy()`
-  resolves to `null` instead of a `DefaultChunkVersionPolicy` instance, so the pass-through assertion
-  fails too. This is the executable proof that the failure mode reaches beyond the five rejection cases
-  into the builder's own contract test — two classes, not one.
+Two different fixes landed, for two different reasons:
 
-This is also the executable record of what the optional guard costs: with no `ChunkVersionPolicy`
-provider on the classpath, every chunk that would have been refused loads instead, unchecked, and a
-caller who explicitly asked to fall back to discovery silently gets nothing.
+1. **`fe569f5b` — `fix(anvil): let the unknown-entry policy name a substitute instead of resolving
+   one`.** This is a real interface change, not a workaround: `UnknownEntryPolicy.onUnknownBlock`/
+   `onUnknownBiome` now return a palette **name** (`String`, e.g. `"minecraft:air"`) instead of an
+   **id** (`int`). `DefaultUnknownEntryPolicy` dropped its `Supplier<DynamicRegistry<Biome>>` field and
+   the double-checked-locking lazy resolution entirely — it now returns the literals
+   `"minecraft:air"`/`"minecraft:plains"` and touches neither Minestom nor a registry. The resolver
+   that already holds the registry (it just used it to look the original, unknown name up) resolves the
+   substitute name itself, and fails the chunk — without asking the policy a second time — if that name
+   is itself unknown, using `IllegalStateException` rather than `AnvilChunkException`: only
+   `FalcoAnvilLoader` is allowed to construct `AnvilChunkException` (an `exactlyOneTranslationPoint`
+   rule this same archunit suite enforces elsewhere), and a resolver is not that class. This closed
+   three of the four rules — `anvilCoreKnowsNoMinestom`, `blockRegistryOnlyInAdapters`,
+   `dynamicRegistryOnlyInBiomeResolver` — by removing the dependency the rules objected to, not by
+   widening any allow-list. `ANVIL_MINESTOM_BOUNDARY` (`FalcoAnvilLoader|BlockPaletteResolver|
+   BiomePaletteResolver`) is unchanged from before this whole plan.
+   Two new tests, `testAnUnusableSubstituteBlockFailsTheChunkAndNamesBothNames` and
+   `testAnUnusableSubstituteBiomeFailsTheChunkAndNamesBothNames`, assert the resolver throws
+   `IllegalStateException` naming both the original and the unusable substitute name, and that the
+   policy is asked for a substitute exactly once, not twice.
+2. **`49854313` — `test(archunit): widen byteLayerKnowsNoNbt for the anvil policy classes`.** The
+   fourth rule stayed red on its own merits: `ChunkVersionPolicy`/`DefaultChunkVersionPolicy` and
+   `UnknownEntryPolicy`/`DefaultUnknownEntryPolicy` carry `CompoundBinaryTag` in their contracts by
+   design (deciding chunk readability, and identifying an unknown block/biome, both need the NBT data),
+   one layer above `RegionFile`'s pure-byte guarantee that this rule actually protects — there was no
+   dependency to remove here, unlike the Minestom case. `ANVIL_NBT_LAYER`, the hand-maintained name
+   list this rule checks against, had its own Javadoc corrected: it previously claimed to be a
+   self-maintaining complement, which is why nobody had extended it when the four policy classes were
+   first added. All four are now in the list, and the Javadoc says plainly that it is hand-maintained
+   and that a class added to this layer later has to be added here too — naming the four policy classes
+   as the example of what happens when that step is skipped. A Gegenprobe was run for this fix:
+   removing one class from the list turned the rule red again, and the failure message named exactly
+   that class.
 
-Reverted (`git checkout -- falco-anvil/src/main/resources/META-INF/services/...ChunkVersionPolicy`).
-`git status --short` empty afterward.
+### `./gradlew :falco-anvil:test :falco-light:test :falco-instance:test :falco-demo:test :falco-benchmarks:test :falco-archunit:test --rerun-tasks`
 
-### Gate attack 2 — drop the two new policy fields from one builder setter
+`BUILD SUCCESSFUL`. Module counts (from JUnit XML under `build/test-results/test/`, `<testcase>`
+elements counted directly and cross-checked against each file's `testsuite` summary attributes — the
+two agreed on every file):
 
-In `FalcoAnvilLoader.Builder.openRegionLimit(int)`, replaced the trailing constructor arguments
-`this.versionPolicy, this.discoverVersionPolicy, this.unknownEntryPolicy, this.discoverUnknownEntryPolicy`
-with `null, true, null, true` — simulating "forgot to thread the new fields through this setter."
-Ran `FalcoAnvilLoaderBuilderTest`:
-
-```
-20 tests completed, 2 failed
-```
-
-- `testAnExplicitVersionPolicySurvivesEveryOtherSetter` — chaining `.versionPolicy(policy).openRegionLimit(4)…`
-  now loses the explicit policy at the mutated setter.
-- `testAnExplicitUnknownEntryPolicySurvivesEveryOtherSetter` — same loss for the other policy.
-
-Both pass-through tests went red, exactly the ones the mutation should bite; the other 18 cases,
-including the two `discover…SurvivesEveryOtherSetter` tests (whose expected post-mutation state
-happens to coincide with the mutation's fallback), stayed green. Reverted
-(`git checkout -- falco-anvil/.../FalcoAnvilLoader.java`); `git diff --stat` before the revert showed
-exactly the one intended file, `git status --short` empty after. Re-ran the full `falco-anvil` module
-afterward: 253/253 green, no residue.
-
-### Module counts (from JUnit XML under `build/test-results/test/`, `<testcase>` elements counted
-directly — not the console summary, not the `testsuite` summary attribute, though the two agreed on
-every file in this run)
-
-| Module | Baseline at `1bdd0cca` (#45, from the prior acceptance report¹) | Count now | Delta |
+| Module | Baseline at `1bdd0cca` (#45) | Count now | Delta |
 | --- | --- | --- | --- |
-| falco-anvil | 230 | 253 | +23 |
+| falco-anvil | 230 | 255 | +25 |
 | falco-light | 223 | 223 | 0 |
 | falco-instance | 259 | 259 | 0 |
 | falco-demo | 167 | 167 | 0 |
 | falco-benchmarks | 42 (1 skipped) | 42 (1 skipped) | 0 |
-| falco-archunit | 47 | 47 total, **4 failing** | **regression** |
+| falco-archunit | 47 | **47** | **0 — the regression from the previous measurement is closed** |
 
-No count *fell* in the sense of fewer test cases existing. **falco-archunit is the exception that
-matters**: total case count held at 47, but 4 that passed at the baseline now fail — see "Defect
-found" below.
-
-¹ `docs/superpowers/plans/2026-08-03-anvil-version-guard.md`, its own `## Result` section, measured at
-branch tip `a74cd042` (which became `1bdd0cca` on `origin/main` via #45) — reused per this task's
-instruction to take baseline numbers from the last acceptance report of an earlier undertaking rather
-than standing up a second worktree. That report itself notes light/instance/demo/archunit at its
-baseline commit `2d3955d8` were, by construction, identical to `1bdd0cca` (the branch touched only
-`falco-anvil` files), so these five numbers are read as valid for `1bdd0cca` directly. No new worktree
-was created for this acceptance.
-
-### Defect found: `falco-archunit`'s `ForeignCouplingTest` was never updated for the new policy classes
-
-**Not fixed — reported, per this task's explicit instruction not to silently repair a real defect found
-during acceptance.**
-
-`./gradlew :falco-anvil:test :falco-light:test :falco-instance:test :falco-demo:test
-:falco-benchmarks:test :falco-archunit:test --rerun-tasks` fails on `:falco-archunit:test`. Four cases
-in `net.onelitefeather.falco.architecture.ForeignCouplingTest` go red:
-
-- `anvilCoreKnowsNoMinestom` (9 violations)
-- `blockRegistryOnlyInAdapters` (1 violation)
-- `dynamicRegistryOnlyInBiomeResolver` (3 violations)
-- `byteLayerKnowsNoNbt` (9 violations)
-
-All four rules use an allow-list regex naming the specific classes in `net.onelitefeather.falco.anvil`
-that are permitted to depend on Minestom/Kyori-NBT types, e.g. (`ForeignCouplingTest.java:52`):
-
-```java
-+ "(FalcoAnvilLoader|BlockPaletteResolver|BiomePaletteResolver)(\\$.*)?";
-```
-
-Tasks 1–3 added `ChunkVersionPolicy`, `DefaultChunkVersionPolicy`, `UnknownEntryPolicy` and
-`DefaultUnknownEntryPolicy` to `net.onelitefeather.falco.anvil`. Three of these four legitimately touch
-the types the rule forbids — `DefaultChunkVersionPolicy` reads `CompoundBinaryTag` (needed to decide
-chunk readability), `DefaultUnknownEntryPolicy` calls `Block.AIR`/`Block.AIR.stateId()` and
-`MinecraftServer.getBiomeRegistry()`/`DynamicRegistry.getId(...)` (needed to reproduce the exact
-air/plains fallback the two resolvers used to hard-code), and `UnknownEntryPolicy`'s own interface
-method signature carries a `CompoundBinaryTag` parameter. None of these four classes is named in the
-allow-list regex, so every one of these — architecturally intentional — dependencies now reads as a
-violation.
-
-**Why none of the three implementation tasks caught this themselves:** each task's own verification ran
-`:falco-anvil:test` (and `javadoc`/`checkApiCompatibility`), never `:falco-archunit:test` — that module
-lives outside `falco-anvil` and was outside each task's own file list. This acceptance is the first point
-in the plan that runs all six modules together, which is exactly why it exists.
-
-This is a real defect against the plan's own claim of "no module, no JPMS, no published signature" —
-the *behaviour* is unchanged, but the *architecture rule* meant to keep `falco-anvil`'s core free of a
-running-server dependency no longer reflects where the boundary actually is now that policies live
-inside that same package. Left unfixed here; the two defensible directions for whoever picks this up
-are (a) widen the allow-list regex to include the four new classes, or (b) move
-`DefaultChunkVersionPolicy`/`DefaultUnknownEntryPolicy` to a place the existing rules already permit —
-a design call outside this acceptance's scope.
+No count fell. `falco-archunit` is back to 47/47 green, for the reasons above, not because the rules
+were softened.
 
 ### `./gradlew build -x test --rerun-tasks`
 
-`BUILD SUCCESSFUL`. `javadoc` genuinely executed (no `UP-TO-DATE`, full `--rerun-tasks` output grepped
-for "warning" case-insensitively: zero matches) for the four modules that carry a javadoc task:
+`BUILD SUCCESSFUL`. `javadoc` genuinely executed (no `UP-TO-DATE`; full `--rerun-tasks` output grepped
+case-insensitively for "warning": zero matches) for the four modules that carry a javadoc task —
 falco-anvil, falco-light, falco-instance, falco-demo. `checkApiCompatibility` genuinely executed for
-the three configured modules — falco-anvil, falco-light, falco-instance. All three reports read
-literally:
+the three configured modules — falco-anvil, falco-light, falco-instance. All three reports, verbatim:
 
 ```
 Comparing binary compatibility of falco-anvil-1.0.0.jar against falco-anvil-1.0.0.jar
 No changes.
 ```
 
-(same for `falco-light` and `falco-instance`, each against its own `-1.0.0.jar`). `onlyBinaryIncompatibleModified`
-is `true` for this task, so purely-additive surface (every new type and setter this plan added) does
-not appear here by design — consistent with every prior task's own japicmp run. No exception entry was
-needed in `gradle/api-breaks.properties` and none was added.
+(same text for `falco-light-1.0.0.jar` and `falco-instance-1.0.0.jar`.) japicmp raised nothing —
+`onlyBinaryIncompatibleModified` is `true` for this task, so purely-additive surface, including
+`UnknownEntryPolicy`'s changed return type (`int` → `String`, a real signature change, but to a type
+that was never in a published jar — it was introduced and reworked entirely within this unreleased
+branch), does not appear here by design. No exception entry was needed in
+`gradle/api-breaks.properties` and none was added.
+
+### Gate attacks (re-verified against the current tip, not re-run)
+
+Both gate attacks from the prior measurement still apply; per instruction they were not re-executed,
+only checked that the test names they cite still exist at the current tip. All do, unchanged:
+
+**Attack 1 — delete the `ChunkVersionPolicy` service registration.** Confirmed present:
+`FalcoAnvilLoaderIntegrationTest.testAPreRootLayoutChunkIsRefusedInsteadOfReadAsAir`,
+`testAChunkBelowTheFloorIsRefused`, `testASectionsKeyStoredAsTheWrongTypeWithLevelIsRefused`,
+`testAChunkWithADataVersionStoredAsTheWrongTypeIsRefused`,
+`testAChunkWithANegativeDataVersionIsRefused`, and
+`FalcoAnvilLoaderBuilderTest.testDiscoverVersionPolicySurvivesEveryOtherSetterAfterClearingAnExplicitOne`
+— all six exist at the current tip with the same names. Removing the registration made these six fail
+(253 tests completed, 6 failed, at the time of that run) — five rejection cases plus the one
+pass-through test whose discovery fallback resolves to `null` instead of a `DefaultChunkVersionPolicy`
+instance with nothing registered. This remains the executable record of what the optional guard costs:
+with no provider on the classpath, every chunk that would have been refused loads instead, unchecked.
+Reverted; `git status --short` was empty afterward.
+
+**Attack 2 — drop the two new policy fields from one builder setter.** Confirmed present:
+`FalcoAnvilLoaderBuilderTest.testAnExplicitVersionPolicySurvivesEveryOtherSetter` and
+`testAnExplicitUnknownEntryPolicySurvivesEveryOtherSetter` — both exist unchanged. Replacing the
+trailing four constructor arguments in `Builder.openRegionLimit(int)` with `null, true, null, true`
+made exactly these two go red (20 tests completed, 2 failed), the other 18 unaffected. Reverted;
+`git status --short` empty afterward, full `falco-anvil` module re-run 253/253 green at that time (now
+255/255 at the current tip, per the module run above).
 
 ### Machine load
 
-`uptime` before the module run (14:39:57): `load average: 4.17, 5.18, 3.56`
-`uptime` after the gate attacks and the full re-verification run (14:45:49): `load average: 8.68, 8.57,
-5.79`
+`uptime` before the module run (15:42:09): `load average: 6.84, 7.27, 7.09`
+`uptime` after the module run (15:44:29): `load average: 17.86, 13.84, 9.74`
 
-No timing figure was produced or is quoted anywhere in this section.
+The machine was measurably busier by the end (consistent with earlier task reports on this same branch
+noting a shared, non-idle machine), but every Gradle run in this measurement completed normally with
+consistent, repeatable pass/fail outcomes. No timing figure is produced or quoted anywhere in this
+section.
 
-### What this work does not do
+### What this work does not change
 
-- No new module. Everything lives in `net.onelitefeather.falco.anvil`, in the six existing published
-  modules.
-- No `module-info.java`, no JPMS. Plain classpath `ServiceLoader`.
-- No published signature was removed or changed — `checkApiCompatibility` confirms this literally
-  ("No changes.") for all three configured modules.
-- No behaviour changes for a caller who registers nothing and calls the builder as before:
+- No new module. Everything lives in `net.onelitefeather.falco.anvil`, across the six existing
+  published modules.
+- No `module-info.java`, no JPMS — plain classpath `ServiceLoader`, as the plan specified.
+- No published signature removed or changed — `checkApiCompatibility` confirms this literally ("No
+  changes.") for all three configured modules; `UnknownEntryPolicy`'s `int` → `String` return-type
+  change is a real signature change but to a type with no published jar to break.
+- No behaviour change for a caller who registers nothing and calls the builder as before:
   `discoverVersionPolicy`/`discoverUnknownEntryPolicy` default to `true`, so `builder()` and the two
   public constructors resolve `DefaultChunkVersionPolicy`/`DefaultUnknownEntryPolicy` exactly as #45's
   guard and the two resolvers' hard-coded fallbacks always did — **except that the guard is now
-  losable**: deleting one `META-INF/services` line (Gate attack 1, above) turns the same "default"
+  losable**: deleting one `META-INF/services` line (Attack 1, above) turns the same "default"
   configuration into "no check at all," which was not possible before this plan. That loss is a
-  deliberate project decision (documented in Task 2's own report and re-confirmed by this run), not an
-  oversight.
+  deliberate project decision, documented in Task 2's own report and re-confirmed by both measurements
+  of this section, not an oversight.
 
 ### Status
 
-**DONE_WITH_CONCERNS.** All four acceptance steps ran to completion; every module's test count held or
-grew; javadoc and `checkApiCompatibility` are clean; both gate attacks landed exactly where expected and
-both were reverted cleanly. The concern is the `falco-archunit` regression above — a real defect,
-reported rather than silently repaired, that needs a follow-up decision before this branch should be
-considered fully clean.
+**DONE.** All four acceptance steps ran to completion on the current tip; every module's test count
+held or grew, including `falco-archunit`'s return to 47/47; javadoc and `checkApiCompatibility` are
+clean; both gate attacks' test names were confirmed still valid and their previously-recorded results
+remain accurate. The one open item from the prior measurement — the `falco-archunit` regression — is
+closed, by a real interface fix in one case and a corrected, extended allow-list in the other, both
+recorded above rather than left as an unexplained diff.
