@@ -7,7 +7,6 @@ import net.kyori.adventure.nbt.BinaryTagTypes;
 import net.kyori.adventure.nbt.ByteArrayBinaryTag;
 import net.kyori.adventure.nbt.CompoundBinaryTag;
 import net.kyori.adventure.nbt.ListBinaryTag;
-import net.kyori.adventure.nbt.NumberBinaryTag;
 import net.kyori.adventure.nbt.StringBinaryTag;
 import net.minestom.server.MinecraftServer;
 import net.minestom.server.coordinate.CoordConversion;
@@ -79,7 +78,7 @@ import java.util.stream.Stream;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.1.0
+ * @version 1.2.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -91,7 +90,6 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     private static final BinaryTagIO.Writer TAG_WRITER = BinaryTagIO.writer();
 
     private static final String SECTIONS_KEY = "sections";
-    private static final String LEGACY_LEVEL_KEY = "Level";
     private static final String DATA_VERSION_KEY = "DataVersion";
     private static final String BLOCK_STATES_KEY = "block_states";
     private static final String BIOMES_KEY = "biomes";
@@ -129,6 +127,22 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     private final Semaphore saveLimit;
     private final int dataVersion;
     private final int minimumDataVersion;
+
+    /**
+     * The policy consulted before a chunk is decoded, or null to skip that check entirely.
+     * <p>
+     * Resolved once, in the constructor, through {@link ServiceResolution#choose(Class, Object,
+     * boolean)}. A builder which never touches {@link Builder#versionPolicy(ChunkVersionPolicy)} or
+     * {@link Builder#discoverVersionPolicy()} discovers {@link DefaultChunkVersionPolicy} through the
+     * classpath by default, which is what keeps every loader built the way earlier versions built
+     * one refusing the same chunks it always refused. Calling {@code versionPolicy(null)} is the
+     * only way to leave this field null, and {@link #checkVersion(CompoundBinaryTag)} treats that as
+     * "check nothing" rather than substituting the default itself.
+     * </p>
+     *
+     * @since 1.2.0
+     */
+    private final @Nullable ChunkVersionPolicy versionPolicy;
 
     /**
      * Where failures are reported, or null for the exception manager of the running server.
@@ -219,6 +233,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         this.dataVersion = settings.dataVersion;
         this.minimumDataVersion = settings.minimumDataVersion;
         this.exceptionHandler = settings.exceptionHandler;
+        this.versionPolicy = ServiceResolution.choose(
+                ChunkVersionPolicy.class, settings.versionPolicy, settings.discoverVersionPolicy);
         this.closeLock = new ReentrantLock();
 
         // Which directory was chosen, and how many region files are in it, is the first thing
@@ -226,12 +242,13 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         // two layouts happens invisibly, and a world whose files sit in the other one looks exactly
         // like a world which is empty.
         LOGGER.info(
-                "Opening the anvil loader for region={} layout={} exists={} regionFiles={} dim={}",
+                "Opening the anvil loader for region={} layout={} exists={} regionFiles={} dim={} versionPolicy={}",
                 this.regionDirectory,
                 this.legacyLayout ? "legacy <world>/region" : "dimension <world>/dimensions/<namespace>/<value>/region",
                 Files.isDirectory(this.regionDirectory),
                 describeRegionFileCount(this.regionDirectory),
-                this.dimensionLabel
+                this.dimensionLabel,
+                this.versionPolicy == null ? "none" : this.versionPolicy.getClass().getName()
         );
     }
 
@@ -258,8 +275,11 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * Returns a builder for a loader whose defaults are those of the constructors.
      * <p>
      * The builder reaches the values the constructors set for themselves — the compression level,
-     * the diagnostics, both palette resolvers, the save parallelism and the data version. The world
-     * directory and the dimension are not among them: they are required, so they sit in
+     * the diagnostics, both palette resolvers, the save parallelism and the data version. It also
+     * defaults to discovering a {@link ChunkVersionPolicy} from the classpath, which is what keeps
+     * every loader built through a constructor rather than an explicit
+     * {@link Builder#versionPolicy(ChunkVersionPolicy)} call refusing the chunks it always refused.
+     * The world directory and the dimension are not among them: they are required, so they sit in
      * {@link Builder#build(Path, Key)} rather than in a slot.
      * </p>
      *
@@ -269,7 +289,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     public static Builder builder() {
         return new Builder(DEFAULT_OPEN_REGION_LIMIT, ChunkCompression.DEFAULT_LEVEL,
                 Math.max(Runtime.getRuntime().availableProcessors(), 2), MinecraftServer.DATA_VERSION,
-                DEFAULT_MINIMUM_DATA_VERSION, null, null, null, null);
+                DEFAULT_MINIMUM_DATA_VERSION, null, null, null, null, null, true);
     }
 
     /**
@@ -298,7 +318,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * </p>
      *
      * @author TheMeinerLP
-     * @version 1.1.0
+     * @version 1.2.0
      * @since 0.4.0
      */
     @ApiStatus.Experimental
@@ -313,12 +333,16 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         private final @Nullable PaletteEntryResolver blockResolver;
         private final @Nullable PaletteEntryResolver biomeResolver;
         private final @Nullable Consumer<Throwable> exceptionHandler;
+        private final @Nullable ChunkVersionPolicy versionPolicy;
+        private final boolean discoverVersionPolicy;
 
         private Builder(int openRegionLimit, int compressionLevel, int saveParallelism, int dataVersion,
                         int minimumDataVersion, @Nullable AnvilDiagnostics diagnostics,
                         @Nullable PaletteEntryResolver blockResolver,
                         @Nullable PaletteEntryResolver biomeResolver,
-                        @Nullable Consumer<Throwable> exceptionHandler) {
+                        @Nullable Consumer<Throwable> exceptionHandler,
+                        @Nullable ChunkVersionPolicy versionPolicy,
+                        boolean discoverVersionPolicy) {
             this.openRegionLimit = openRegionLimit;
             this.compressionLevel = compressionLevel;
             this.saveParallelism = saveParallelism;
@@ -328,6 +352,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             this.blockResolver = blockResolver;
             this.biomeResolver = biomeResolver;
             this.exceptionHandler = exceptionHandler;
+            this.versionPolicy = versionPolicy;
+            this.discoverVersionPolicy = discoverVersionPolicy;
         }
 
         /**
@@ -354,7 +380,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
-                    this.exceptionHandler);
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy);
         }
 
         /**
@@ -385,7 +413,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
-                    this.exceptionHandler);
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy);
         }
 
         /**
@@ -412,7 +442,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
-                    this.exceptionHandler);
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy);
         }
 
         /**
@@ -436,7 +468,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
-                    this.exceptionHandler);
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy);
         }
 
         /**
@@ -466,7 +500,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
-                    this.exceptionHandler);
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy);
         }
 
         /**
@@ -495,7 +531,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
-                    this.exceptionHandler);
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy);
         }
 
         /**
@@ -521,7 +559,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.diagnostics,
                     blockResolver,
                     this.biomeResolver,
-                    this.exceptionHandler);
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy);
         }
 
         /**
@@ -544,7 +584,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.diagnostics,
                     this.blockResolver,
                     biomeResolver,
-                    this.exceptionHandler);
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy);
         }
 
         /**
@@ -576,7 +618,74 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.diagnostics,
                     this.blockResolver,
                     this.biomeResolver,
-                    exceptionHandler);
+                    exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy);
+        }
+
+        /**
+         * Sets the policy consulted before a chunk is decoded, or clears it so nothing is consulted.
+         * <p>
+         * Calling this slot always turns discovery off, whatever value is passed: an explicit
+         * decision about the policy — including the explicit decision "none" — has to win over the
+         * classpath without {@link ServiceResolution#choose(Class, Object, boolean)} seeing both set
+         * at once and refusing to guess between them. A builder that never calls this slot keeps
+         * discovering the default instead, which is what {@link #builder()} starts with.
+         * </p>
+         * <p>
+         * Passing {@code null} is not "use the default": it is "check nothing". A pre-{@code
+         * 21w43a} chunk that would otherwise be refused loads as a chunk of air instead, exactly as
+         * this loader read one before {@link ChunkVersionPolicy} existed. That cost is deliberate —
+         * see {@code testWithoutAnyPolicyALegacyChunkIsNotChecked} in the loader's integration
+         * tests for the case that documents it.
+         * </p>
+         *
+         * @param versionPolicy the policy to consult before a chunk is decoded, or null to consult
+         *                      none
+         * @return a new builder with this value
+         * @since 1.2.0
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder versionPolicy(@Nullable ChunkVersionPolicy versionPolicy) {
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.minimumDataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler,
+                    versionPolicy,
+                    false);
+        }
+
+        /**
+         * Asks the loader to discover its {@link ChunkVersionPolicy} from the classpath instead of
+         * using an explicit instance.
+         * <p>
+         * This is what {@link #builder()} already defaults to, so calling it only matters after an
+         * earlier {@link #versionPolicy(ChunkVersionPolicy)} call on the same chain, to undo it. A
+         * classpath that registers more than one provider makes {@link Builder#build(Path, Key)}
+         * throw {@link IllegalStateException} rather than guess between them.
+         * </p>
+         *
+         * @return a new builder with this value
+         * @since 1.2.0
+         */
+        @Contract(value = "-> new", pure = true)
+        public Builder discoverVersionPolicy() {
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.minimumDataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler,
+                    null,
+                    true);
         }
 
         /**
@@ -706,7 +815,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             }
 
             CompoundBinaryTag data = TAG_READER.read(new ByteArrayInputStream(raw.decompress()), BinaryTagIO.Compression.NONE);
-            requireReadableVersion(data);
+            if (this.versionPolicy != null) {
+                checkVersion(data);
+            }
             String status = chunkStatus(data);
 
             if (!isFullyGenerated(status)) {
@@ -1411,61 +1522,54 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     }
 
     /**
-     * Refuses a chunk which comes from a version this loader cannot read.
+     * Consults {@link #versionPolicy} about a chunk, and reports and counts a refusal before it
+     * reaches the caller.
      * <p>
-     * The layout is checked before the version, because a version number is a claim about the data
-     * while the layout is the data: a chunk may carry no version at all, and one that carries a
-     * version may not hold what that version promises. A root compound without {@code sections} but
-     * with a {@code Level} compound is the pre-1.18 shape, which would otherwise decode to an empty
-     * section list and reach the caller as a chunk of air.
-     * </p>
-     * <p>
-     * A missing {@code DataVersion} is the one case that is not a rejection: a tool which writes
-     * {@code sections} on the root but never learned to stamp a version has to keep loading, or a
-     * whole category of externally-written world becomes unreadable. A key that is present but is not
-     * the number it claims to be, and a key that holds a negative number, are both a different
-     * situation from absent: something wrote a value there and it does not describe a version this
-     * loader can trust, so both are refused rather than waved through the same path as "nothing was
-     * ever written".
+     * The policy only decides and throws; it does not know about {@link AnvilDiagnostics} or the
+     * logger, on purpose — see {@link ChunkVersionPolicy}. Counting and logging the refusal is
+     * therefore the loader's job, done here rather than duplicated at every call site, and done
+     * only when {@link #versionPolicy} is not null: the caller at {@link #loadChunk(Instance, int,
+     * int)} already guards the call for that reason.
      * </p>
      *
      * @param data the root compound of the chunk
-     * @throws ChunkDataException if the chunk cannot be read
+     * @throws ChunkDataException if the policy refuses the chunk
      */
-    private void requireReadableVersion(CompoundBinaryTag data) throws ChunkDataException {
-        boolean versionMissing = data.get(DATA_VERSION_KEY) == null;
-        // A stored value that is not a number falls back to the same -1 as an absent key, but the
-        // two are not the same failure: this flag is what lets the exception below say "not a
-        // number" instead of misreporting a value ("-1") that was never actually stored.
-        boolean versionMistyped = !versionMissing && !(data.get(DATA_VERSION_KEY) instanceof NumberBinaryTag);
-        int version = NbtReads.optionalInteger(data, DATA_VERSION_KEY, -1);
-        String reported = versionMissing ? AnvilDiagnostics.UNKNOWN_DATA_VERSION : Integer.toString(version);
-        boolean legacyChunkLayout = !(data.get(SECTIONS_KEY) instanceof ListBinaryTag)
-                && NbtReads.optionalCompound(data, LEGACY_LEVEL_KEY) != null;
+    private void checkVersion(CompoundBinaryTag data) throws ChunkDataException {
+        try {
+            this.versionPolicy.check(data, this.minimumDataVersion);
+        } catch (ChunkDataException failure) {
+            String reported = reportedDataVersion(data);
 
-        if (!legacyChunkLayout && (versionMissing || version >= this.minimumDataVersion)) {
-            return;
+            if (this.diagnostics.reportUnsupportedChunkVersion(reported)) {
+                LOGGER.warn(
+                        "Refusing a chunk from data version {} in {}: {}",
+                        reported, this.regionDirectory, failure.getMessage()
+                );
+            }
+            throw failure;
         }
+    }
 
-        if (this.diagnostics.reportUnsupportedChunkVersion(reported)) {
-            LOGGER.warn(
-                    "Refusing a chunk from data version {} in {}: {}",
-                    reported, this.regionDirectory,
-                    legacyChunkLayout
-                            ? "the chunk data sits under Level, which this loader does not read"
-                            : "the loader accepts " + this.minimumDataVersion + " and above"
-            );
-        }
-
-        throw new ChunkDataException(
-                ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION,
-                legacyChunkLayout
-                        ? "The chunk stores its data under Level, which means a version before 1.18"
-                        : versionMistyped
-                                ? "The chunk does not store its DataVersion as a number"
-                                : "The chunk stores data version " + version
-                                        + " but the loader accepts " + this.minimumDataVersion + " and above"
-        );
+    /**
+     * Renders the stored {@code DataVersion} of a chunk the way the version breakdown of
+     * {@link AnvilDiagnostics} groups it: by the number it holds, or by
+     * {@link AnvilDiagnostics#UNKNOWN_DATA_VERSION} for a chunk which stores none.
+     * <p>
+     * This mirrors only the presentation the guard used before it became a policy, not its
+     * decision: a key that is present but not a number renders as {@code "-1"} here exactly as it
+     * always did, because {@link NbtReads#optionalInteger(CompoundBinaryTag, String, int)} falls
+     * back to that default for a mistyped value the same way it does for a missing one.
+     * </p>
+     *
+     * @param data the root compound of the chunk
+     * @return the data version to report, or {@link AnvilDiagnostics#UNKNOWN_DATA_VERSION}
+     */
+    @Contract(pure = true)
+    private static String reportedDataVersion(CompoundBinaryTag data) {
+        return data.get(DATA_VERSION_KEY) == null
+                ? AnvilDiagnostics.UNKNOWN_DATA_VERSION
+                : Integer.toString(NbtReads.optionalInteger(data, DATA_VERSION_KEY, -1));
     }
 
     /**

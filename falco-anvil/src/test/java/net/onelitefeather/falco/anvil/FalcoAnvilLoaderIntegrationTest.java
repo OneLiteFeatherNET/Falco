@@ -785,6 +785,48 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
+    void testAPolicyThatAllowsEverythingLetsALegacyChunkThrough(Env env) throws Exception {
+        CompoundBinaryTag legacy = CompoundBinaryTag.builder()
+                .put("Level", CompoundBinaryTag.builder().put("Sections", ListBinaryTag.empty()).build())
+                .putString("Status", "minecraft:full")
+                .build();
+        writeRawChunk(11, 11, legacy);
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .versionPolicy((data, minimum) -> { })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNotNull(loader.loadChunk(instance, 11, 11));
+        }
+    }
+
+    /**
+     * Documents the cost of the loader's default: without any {@link ChunkVersionPolicy}, nothing
+     * checks a chunk's data version at all, so a pre-{@code 21w43a} chunk which stores its data
+     * under {@code Level} is not refused. It loads exactly as it did before this loader ever gained
+     * a version guard — as a chunk of air, because {@code sections} is absent from the root. This is
+     * a deliberate choice of the project, not a regression: a caller has to opt out of the check
+     * explicitly, with {@code versionPolicy(null)}, to reach this behaviour.
+     */
+    @Test
+    void testWithoutAnyPolicyALegacyChunkIsNotChecked(Env env) throws Exception {
+        CompoundBinaryTag legacy = CompoundBinaryTag.builder()
+                .put("Level", CompoundBinaryTag.builder().put("Sections", ListBinaryTag.empty()).build())
+                .putString("Status", "minecraft:full")
+                .build();
+        writeRawChunk(12, 12, legacy);
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .versionPolicy(null)
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNotNull(loader.loadChunk(instance, 12, 12));
+        }
+    }
+
+    @Test
     void testUnloadingAForeignChunkIsIgnored(Env env) throws Exception {
         Instance instance = env.createEmptyInstance(loader());
         Chunk chunk = instance.loadChunk(9, 9).join();
