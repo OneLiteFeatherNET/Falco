@@ -6,6 +6,7 @@ dependencies {
     testImplementation(project(":falco-light"))
     testImplementation(project(":falco-instance"))
     testImplementation(project(":falco-demo"))
+    testImplementation(project(":falco-migration"))
 
     testImplementation(libs.minestom)
     testImplementation(libs.annotations)
