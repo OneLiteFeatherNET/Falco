@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -316,6 +317,37 @@ class FalcoAnvilLoaderBuilderTest {
                 .build(worldRoot, OVERWORLD)) {
 
             assertEquals(1519, loader.minimumDataVersion());
+        }
+    }
+
+    @Test
+    void testAnExplicitVersionPolicySurvivesEveryOtherSetter(@TempDir Path worldRoot) throws Exception {
+        ChunkVersionPolicy policy = (data, minimum) -> {
+        };
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .versionPolicy(policy)
+                .openRegionLimit(4)
+                .compressionLevel(3)
+                .saveParallelism(2)
+                .build(worldRoot, OVERWORLD)) {
+
+            assertSame(policy, loader.versionPolicy());
+        }
+    }
+
+    @Test
+    void testDiscoverVersionPolicySurvivesEveryOtherSetterAfterClearingAnExplicitOne(@TempDir Path worldRoot) throws Exception {
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .versionPolicy((data, minimum) -> {
+                })
+                .discoverVersionPolicy()
+                .openRegionLimit(4)
+                .compressionLevel(3)
+                .saveParallelism(2)
+                .build(worldRoot, OVERWORLD)) {
+
+            assertInstanceOf(DefaultChunkVersionPolicy.class, loader.versionPolicy());
         }
     }
 

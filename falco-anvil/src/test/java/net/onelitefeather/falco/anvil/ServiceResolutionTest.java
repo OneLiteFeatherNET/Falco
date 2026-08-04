@@ -13,12 +13,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * instance relates to that discovery.
  * <p>
  * The dummy providers this test resolves are registered through the test resources, under
- * {@code META-INF/services/net.onelitefeather.falco.anvil.ServiceResolutionTest$Dummy}, so the main
+ * {@code META-INF/services/net.onelitefeather.falco.anvil.ServiceResolutionTest$Dummy} and two more
+ * files named after {@link DefaultAware} and {@link DefaultAwareWithTwoForeign} below, so the main
  * module registers nothing extra.
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 1.0.0
  */
 class ServiceResolutionTest {
@@ -48,6 +49,73 @@ class ServiceResolutionTest {
     }
 
     interface Absent {
+    }
+
+    /**
+     * A service with a "shipped default" registered next to a single foreign provider, for the two
+     * {@link ServiceResolution#discover(Class, Class)} cases below.
+     */
+    interface DefaultAware {
+        String name();
+    }
+
+    public static final class ShippedDefault implements DefaultAware {
+        public ShippedDefault() {
+        }
+
+        @Override
+        public String name() {
+            return "shipped";
+        }
+    }
+
+    public static final class ForeignProvider implements DefaultAware {
+        public ForeignProvider() {
+        }
+
+        @Override
+        public String name() {
+            return "foreign";
+        }
+    }
+
+    /**
+     * A separate service, registered with a shipped default and <em>two</em> foreign providers, so
+     * that "the default steps aside" and "two foreign providers still refuse each other" can be
+     * pinned down independently of one another.
+     */
+    interface DefaultAwareWithTwoForeign {
+        String name();
+    }
+
+    public static final class AnotherShippedDefault implements DefaultAwareWithTwoForeign {
+        public AnotherShippedDefault() {
+        }
+
+        @Override
+        public String name() {
+            return "shipped";
+        }
+    }
+
+    public static final class FirstForeignProvider implements DefaultAwareWithTwoForeign {
+        public FirstForeignProvider() {
+        }
+
+        @Override
+        public String name() {
+            return "first-foreign";
+        }
+    }
+
+    public static final class SecondForeignProvider implements DefaultAwareWithTwoForeign {
+        public SecondForeignProvider() {
+        }
+
+        @Override
+        public String name() {
+            return "second-foreign";
+        }
     }
 
     @Test
@@ -82,5 +150,21 @@ class ServiceResolutionTest {
     @Test
     void testNeitherExplicitNorDiscoveredResolvesToNothing() {
         assertNull(ServiceResolution.choose(Dummy.class, null, false));
+    }
+
+    @Test
+    void testAForeignProviderWinsOverTheShippedDefault() {
+        DefaultAware resolved = ServiceResolution.discover(DefaultAware.class, ShippedDefault.class);
+
+        assertEquals("foreign", resolved.name());
+    }
+
+    @Test
+    void testTwoForeignProvidersAreStillRefusedEvenWithAShippedDefaultRegistered() {
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> ServiceResolution.discover(DefaultAwareWithTwoForeign.class, AnotherShippedDefault.class));
+
+        assertTrue(failure.getMessage().contains("FirstForeignProvider"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("SecondForeignProvider"), failure.getMessage());
     }
 }

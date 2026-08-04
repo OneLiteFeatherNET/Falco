@@ -132,12 +132,15 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * The policy consulted before a chunk is decoded, or null to skip that check entirely.
      * <p>
      * Resolved once, in the constructor, through {@link ServiceResolution#choose(Class, Object,
-     * boolean)}. A builder which never touches {@link Builder#versionPolicy(ChunkVersionPolicy)} or
-     * {@link Builder#discoverVersionPolicy()} discovers {@link DefaultChunkVersionPolicy} through the
-     * classpath by default, which is what keeps every loader built the way earlier versions built
-     * one refusing the same chunks it always refused. Calling {@code versionPolicy(null)} is the
-     * only way to leave this field null, and {@link #checkVersion(CompoundBinaryTag)} treats that as
-     * "check nothing" rather than substituting the default itself.
+     * boolean, Class)}, naming {@link DefaultChunkVersionPolicy} as the shipped default — so a
+     * foreign {@link ChunkVersionPolicy} registered through {@code META-INF/services} is chosen over
+     * it, and only a second foreign provider is refused as ambiguous. A builder which never touches
+     * {@link Builder#versionPolicy(ChunkVersionPolicy)} or {@link Builder#discoverVersionPolicy()}
+     * discovers a policy through the classpath by default, which is what keeps every loader built
+     * the way earlier versions built one refusing the same chunks it always refused. Calling
+     * {@code versionPolicy(null)} is the only way to leave this field null, and
+     * {@link #checkVersion(CompoundBinaryTag)} treats that as "check nothing" rather than
+     * substituting the default itself.
      * </p>
      *
      * @since 1.2.0
@@ -172,6 +175,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      *
      * @param worldRoot the root directory of the world
      * @param dimension the key of the dimension the loader reads and writes
+     * @throws IllegalStateException if the classpath registers more than one foreign
+     *                                {@link ChunkVersionPolicy}
      */
     public FalcoAnvilLoader(Path worldRoot, Key dimension) {
         this(worldRoot, dimension, DEFAULT_OPEN_REGION_LIMIT);
@@ -190,6 +195,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @param dimension       the key of the dimension the loader reads and writes
      * @param openRegionLimit the amount of region files the loader keeps open
      * @throws IllegalArgumentException if the limit is not positive
+     * @throws IllegalStateException    if the classpath registers more than one foreign
+     *                                   {@link ChunkVersionPolicy}
      */
     public FalcoAnvilLoader(Path worldRoot, Key dimension, int openRegionLimit) {
         this(worldRoot, dimension, builder().openRegionLimit(openRegionLimit));
@@ -234,7 +241,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         this.minimumDataVersion = settings.minimumDataVersion;
         this.exceptionHandler = settings.exceptionHandler;
         this.versionPolicy = ServiceResolution.choose(
-                ChunkVersionPolicy.class, settings.versionPolicy, settings.discoverVersionPolicy);
+                ChunkVersionPolicy.class, settings.versionPolicy, settings.discoverVersionPolicy,
+                DefaultChunkVersionPolicy.class);
         this.closeLock = new ReentrantLock();
 
         // Which directory was chosen, and how many region files are in it, is the first thing
@@ -628,9 +636,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * <p>
          * Calling this slot always turns discovery off, whatever value is passed: an explicit
          * decision about the policy — including the explicit decision "none" — has to win over the
-         * classpath without {@link ServiceResolution#choose(Class, Object, boolean)} seeing both set
-         * at once and refusing to guess between them. A builder that never calls this slot keeps
-         * discovering the default instead, which is what {@link #builder()} starts with.
+         * classpath without {@link ServiceResolution#choose(Class, Object, boolean, Class)} seeing
+         * both set at once and refusing to guess between them. A builder that never calls this slot
+         * keeps discovering the default instead, which is what {@link #builder()} starts with.
          * </p>
          * <p>
          * Passing {@code null} is not "use the default": it is "check nothing". A pre-{@code
@@ -665,9 +673,11 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * using an explicit instance.
          * <p>
          * This is what {@link #builder()} already defaults to, so calling it only matters after an
-         * earlier {@link #versionPolicy(ChunkVersionPolicy)} call on the same chain, to undo it. A
-         * classpath that registers more than one provider makes {@link Builder#build(Path, Key)}
-         * throw {@link IllegalStateException} rather than guess between them.
+         * earlier {@link #versionPolicy(ChunkVersionPolicy)} call on the same chain, to undo it. The
+         * shipped {@link DefaultChunkVersionPolicy} steps aside for a single registered foreign
+         * provider; a classpath that registers more than one <em>foreign</em> provider makes
+         * {@link Builder#build(Path, Key)} throw {@link IllegalStateException} rather than guess
+         * between them.
          * </p>
          *
          * @return a new builder with this value
@@ -699,6 +709,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * @param worldRoot the root directory of the world
          * @param dimension the key of the dimension the loader reads and writes
          * @return a new loader, independent of every other loader from this builder
+         * @throws IllegalStateException if this builder was left on classpath discovery and the
+         *                                classpath registers more than one foreign
+         *                                {@link ChunkVersionPolicy}
          */
         @Contract(value = "_, _ -> new", pure = true)
         public FalcoAnvilLoader build(Path worldRoot, Key dimension) {
@@ -1177,6 +1190,21 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     @Contract(pure = true)
     int minimumDataVersion() {
         return this.minimumDataVersion;
+    }
+
+    /**
+     * Returns the policy this loader resolved, or null if it checks nothing.
+     * <p>
+     * Package-private for the same reason as {@link #minimumDataVersion()}: this exists for the
+     * builder's own pass-through tests, not for a caller outside this package.
+     * </p>
+     *
+     * @return the resolved policy, or null if the loader checks no chunk version at all
+     * @since 1.2.0
+     */
+    @Contract(pure = true)
+    @Nullable ChunkVersionPolicy versionPolicy() {
+        return this.versionPolicy;
     }
 
     /**

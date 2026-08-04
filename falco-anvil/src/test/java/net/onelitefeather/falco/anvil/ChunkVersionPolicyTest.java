@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests {@link DefaultChunkVersionPolicy} directly, against chunk data built by hand rather than
@@ -45,6 +46,11 @@ class ChunkVersionPolicyTest {
                 .put("sections", ListBinaryTag.empty())
                 .build();
 
-        assertThrows(ChunkDataException.class, () -> new DefaultChunkVersionPolicy().check(broken, 2844));
+        ChunkDataException failure = assertThrows(ChunkDataException.class,
+                () -> new DefaultChunkVersionPolicy().check(broken, 2844));
+        // Pins the distinction the message is for, not its exact wording: a mistyped DataVersion is
+        // not the same failure as a DataVersion that is simply too old, and the loader's log line now
+        // relays this message instead of recomputing that distinction itself.
+        assertTrue(failure.getMessage().contains("number"), failure.getMessage());
     }
 }
