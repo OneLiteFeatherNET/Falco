@@ -91,22 +91,31 @@ public final class BlockStateRules {
             // "(c) Property weggefallen" (V2679, Minecraft 1.17).
             cauldronRule(2679),
 
-            // grass_path -> dirt_path, Minecraft 1.17. DataVersion 2724 is the same 1.17 threshold
-            // already used in the design doc's step-chain table for entity separation, another
-            // change that landed in the same release.
-            // Source: falco-migration-design.md, "What the registry lists do settle" table
-            // (names the Minecraft version, not the DataVersion integer; 2724 reused from the
-            // design doc's own step-chain table, row 2, also attributed to "1.17").
-            renameRule("minecraft:grass_path", "minecraft:dirt_path", 2724),
+            // grass_path -> dirt_path, Minecraft 1.17.
+            // Source for the RENAME ITSELF: falco-migration-design.md, "What the registry lists do
+            // settle" table (names the Minecraft version, "1.17", not a DataVersion integer).
+            // Source for the NUMBER 2681: not in this repository at all. minecraft.wiki's own
+            // changelog for snapshot 20w45a states the rename directly ("'Grass Path' was renamed to
+            // 'Dirt Path'"), and that snapshot's infobox lists DataVersion 2681 — checked via two
+            // independent fetches, 2026-08-04. This replaces an earlier, wrong value of 2724 (1.17's
+            // *final release* DataVersion): the rule must carry the version the change happened in,
+            // per since()'s contract, and the change happened 43 versions earlier, in the snapshot,
+            // not at release. Using 2724 caused no test failure here only because grass_path is never
+            // reused for anything else afterward, unlike stone_slab — but it was still the wrong
+            // number for what since() claims to mean.
+            renameRule("minecraft:grass_path", "minecraft:dirt_path", 2681),
 
             // grass -> short_grass, Minecraft 1.20.3.
-            // Source: falco-migration-design.md, "What the registry lists do settle" table (names
-            // the Minecraft version but not the DataVersion integer). DataVersion 3698 is not stated
-            // anywhere in this repository; it was looked up against minecraft.wiki's "Data version"
-            // table and the "Java Edition 1.20.3" infobox (both checked 2026-08-04) rather than
-            // taken from memory, because the same "no rule from memory" rule this module follows for
-            // block-state logic applies to the version number a rule is keyed on.
-            renameRule("minecraft:grass", "minecraft:short_grass", 3698)
+            // Source for the RENAME ITSELF: falco-migration-design.md, "What the registry lists do
+            // settle" table (names the Minecraft version, "1.20.3", not a DataVersion integer).
+            // Source for the NUMBER 3693: not in this repository at all. minecraft.wiki's own
+            // changelog for "Java Edition 1.20.3 Pre-Release 1" states the rename directly
+            // ("Renamed 'Grass' to 'Short Grass'. The ID has been changed from `grass` to
+            // `short_grass`."), and that pre-release's infobox lists DataVersion 3693 — checked via
+            // two independent fetches, 2026-08-04. This replaces an earlier, wrong value of 3698
+            // (1.20.3's *final release* DataVersion), the same release-vs-snapshot mistake as
+            // grass_path above: the change happened 5 versions before the release it shipped in.
+            renameRule("minecraft:grass", "minecraft:short_grass", 3693)
     );
 
     private static final List<BlockStateRule> RULES_BY_VERSION =
