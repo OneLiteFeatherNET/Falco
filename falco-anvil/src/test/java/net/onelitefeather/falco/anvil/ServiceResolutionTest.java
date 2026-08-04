@@ -3,6 +3,7 @@ package net.onelitefeather.falco.anvil;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -166,5 +167,10 @@ class ServiceResolutionTest {
 
         assertTrue(failure.getMessage().contains("FirstForeignProvider"), failure.getMessage());
         assertTrue(failure.getMessage().contains("SecondForeignProvider"), failure.getMessage());
+        // The other half of the rule the spec states: the shipped default stepped aside because a
+        // foreign provider was found, so it is not one of the competing opinions the message lists.
+        // Naming it here too would send the reader chasing a class that was never actually a
+        // candidate.
+        assertFalse(failure.getMessage().contains("AnotherShippedDefault"), failure.getMessage());
     }
 }
