@@ -667,3 +667,108 @@ first-hand. If it is wrong, Task 2's first test locks in the wrong number — bu
 Task 3 rejects pre-1.18 worlds regardless, so the guard still works and only the message misleads.
 Whoever implements Task 2 should confirm 2860 against minecraft.wiki's chunk-format history and
 correct the constant, its Javadoc and the test together if it differs.
+
+---
+
+## Result
+
+Acceptance run against `a74cd042` (branch tip), worktree
+`/mnt/projects/oss/onelitefeather/Falco-worktrees/anvil-version-guard`, base `2d3955d8`.
+
+### Cases added
+
+Task 2's implementer corrected `DEFAULT_MINIMUM_DATA_VERSION` to **2844**, not the plan's researched
+2860 — the "one risk this plan cannot remove" above was exercised and resolved during implementation.
+
+13 test cases were added to `falco-anvil` (not the 8 estimated in the task-4 brief; Task 3's own
+review follow-up added 4 more edge-case witnesses beyond its original commit, and Task 1 added 3):
+
+- `AnvilDiagnosticsTest`: `testAnUnsupportedVersionIsCountedUnderItsOwnValue`,
+  `testAChunkWithoutAStoredVersionIsCountedApart`, `testTheVersionBreakdownIsSortedByValue`
+- `FalcoAnvilLoaderBuilderTest`: `testTheMinimumDataVersionDefaultsToTheFirstRootLayout`,
+  `testANegativeMinimumDataVersionIsRefused`, `testTheMinimumDataVersionSurvivesEveryOtherSetter`
+- `FalcoAnvilLoaderIntegrationTest`: `testAPreRootLayoutChunkIsRefusedInsteadOfReadAsAir`,
+  `testAChunkBelowTheFloorIsRefused`, `testAChunkWithoutAStoredVersionStillLoads`,
+  `testAChunkWithNeitherSectionsNorLevelIsNotRefused`, `testAChunkWithBothSectionsAndLevelIsNotRefused`,
+  `testAChunkWithADataVersionStoredAsTheWrongTypeIsRefused`, `testAChunkWithANegativeDataVersionIsRefused`
+
+### Gate attack
+
+Re-injected Task 3 Gegenprobe #1 — dropped the `Level` half of `legacyChunkLayout`:
+
+```java
+boolean legacyChunkLayout = data.get(SECTIONS_KEY) == null;
+```
+
+Ran the **full** `:falco-anvil:test` module (230 cases, not a single filtered class). Result: `230
+tests completed, 2 failed` —
+
+- `FalcoAnvilLoaderIntegrationTest > testAChunkWithNeitherSectionsNorLevelIsNotRefused`
+- `FalcoAnvilLoaderIntegrationTest > testAPartiallyGeneratedChunkIsCountedUnderItsStatus`
+
+The second is a **pre-existing** test that predates this whole plan — it never anticipated the guard,
+yet the mutated condition broke it too, which is stronger evidence than the dedicated regression test
+alone. The task-4-brief's predicted witness, `testAChunkWithoutAStoredVersionStillLoads`, stayed green
+under this mutation, exactly as Task 3's own report already found: that fixture carries a present
+(if empty) `sections` list, so the dropped condition half never gets a chance to fire for it.
+
+Reverted the mutation; `git status --short` was empty afterward; `:falco-anvil:test --rerun-tasks` was
+green again (230/230).
+
+### Module counts (from JUnit XML under `build/test-results/test/`, counted via `<testcase>` elements
+— not the console summary)
+
+| Module | Count at `2d3955d8` (measured) | Count now | Delta |
+| --- | --- | --- | --- |
+| falco-anvil | 217 | 230 | +13 |
+| falco-light | 223 | 223 | 0 |
+| falco-instance | 259 | 259 | 0 |
+| falco-demo | 167 | 167 | 0 |
+| falco-benchmarks | 42 (1 skipped) | 42 (1 skipped) | 0 |
+| falco-archunit | 47 | 47 | 0 |
+
+No count fell. **Discrepancy against the task-4 brief's stated baseline**: the brief quoted light 205,
+instance 186, demo 166, archunit 46. `git diff 2d3955d8..HEAD --stat` shows this branch touches only
+`falco-anvil` files — so light/instance/demo/archunit at `2d3955d8` are, by construction, identical to
+what this run measured (223/259/167/47). The brief's numbers predate the `feat(instance): a shared
+instance that repairs what it inherits (#40)` merge that landed on `main` before `2d3955d8`, which is
+almost certainly where the instance-module gap (186 → 259) comes from. This is a stale reference in
+the brief, not a regression — flagged here rather than silently reconciled.
+
+### Machine load
+
+`uptime` before the module run (09:33:57): `load average: 0.72, 2.99, 4.34`
+`uptime` after the module run (09:36:08): `load average: 4.63, 4.42, 4.73`
+
+No timing figure was produced or is quoted anywhere in this section.
+
+### `./gradlew build -x test --rerun-tasks`
+
+`BUILD SUCCESSFUL`. `javadoc` genuinely executed (no `UP-TO-DATE`/`FROM-CACHE`, zero warnings in the
+full output) for all four modules that carry a javadoc task: falco-anvil, falco-light, falco-instance,
+falco-demo. `checkApiCompatibility` genuinely executed for the three modules configured for it —
+falco-anvil, falco-light, falco-instance (`build.gradle.kts:122`, `publishedModules - falco-bom`;
+falco-demo is not in `publishedModules` and carries no japicmp task; falco-bom is a platform artifact
+with no jar to compare). japicmp raised no complaint about the new `UNSUPPORTED_CHUNK_VERSION` enum
+constant — adding an enum constant is additive under `onlyBinaryIncompatibleModified`, so no exception
+handling in `gradle/api-breaks.properties` was needed and none was added.
+
+### What this work does not do
+
+- It converts nothing. A pre-1.18 world is refused, not rewritten into the post-1.18 layout.
+- It does not touch the save path. Only the read seam in `loadChunk` gained the guard.
+- It does not make a pre-1.18 world usable. The loader now fails loudly instead of silently returning
+  air; the world itself remains unreadable by this loader.
+
+### Known, checked, still true
+
+- `decodeSections` still reads `sections` via `NbtReads.optionalList`. A chunk stamped
+  `minecraft:full`, with neither `sections` nor `Level`, passes the guard (no legacy layout — `Level`
+  is absent) and reaches the caller as an air chunk. Confirmed still open and intentionally outside
+  this plan's scope.
+- A `DataVersion` tag present but of the wrong NBT type is read as `-1` by
+  `NbtReads.optionalInteger` (falls through its `instanceof NumberBinaryTag` check), and reported as
+  `"-1"` — indistinguishable in the diagnostics breakdown from a genuine `DataVersion` of `-1`. Both
+  are correctly rejected by the guard; only the breakdown conflates them. Confirmed still true.
+- `FalcoAnvilLoader.Builder`'s `@version` javadoc tag is still `1.0.0` (`FalcoAnvilLoader.java:300`),
+  unraised despite the outer class moving to `1.2.0`. Confirmed still true.
