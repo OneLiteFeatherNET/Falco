@@ -740,6 +740,12 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * see {@code testWithoutAnyPolicyALegacyChunkIsNotChecked} in the loader's integration
          * tests for the case that documents it.
          * </p>
+         * <p>
+         * An explicit instance passed here is shared by every loader this builder builds afterward,
+         * the same way an explicit {@link #diagnostics(AnvilDiagnostics)} instance is — and
+         * {@link ChunkVersionPolicy} is called from every one of those loaders' parallel loads at
+         * once, so it has to tolerate that sharing the way {@link AnvilDiagnostics} already does.
+         * </p>
          *
          * @param versionPolicy the policy to consult before a chunk is decoded, or null to consult
          *                      none
@@ -822,6 +828,12 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * those slots is used exactly as given and is never rebuilt around this policy, so
          * {@link #build(Path, Key)} refuses the combination instead of building a loader whose
          * configured policy would never actually run.
+         * </p>
+         * <p>
+         * An explicit instance passed here is shared by every loader this builder builds afterward,
+         * the same way an explicit {@link #diagnostics(AnvilDiagnostics)} instance is — and
+         * {@link UnknownEntryPolicy} is called from every one of those loaders' parallel loads at
+         * once, so it has to tolerate that sharing the way {@link AnvilDiagnostics} already does.
          * </p>
          *
          * @param unknownEntryPolicy the policy to consult for an unknown palette entry, or null to

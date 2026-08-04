@@ -10,6 +10,13 @@ import org.jetbrains.annotations.ApiStatus;
  * records it in its {@link AnvilDiagnostics} and writes the log line, so every diagnostic of a load
  * stays in one place and this contract stays free of the loader's infrastructure.
  * </p>
+ * <p>
+ * <b>Called from several threads at once.</b> The policy is resolved once, when the loader is built,
+ * and every load after that consults the same instance — including every parallel load, since
+ * {@link FalcoAnvilLoader#supportsParallelLoading()} reports {@code true}. An implementation
+ * therefore has to be thread-safe on its own; the loader takes no lock around the call.
+ * {@link DefaultChunkVersionPolicy}, the shipped default, holds no state and needs none.
+ * </p>
  *
  * @author TheMeinerLP
  * @version 1.0.0

@@ -26,6 +26,14 @@ import org.jetbrains.annotations.Nullable;
  * policy get asked twice: if the name it returns is itself unknown, the resolver fails the chunk
  * instead of consulting the policy again, which would risk a loop.
  * </p>
+ * <p>
+ * <b>Called from several threads at once.</b> The policy is resolved once, when the loader is built,
+ * and both {@link BlockPaletteResolver} and {@link BiomePaletteResolver} keep consulting that same
+ * instance for as long as the loader lives — including every parallel load, since
+ * {@link FalcoAnvilLoader#supportsParallelLoading()} reports {@code true}. An implementation
+ * therefore has to be thread-safe on its own; neither resolver takes a lock around the call.
+ * {@link DefaultUnknownEntryPolicy}, the shipped default, holds no state and needs none.
+ * </p>
  *
  * @author TheMeinerLP
  * @version 1.1.0
