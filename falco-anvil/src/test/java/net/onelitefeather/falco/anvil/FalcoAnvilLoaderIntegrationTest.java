@@ -599,7 +599,9 @@ class FalcoAnvilLoaderIntegrationTest {
                 .build();
         writeRawChunk(3, 3, legacy);
 
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
         try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
                 .exceptionHandler(ignored -> {
                 })
                 .build(this.worldRoot, OVERWORLD)) {
@@ -609,6 +611,10 @@ class FalcoAnvilLoaderIntegrationTest {
                     () -> loader.loadChunk(instance, 3, 3));
             ChunkDataException cause = assertInstanceOf(ChunkDataException.class, failure.getCause());
             assertEquals(ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION, cause.reason());
+            // This chunk carries no DataVersion at all, so the version breakdown has to file it under
+            // the "<none>" bucket rather than under a literal "-1" — the two mean different things,
+            // and only the diagnostics assertion here can tell them apart.
+            assertEquals(Map.of(AnvilDiagnostics.UNKNOWN_DATA_VERSION, 1L), diagnostics.unsupportedChunkVersions());
         }
     }
 
@@ -649,6 +655,91 @@ class FalcoAnvilLoaderIntegrationTest {
             Instance instance = env.createEmptyInstance(loader);
 
             assertNotNull(loader.loadChunk(instance, 5, 5));
+        }
+    }
+
+    @Test
+    void testAChunkWithNeitherSectionsNorLevelIsNotRefused(Env env) throws Exception {
+        // Only the presence of a Level compound makes the pre-1.18 shape, not merely the absence of
+        // sections on its own. A chunk that simply has not finished generating yet -- no sections, no
+        // Level, just a partial Status -- is not a legacy chunk and must not be caught by the guard.
+        // It still comes back as null, but for an unrelated reason further down in loadChunk: it is
+        // not fully generated.
+        writeRawChunk(6, 6, CompoundBinaryTag.builder().putString("Status", "minecraft:features").build());
+        try (FalcoAnvilLoader loader = loader()) {
+            assertNull(loader.loadChunk(env.createEmptyInstance(loader), 6, 6));
+        }
+    }
+
+    @Test
+    void testAChunkWithBothSectionsAndLevelIsNotRefused(Env env) throws Exception {
+        // A chunk that carries both a root sections list and a Level compound -- plausible leftover
+        // from some conversion tool -- is not the legacy shape: the loader reads sections from the
+        // root either way. The first half of the guard's condition only fires when sections is
+        // genuinely absent, so this fixture has to load normally rather than being refused.
+        CompoundBinaryTag both = CompoundBinaryTag.builder()
+                .putString("Status", "minecraft:full")
+                .put("sections", ListBinaryTag.empty())
+                .put("Level", CompoundBinaryTag.builder()
+                        .putString("Status", "minecraft:full")
+                        .build())
+                .build();
+        writeRawChunk(7, 7, both);
+
+        try (FalcoAnvilLoader loader = loader()) {
+            assertNotNull(loader.loadChunk(env.createEmptyInstance(loader), 7, 7));
+        }
+    }
+
+    @Test
+    void testAChunkWithADataVersionStoredAsTheWrongTypeIsRefused(Env env) throws Exception {
+        // A DataVersion key that holds something other than a number is not "missing": something did
+        // write a value there. NbtReads.optionalInteger cannot tell "wrong type" apart from "absent"
+        // by itself, both fall back to the same default, so the guard has to make that distinction
+        // itself instead of waving a corrupted DataVersion through the path meant for tools that never
+        // wrote one at all.
+        CompoundBinaryTag malformed = CompoundBinaryTag.builder()
+                .putString("DataVersion", "not-a-number")
+                .putString("Status", "minecraft:full")
+                .put("sections", ListBinaryTag.empty())
+                .build();
+        writeRawChunk(8, 8, malformed);
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            AnvilChunkException failure = assertThrows(AnvilChunkException.class,
+                    () -> loader.loadChunk(instance, 8, 8));
+            ChunkDataException cause = assertInstanceOf(ChunkDataException.class, failure.getCause());
+            assertEquals(ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION, cause.reason());
+        }
+    }
+
+    @Test
+    void testAChunkWithANegativeDataVersionIsRefused(Env env) throws Exception {
+        // A negative DataVersion is not "missing" either: it is a value someone actually wrote, and it
+        // cannot be a real Minecraft data version. Treating "present but negative" the same as "absent"
+        // would let a corrupted chunk load as though a tool had simply never stamped a version on it.
+        CompoundBinaryTag malformed = CompoundBinaryTag.builder()
+                .putInt("DataVersion", -5)
+                .putString("Status", "minecraft:full")
+                .put("sections", ListBinaryTag.empty())
+                .build();
+        writeRawChunk(9, 9, malformed);
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            AnvilChunkException failure = assertThrows(AnvilChunkException.class,
+                    () -> loader.loadChunk(instance, 9, 9));
+            ChunkDataException cause = assertInstanceOf(ChunkDataException.class, failure.getCause());
+            assertEquals(ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION, cause.reason());
         }
     }
 

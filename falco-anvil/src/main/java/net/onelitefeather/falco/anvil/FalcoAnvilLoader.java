@@ -1418,17 +1418,27 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * with a {@code Level} compound is the pre-1.18 shape, which would otherwise decode to an empty
      * section list and reach the caller as a chunk of air.
      * </p>
+     * <p>
+     * A missing {@code DataVersion} is the one case that is not a rejection: a tool which writes
+     * {@code sections} on the root but never learned to stamp a version has to keep loading, or a
+     * whole category of externally-written world becomes unreadable. A key that is present but is not
+     * the number it claims to be, and a key that holds a negative number, are both a different
+     * situation from absent: something wrote a value there and it does not describe a version this
+     * loader can trust, so both are refused rather than waved through the same path as "nothing was
+     * ever written".
+     * </p>
      *
      * @param data the root compound of the chunk
      * @throws ChunkDataException if the chunk cannot be read
      */
     private void requireReadableVersion(CompoundBinaryTag data) throws ChunkDataException {
+        boolean versionMissing = data.get(DATA_VERSION_KEY) == null;
         int version = NbtReads.optionalInteger(data, DATA_VERSION_KEY, -1);
-        String reported = version < 0 ? AnvilDiagnostics.UNKNOWN_DATA_VERSION : Integer.toString(version);
+        String reported = versionMissing ? AnvilDiagnostics.UNKNOWN_DATA_VERSION : Integer.toString(version);
         boolean legacyChunkLayout = data.get(SECTIONS_KEY) == null
                 && NbtReads.optionalCompound(data, LEGACY_LEVEL_KEY) != null;
 
-        if (!legacyChunkLayout && (version < 0 || version >= this.minimumDataVersion)) {
+        if (!legacyChunkLayout && (versionMissing || version >= this.minimumDataVersion)) {
             return;
         }
 
