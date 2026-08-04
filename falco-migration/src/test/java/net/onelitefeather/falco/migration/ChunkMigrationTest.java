@@ -35,10 +35,10 @@ class ChunkMigrationTest {
         assertEquals(3, migrated.getInt("xPos"));
         assertEquals("minecraft:full", migrated.getString("Status"));
         assertNotNull(migrated.get("sections"));
-        // Pins today's value, not a claim that it is the right one: yPos = 0 is UnfoldLevel's
-        // provisional stand-in until Task 5's SettleYRange decides what yPos means for the target
-        // version (see UnfoldLevel's javadoc). This assertion exists so that change is visible as a
-        // deliberate edit to this test rather than slipping past unnoticed.
+        // yPos = 0 because SettleYRange computes it from the chunk's own (here: empty) sections
+        // list rather than assuming a fixed floor — see that step's javadoc for the sourced reading
+        // of what yPos means ("the chunk's own lowest section", not the dimension floor) and why an
+        // empty sections list falls back to 0 rather than an arbitrary default.
         assertEquals(0, migrated.getInt("yPos"));
     }
 

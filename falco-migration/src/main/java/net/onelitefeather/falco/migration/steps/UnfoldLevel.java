@@ -22,19 +22,12 @@ import java.util.Map;
  * not seen turns out to disagree.
  * </p>
  * <p>
- * <b>{@code yPos = 0} is provisional, not a settled answer.</b> A {@code yPos} field is added at the
- * root because 2844 is also the version that introduced it. {@code 0} is correct for what the
- * <em>source</em> chunk means: every version below 2844 fixed the world height to sections
- * {@code 0}–{@code 15}, so a pre-1.18 chunk's own lowest stored section is always {@code 0}. What
- * {@code yPos} means for the <em>target</em> version is a separate, still-open question — the field's
- * own wiki documentation ("Lowest Y section position in the chunk (e.g. -4 in 1.18)") is ambiguous
- * between "the lowest section this chunk itself stores" and "the bottom of the dimension's height
- * range", and vanilla data can never tell the two apart because vanilla always writes every section
- * down to the dimension floor. A converted chunk, which does not invent sections below 0 it never
- * had, is exactly the case where the two readings split. Resolving that split, and therefore whether
- * {@code 0} is the value this step should keep producing, is Task 5's {@code SettleYRange} step, not
- * this one — a reader of this class should not conclude the question is answered because a number is
- * already here.
+ * <b>{@code yPos} itself is not set here.</b> DataVersion 2844 is also the version that introduced
+ * the field, but this step hands the decision of what it should hold to {@link SettleYRange}, which
+ * runs later in the chain, after biomes and block states have found their place in the unfolded
+ * {@code sections} list. See that class's javadoc for the sourced answer — the chunk's own lowest
+ * stored section, never an invented dimension floor — and why the two only diverge for a converted
+ * chunk in the first place.
  * </p>
  * <p>
  * The list of fields this step moves is deliberately not written down here: it moves whatever
@@ -57,7 +50,6 @@ public final class UnfoldLevel implements MigrationStep {
     private static final String LEVEL_KEY = "Level";
     private static final String SECTIONS_KEY = "Sections";
     private static final String LOWERCASE_SECTIONS_KEY = "sections";
-    private static final String Y_POS_KEY = "yPos";
 
     /**
      * Creates a new instance of this stateless step.
@@ -95,6 +87,6 @@ public final class UnfoldLevel implements MigrationStep {
             }
             root = root.put(key, child.getValue());
         }
-        return root.putInt(Y_POS_KEY, 0);
+        return root;
     }
 }
