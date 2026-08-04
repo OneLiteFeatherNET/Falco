@@ -20,7 +20,7 @@ import org.jetbrains.annotations.Nullable;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -29,15 +29,22 @@ public interface PaletteEntryResolver {
     /**
      * Resolves the id which belongs to the given palette entry.
      * <p>
-     * An implementation must not fail for an unknown name. A world can hold entries of a mod or of
-     * a newer game version and losing a whole chunk over a single unknown entry would destroy more
-     * data than it protects. An implementation is expected to return a replacement id instead and
-     * to report the name to the caller.
+     * An implementation is allowed to fail for an unknown name — unchecked, since this method
+     * declares no {@code throws} clause. {@link BlockPaletteResolver} and
+     * {@link BiomePaletteResolver} both delegate that decision to a caller-supplied
+     * {@link UnknownEntryPolicy} rather than deciding it themselves: the shipped default
+     * substitutes a replacement id, which keeps a world holding entries of a mod or of a newer game
+     * version loadable instead of losing a whole chunk over a single unknown entry, but a policy
+     * configured to refuse instead throws {@link AnvilChunkException} from here. A caller of
+     * {@code toId} therefore has to be ready for either outcome, depending on how the resolver it
+     * holds was configured.
      * </p>
      *
      * @param name       the name of the palette entry
      * @param properties the properties of the palette entry or null if it carries none
      * @return the id which belongs to the entry
+     * @throws AnvilChunkException if the implementation was configured to refuse an unknown name
+     *                             instead of substituting one
      */
     int toId(String name, @Nullable CompoundBinaryTag properties);
 

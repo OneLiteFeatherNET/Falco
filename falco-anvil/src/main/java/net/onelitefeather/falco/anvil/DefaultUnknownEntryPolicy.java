@@ -84,6 +84,11 @@ public final class DefaultUnknownEntryPolicy implements UnknownEntryPolicy {
             return current;
         }
 
+        // The same lazy, double-checked-locking derivation BiomePaletteResolver#registry() uses for
+        // its own resolution from the same kind of supplier, kept as its own copy rather than a
+        // shared holder: a shared holder would need a third class injected into both for roughly ten
+        // lines saved, and this method only ever needs an id, never the registry object itself the
+        // way the resolver does for its id-to-name direction.
         synchronized (this) {
             Integer created = this.resolvedFallbackBiomeId;
 

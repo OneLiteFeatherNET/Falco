@@ -89,14 +89,23 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
     /**
      * Creates a new resolver which uses the registry the given supplier provides and decides what an
      * unknown biome becomes through the given policy.
+     * <p>
+     * Package-private on purpose: nothing in this module needs both a custom policy and a custom
+     * registry at once, and there is no reason to promise that combination as public API before a
+     * caller actually needs it. It exists for this package's own tests, which use it to exercise
+     * {@link #toId(String, CompoundBinaryTag)} against a fake registry without a running server,
+     * exactly the way {@link DefaultUnknownEntryPolicy}'s own two-argument constructor lets its
+     * biome fallback be tested — see the note on {@link #registry()} for why the two lazy
+     * resolutions are not shared.
+     * </p>
      *
      * @param diagnostics      the diagnostics which throttle the reports
      * @param policy           the policy consulted for a biome the registry does not know
      * @param registrySupplier the supplier which provides the registry of the known biomes
      * @since 1.2.0
      */
-    public BiomePaletteResolver(AnvilDiagnostics diagnostics, UnknownEntryPolicy policy,
-                                 Supplier<DynamicRegistry<Biome>> registrySupplier) {
+    BiomePaletteResolver(AnvilDiagnostics diagnostics, UnknownEntryPolicy policy,
+                          Supplier<DynamicRegistry<Biome>> registrySupplier) {
         this.diagnostics = diagnostics;
         this.policy = policy;
         this.registrySupplier = registrySupplier;
@@ -104,6 +113,13 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
 
     /**
      * Returns the registry of this resolver and resolves it on the first call.
+     * <p>
+     * This is the same lazy, double-checked-locking derivation {@link DefaultUnknownEntryPolicy} uses
+     * to resolve its own plains fallback from the same kind of supplier. The two are not shared: a
+     * shared holder would need a third class injected into both, for roughly ten lines saved, and
+     * this resolver's copy also has to hand the result to {@link #toEntry(int)} for the id-to-name
+     * direction, which the policy has no reason to do.
+     * </p>
      *
      * @return the registry of the known biomes
      */
