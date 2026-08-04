@@ -247,6 +247,27 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         this.legacyLayout = resolved.legacyLayout();
         this.dimensionLabel = dimension.asString();
         this.diagnostics = effective;
+        // A caller who names both a policy and their own resolver has built a loader in which the
+        // policy can never be reached: the resolver a builder is handed is used exactly as given,
+        // never rebuilt around the configured policy, so unknownEntryPolicy() below would keep
+        // reporting a policy that the actual decoding path never consults. Refusing the combination
+        // holds this to the same standard ServiceResolution.choose already applies to explicit
+        // configuration versus discovery: two conflicting explicit decisions are refused outright,
+        // not silently reconciled by picking one of them. A resolver configured without touching
+        // either unknownEntryPolicy slot is unaffected, because unknownEntryPolicyConfigured stays
+        // false for a builder that never called unknownEntryPolicy(...) or
+        // discoverUnknownEntryPolicy() itself.
+        if (settings.unknownEntryPolicyConfigured && (settings.blockResolver != null || settings.biomeResolver != null)) {
+            throw new IllegalStateException(
+                    "An UnknownEntryPolicy was configured together with a custom "
+                            + (settings.blockResolver != null ? "blockResolver" : "biomeResolver")
+                            + ". A resolver supplied through the builder is used exactly as given and never "
+                            + "sees the configured policy, so it would silently keep its own fallback instead. "
+                            + "Pass the policy into the resolver you build instead, e.g. "
+                            + "new BlockPaletteResolver(diagnostics, policy), and stop configuring it on this "
+                            + "builder."
+            );
+        }
         UnknownEntryPolicy resolvedUnknownEntryPolicy = ServiceResolution.choose(
                 UnknownEntryPolicy.class, settings.unknownEntryPolicy, settings.discoverUnknownEntryPolicy,
                 DefaultUnknownEntryPolicy.class);
@@ -323,7 +344,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     public static Builder builder() {
         return new Builder(DEFAULT_OPEN_REGION_LIMIT, ChunkCompression.DEFAULT_LEVEL,
                 Math.max(Runtime.getRuntime().availableProcessors(), 2), MinecraftServer.DATA_VERSION,
-                DEFAULT_MINIMUM_DATA_VERSION, null, null, null, null, null, true, null, true);
+                DEFAULT_MINIMUM_DATA_VERSION, null, null, null, null, null, true, null, true, false);
     }
 
     /**
@@ -371,6 +392,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         private final boolean discoverVersionPolicy;
         private final @Nullable UnknownEntryPolicy unknownEntryPolicy;
         private final boolean discoverUnknownEntryPolicy;
+        private final boolean unknownEntryPolicyConfigured;
 
         private Builder(int openRegionLimit, int compressionLevel, int saveParallelism, int dataVersion,
                         int minimumDataVersion, @Nullable AnvilDiagnostics diagnostics,
@@ -380,7 +402,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                         @Nullable ChunkVersionPolicy versionPolicy,
                         boolean discoverVersionPolicy,
                         @Nullable UnknownEntryPolicy unknownEntryPolicy,
-                        boolean discoverUnknownEntryPolicy) {
+                        boolean discoverUnknownEntryPolicy,
+                        boolean unknownEntryPolicyConfigured) {
             this.openRegionLimit = openRegionLimit;
             this.compressionLevel = compressionLevel;
             this.saveParallelism = saveParallelism;
@@ -394,6 +417,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             this.discoverVersionPolicy = discoverVersionPolicy;
             this.unknownEntryPolicy = unknownEntryPolicy;
             this.discoverUnknownEntryPolicy = discoverUnknownEntryPolicy;
+            this.unknownEntryPolicyConfigured = unknownEntryPolicyConfigured;
         }
 
         /**
@@ -424,7 +448,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -459,7 +484,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -490,7 +516,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -518,7 +545,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -552,7 +580,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -585,7 +614,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -596,6 +626,14 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * was built to count, and the closing summary of the loader then reports zero unknown
          * blocks although the resolver saw them. {@link PaletteEntryResolver} exposes no
          * diagnostics, so this cannot be checked in {@code build}.
+         * </p>
+         * <p>
+         * <b>Do not combine this with {@link #unknownEntryPolicy(UnknownEntryPolicy)} or
+         * {@link #discoverUnknownEntryPolicy()}.</b> Whatever policy those slots resolve to is never
+         * handed to a resolver supplied here — {@link #build(Path, Key)} refuses the combination
+         * rather than build a loader whose configured policy is silently unreachable. Pass the
+         * policy into your own resolver instead, the same way the shipped resolvers accept one in
+         * their constructor.
          * </p>
          *
          * @param blockResolver the resolver for block palette entries
@@ -615,14 +653,17 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
          * Sets the resolver which turns biome palette entries into ids.
          * <p>
          * The same caveat as {@link #blockResolver(PaletteEntryResolver)}: a resolver of your own
-         * counts past the diagnostics of the loader.
+         * counts past the diagnostics of the loader, and the same restriction against combining it
+         * with {@link #unknownEntryPolicy(UnknownEntryPolicy)} or
+         * {@link #discoverUnknownEntryPolicy()} applies, for the same reason.
          * </p>
          *
          * @param biomeResolver the resolver for biome palette entries
@@ -642,7 +683,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -678,7 +720,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -717,7 +760,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     versionPolicy,
                     false,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -749,7 +793,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     null,
                     true,
                     this.unknownEntryPolicy,
-                    this.discoverUnknownEntryPolicy);
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured);
         }
 
         /**
@@ -771,6 +816,14 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * not otherwise decode.
          * </p>
          *
+         * <p>
+         * <b>Do not combine this with {@link #blockResolver(PaletteEntryResolver)} or
+         * {@link #biomeResolver(PaletteEntryResolver)}.</b> A resolver supplied through either of
+         * those slots is used exactly as given and is never rebuilt around this policy, so
+         * {@link #build(Path, Key)} refuses the combination instead of building a loader whose
+         * configured policy would never actually run.
+         * </p>
+         *
          * @param unknownEntryPolicy the policy to consult for an unknown palette entry, or null to
          *                           fall back to the classpath default
          * @return a new builder with this value
@@ -790,7 +843,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     unknownEntryPolicy,
-                    false);
+                    false,
+                    true);
         }
 
         /**
@@ -803,6 +857,12 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * provider; a classpath that registers more than one <em>foreign</em> provider makes
          * {@link Builder#build(Path, Key)} throw {@link IllegalStateException} rather than guess
          * between them.
+         * </p>
+         * <p>
+         * Calling this together with {@link #blockResolver(PaletteEntryResolver)} or
+         * {@link #biomeResolver(PaletteEntryResolver)} is refused by {@link #build(Path, Key)} for
+         * the same reason {@link #unknownEntryPolicy(UnknownEntryPolicy)} is: a resolver supplied
+         * through either of those slots never sees whatever this discovers.
          * </p>
          *
          * @return a new builder with this value
@@ -822,6 +882,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.versionPolicy,
                     this.discoverVersionPolicy,
                     null,
+                    true,
                     true);
         }
 
@@ -839,7 +900,13 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * @throws IllegalStateException if this builder was left on classpath discovery and the
          *                                classpath registers more than one foreign
          *                                {@link ChunkVersionPolicy} or more than one foreign
-         *                                {@link UnknownEntryPolicy}
+         *                                {@link UnknownEntryPolicy}, or if
+         *                                {@link #unknownEntryPolicy(UnknownEntryPolicy)} or
+         *                                {@link #discoverUnknownEntryPolicy()} was called on this
+         *                                builder together with {@link #blockResolver(PaletteEntryResolver)}
+         *                                or {@link #biomeResolver(PaletteEntryResolver)} — a custom
+         *                                resolver never sees the configured policy, so the combination
+         *                                would silently drop it instead of applying it
          */
         @Contract(value = "_, _ -> new", pure = true)
         public FalcoAnvilLoader build(Path worldRoot, Key dimension) {
