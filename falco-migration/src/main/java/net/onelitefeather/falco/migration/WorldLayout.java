@@ -50,10 +50,23 @@ public final class WorldLayout {
     /**
      * Finds every region directory a world holds, in either the pre-1.16 layout or the modern
      * {@code dimensions/} layout, or a mix of both when a world was only partially converted.
+     * <p>
+     * The two layouts are read independently and neither is skipped because the other already
+     * produced a match, so the same {@code dimensionKey} can appear twice in the result: once with
+     * {@code legacy = true} from {@code <world>/region} (or {@code DIM-1}/{@code DIM1}) and once with
+     * {@code legacy = false} from {@code dimensions/minecraft/overworld/region} (or the nether's or
+     * end's modern path), if a world was converted far enough to have created the modern directory
+     * but still has the old one sitting next to it. This method does not decide which of the two
+     * copies is authoritative — a caller that folds the result down to one entry per
+     * {@code dimensionKey} has to pick, and must not do so simply by keeping whichever appears last
+     * in iteration order, since that can silently discard an already-migrated modern copy in favor of
+     * the stale legacy source.
+     * </p>
      *
      * @param worldRoot the root directory of the world, the directory that directly contains either
      *                  {@code region} or {@code dimensions}
-     * @return every dimension for which a region directory was found; empty when the world has none
+     * @return every dimension for which a region directory was found; empty when the world has none;
+     *         may contain two entries for the same {@code dimensionKey} as described above
      * @throws IOException if a directory under {@code worldRoot} cannot be listed
      */
     public static List<Region> discover(Path worldRoot) throws IOException {
@@ -101,9 +114,15 @@ public final class WorldLayout {
      * @param dimensionKey the dimension's namespaced key, for example {@code "minecraft:the_nether"}
      *                     or {@code "mypack:mining"}
      * @return the region directory that dimension's converted files belong in
+     * @throws IllegalArgumentException if {@code dimensionKey} has no {@code ':'} separating a
+     *                                   namespace from a value
      */
     public static Path targetDirectory(Path worldRoot, String dimensionKey) {
         int separator = dimensionKey.indexOf(':');
+        if (separator < 0) {
+            throw new IllegalArgumentException(
+                    "dimensionKey must be namespaced as '<namespace>:<value>', but was '" + dimensionKey + "'");
+        }
         String namespace = dimensionKey.substring(0, separator);
         String value = dimensionKey.substring(separator + 1);
         return worldRoot.resolve(DIMENSIONS_DIRECTORY).resolve(namespace).resolve(value).resolve(REGION_DIRECTORY);

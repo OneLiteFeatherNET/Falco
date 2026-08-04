@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -63,5 +64,28 @@ class WorldLayoutTest {
     @Test
     void testAWorldWithNoRegionsAtAllIsEmptyRatherThanAnError(@TempDir Path worldRoot) throws Exception {
         assertTrue(WorldLayout.discover(worldRoot).isEmpty());
+    }
+
+    @Test
+    void testAPartiallyMigratedOverworldIsReturnedOnceLegacyAndOnceModern(@TempDir Path worldRoot) throws Exception {
+        Files.createDirectories(worldRoot.resolve("region"));
+        Files.createDirectories(worldRoot.resolve("dimensions/minecraft/overworld/region"));
+
+        List<WorldLayout.Region> found = WorldLayout.discover(worldRoot);
+
+        assertEquals(2, found.size());
+        assertTrue(found.stream().allMatch(region -> region.dimensionKey().equals("minecraft:overworld")));
+        assertEquals(
+                Set.of(true, false),
+                found.stream().map(WorldLayout.Region::legacy).collect(Collectors.toSet()));
+    }
+
+    @Test
+    void testTargetDirectoryRejectsAKeyWithoutANamespaceSeparator() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> WorldLayout.targetDirectory(Path.of("world"), "overworld"));
+
+        assertTrue(exception.getMessage().contains("overworld"));
     }
 }
