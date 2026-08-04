@@ -352,6 +352,35 @@ class FalcoAnvilLoaderBuilderTest {
     }
 
     @Test
+    void testAnExplicitUnknownEntryPolicySurvivesEveryOtherSetter(@TempDir Path worldRoot) throws Exception {
+        UnknownEntryPolicy policy = new DefaultUnknownEntryPolicy();
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .unknownEntryPolicy(policy)
+                .openRegionLimit(4)
+                .compressionLevel(3)
+                .saveParallelism(2)
+                .build(worldRoot, OVERWORLD)) {
+
+            assertSame(policy, loader.unknownEntryPolicy());
+        }
+    }
+
+    @Test
+    void testDiscoverUnknownEntryPolicySurvivesEveryOtherSetterAfterClearingAnExplicitOne(@TempDir Path worldRoot) throws Exception {
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .unknownEntryPolicy(new DefaultUnknownEntryPolicy())
+                .discoverUnknownEntryPolicy()
+                .openRegionLimit(4)
+                .compressionLevel(3)
+                .saveParallelism(2)
+                .build(worldRoot, OVERWORLD)) {
+
+            assertInstanceOf(DefaultUnknownEntryPolicy.class, loader.unknownEntryPolicy());
+        }
+    }
+
+    @Test
     void testTheBuilderCanBeReusedAfterASlotChanged() throws Exception {
         FalcoAnvilLoader.Builder builder = FalcoAnvilLoader.builder().openRegionLimit(8);
 

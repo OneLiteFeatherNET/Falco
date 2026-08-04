@@ -16,10 +16,12 @@ import java.util.Map;
  * The {@link BlockPaletteResolver} class translates between the block entries of the Anvil format
  * and the block state ids of Minestom.
  * <p>
- * An entry the server does not know is replaced with air instead of failing. A world can hold
- * blocks of a mod or of a newer game version and rejecting the whole chunk over a single unknown
- * block would lose far more data than it protects. Every replaced name is reported once through
- * the diagnostics so the problem stays visible without flooding the log.
+ * An entry the server does not know is handed to an {@link UnknownEntryPolicy} instead of failing
+ * outright: the default substitutes air, which keeps a world holding blocks of a mod or of a newer
+ * game version loadable instead of losing a whole chunk over a single unknown block, but a caller
+ * that converts or checks a world can configure a policy which refuses it instead. Every unknown
+ * name is reported once through the diagnostics so the problem stays visible without flooding the
+ * log, regardless of what the policy does with it.
  * </p>
  *
  * <p>
@@ -28,7 +30,7 @@ import java.util.Map;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.0.0
+ * @version 1.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -40,18 +42,35 @@ public final class BlockPaletteResolver implements PaletteEntryResolver {
     private static final String PROPERTIES_KEY = "Properties";
 
     private final AnvilDiagnostics diagnostics;
+    private final UnknownEntryPolicy policy;
 
     /**
-     * Creates a new resolver which reports unknown blocks to the given diagnostics.
+     * Creates a new resolver which reports unknown blocks to the given diagnostics and replaces
+     * them following {@link DefaultUnknownEntryPolicy}.
      *
      * @param diagnostics the diagnostics which throttle the reports
      */
     public BlockPaletteResolver(AnvilDiagnostics diagnostics) {
+        this(diagnostics, new DefaultUnknownEntryPolicy());
+    }
+
+    /**
+     * Creates a new resolver which reports unknown blocks to the given diagnostics and decides what
+     * they become through the given policy.
+     *
+     * @param diagnostics the diagnostics which throttle the reports
+     * @param policy      the policy consulted for a block the server does not know
+     * @since 1.2.0
+     */
+    public BlockPaletteResolver(AnvilDiagnostics diagnostics, UnknownEntryPolicy policy) {
         this.diagnostics = diagnostics;
+        this.policy = policy;
     }
 
     /**
      * {@inheritDoc}
+     *
+     * @throws AnvilChunkException if the configured policy refuses an unknown block
      */
     @Override
     public int toId(String name, @Nullable CompoundBinaryTag properties) {
@@ -59,9 +78,9 @@ public final class BlockPaletteResolver implements PaletteEntryResolver {
 
         if (block == null) {
             if (this.diagnostics.reportUnknownBlock(name)) {
-                LOGGER.warn("The block '{}' is unknown and is replaced with air, further chunks with it are not reported", name);
+                LOGGER.warn("The block '{}' is unknown, further chunks with it are not reported", name);
             }
-            return Block.AIR.stateId();
+            return this.policy.onUnknownBlock(name, properties);
         }
         if (properties == null || properties.size() == 0) {
             return block.stateId();

@@ -78,7 +78,7 @@ import java.util.stream.Stream;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.3.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -146,6 +146,25 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @since 1.2.0
      */
     private final @Nullable ChunkVersionPolicy versionPolicy;
+
+    /**
+     * The policy consulted for a palette entry the running server does not know, resolved once in
+     * the constructor the same way {@link #versionPolicy} is: through {@link
+     * ServiceResolution#choose(Class, Object, boolean, Class)}, naming {@link
+     * DefaultUnknownEntryPolicy} as the shipped default.
+     * <p>
+     * Unlike {@link #versionPolicy}, this field is never null. A builder which never touches
+     * {@link Builder#unknownEntryPolicy(UnknownEntryPolicy)} or
+     * {@link Builder#discoverUnknownEntryPolicy()} discovers a policy from the classpath by default,
+     * falling back to {@link DefaultUnknownEntryPolicy} when the classpath registers none — there is
+     * no "consult nothing" state for this decision the way {@code versionPolicy(null)} lets a caller
+     * skip the version check entirely, because an id is always required for the loader to keep
+     * decoding.
+     * </p>
+     *
+     * @since 1.2.0
+     */
+    private final UnknownEntryPolicy unknownEntryPolicy;
 
     /**
      * Where failures are reported, or null for the exception manager of the running server.
@@ -228,11 +247,17 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         this.legacyLayout = resolved.legacyLayout();
         this.dimensionLabel = dimension.asString();
         this.diagnostics = effective;
+        UnknownEntryPolicy resolvedUnknownEntryPolicy = ServiceResolution.choose(
+                UnknownEntryPolicy.class, settings.unknownEntryPolicy, settings.discoverUnknownEntryPolicy,
+                DefaultUnknownEntryPolicy.class);
+        this.unknownEntryPolicy = resolvedUnknownEntryPolicy == null
+                ? new DefaultUnknownEntryPolicy()
+                : resolvedUnknownEntryPolicy;
         this.blockResolver = settings.blockResolver == null
-                ? new BlockPaletteResolver(effective)
+                ? new BlockPaletteResolver(effective, this.unknownEntryPolicy)
                 : settings.blockResolver;
         this.biomeResolver = settings.biomeResolver == null
-                ? new BiomePaletteResolver(effective)
+                ? new BiomePaletteResolver(effective, this.unknownEntryPolicy)
                 : settings.biomeResolver;
         this.regions = new ConcurrentHashMap<>();
         this.trackedChunks = new ConcurrentHashMap<>();
@@ -284,9 +309,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * <p>
      * The builder reaches the values the constructors set for themselves — the compression level,
      * the diagnostics, both palette resolvers, the save parallelism and the data version. It also
-     * defaults to discovering a {@link ChunkVersionPolicy} from the classpath, which is what keeps
-     * every loader built through a constructor rather than an explicit
-     * {@link Builder#versionPolicy(ChunkVersionPolicy)} call refusing the chunks it always refused.
+     * defaults to discovering a {@link ChunkVersionPolicy} and an {@link UnknownEntryPolicy} from
+     * the classpath, which is what keeps every loader built through a constructor rather than an
+     * explicit {@link Builder#versionPolicy(ChunkVersionPolicy)} or
+     * {@link Builder#unknownEntryPolicy(UnknownEntryPolicy)} call behaving the way it always did.
      * The world directory and the dimension are not among them: they are required, so they sit in
      * {@link Builder#build(Path, Key)} rather than in a slot.
      * </p>
@@ -297,7 +323,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     public static Builder builder() {
         return new Builder(DEFAULT_OPEN_REGION_LIMIT, ChunkCompression.DEFAULT_LEVEL,
                 Math.max(Runtime.getRuntime().availableProcessors(), 2), MinecraftServer.DATA_VERSION,
-                DEFAULT_MINIMUM_DATA_VERSION, null, null, null, null, null, true);
+                DEFAULT_MINIMUM_DATA_VERSION, null, null, null, null, null, true, null, true);
     }
 
     /**
@@ -326,7 +352,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * </p>
      *
      * @author TheMeinerLP
-     * @version 1.2.0
+     * @version 1.3.0
      * @since 0.4.0
      */
     @ApiStatus.Experimental
@@ -343,6 +369,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         private final @Nullable Consumer<Throwable> exceptionHandler;
         private final @Nullable ChunkVersionPolicy versionPolicy;
         private final boolean discoverVersionPolicy;
+        private final @Nullable UnknownEntryPolicy unknownEntryPolicy;
+        private final boolean discoverUnknownEntryPolicy;
 
         private Builder(int openRegionLimit, int compressionLevel, int saveParallelism, int dataVersion,
                         int minimumDataVersion, @Nullable AnvilDiagnostics diagnostics,
@@ -350,7 +378,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                         @Nullable PaletteEntryResolver biomeResolver,
                         @Nullable Consumer<Throwable> exceptionHandler,
                         @Nullable ChunkVersionPolicy versionPolicy,
-                        boolean discoverVersionPolicy) {
+                        boolean discoverVersionPolicy,
+                        @Nullable UnknownEntryPolicy unknownEntryPolicy,
+                        boolean discoverUnknownEntryPolicy) {
             this.openRegionLimit = openRegionLimit;
             this.compressionLevel = compressionLevel;
             this.saveParallelism = saveParallelism;
@@ -362,6 +392,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             this.exceptionHandler = exceptionHandler;
             this.versionPolicy = versionPolicy;
             this.discoverVersionPolicy = discoverVersionPolicy;
+            this.unknownEntryPolicy = unknownEntryPolicy;
+            this.discoverUnknownEntryPolicy = discoverUnknownEntryPolicy;
         }
 
         /**
@@ -390,7 +422,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     this.exceptionHandler,
                     this.versionPolicy,
-                    this.discoverVersionPolicy);
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -423,7 +457,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     this.exceptionHandler,
                     this.versionPolicy,
-                    this.discoverVersionPolicy);
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -452,7 +488,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     this.exceptionHandler,
                     this.versionPolicy,
-                    this.discoverVersionPolicy);
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -478,7 +516,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     this.exceptionHandler,
                     this.versionPolicy,
-                    this.discoverVersionPolicy);
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -510,7 +550,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     this.exceptionHandler,
                     this.versionPolicy,
-                    this.discoverVersionPolicy);
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -541,7 +583,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     this.exceptionHandler,
                     this.versionPolicy,
-                    this.discoverVersionPolicy);
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -569,7 +613,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     this.exceptionHandler,
                     this.versionPolicy,
-                    this.discoverVersionPolicy);
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -594,7 +640,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     biomeResolver,
                     this.exceptionHandler,
                     this.versionPolicy,
-                    this.discoverVersionPolicy);
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -628,7 +676,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     exceptionHandler,
                     this.versionPolicy,
-                    this.discoverVersionPolicy);
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -665,7 +715,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     this.exceptionHandler,
                     versionPolicy,
-                    false);
+                    false,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
         }
 
         /**
@@ -695,6 +747,81 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.biomeResolver,
                     this.exceptionHandler,
                     null,
+                    true,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy);
+        }
+
+        /**
+         * Sets the policy consulted for a palette entry the running server does not know, or clears
+         * it so the classpath default is used instead.
+         * <p>
+         * Calling this slot always turns discovery off, whatever value is passed, for the same
+         * reason {@link #versionPolicy(ChunkVersionPolicy)} does: an explicit decision has to win
+         * over the classpath without {@link ServiceResolution#choose(Class, Object, boolean, Class)}
+         * seeing both set at once and refusing to guess between them. A builder that never calls
+         * this slot keeps discovering the default instead, which is what {@link #builder()} starts
+         * with.
+         * </p>
+         * <p>
+         * Unlike {@link #versionPolicy(ChunkVersionPolicy)}, passing {@code null} here is not "check
+         * nothing": {@link #build(Path, Key)} always resolves a usable policy, falling back to
+         * {@link DefaultUnknownEntryPolicy} when neither an explicit instance nor a foreign
+         * classpath provider is found, because a resolver always needs an id for the entry it could
+         * not otherwise decode.
+         * </p>
+         *
+         * @param unknownEntryPolicy the policy to consult for an unknown palette entry, or null to
+         *                           fall back to the classpath default
+         * @return a new builder with this value
+         * @since 1.2.0
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder unknownEntryPolicy(@Nullable UnknownEntryPolicy unknownEntryPolicy) {
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.minimumDataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy,
+                    unknownEntryPolicy,
+                    false);
+        }
+
+        /**
+         * Asks the loader to discover its {@link UnknownEntryPolicy} from the classpath instead of
+         * using an explicit instance.
+         * <p>
+         * This is what {@link #builder()} already defaults to, so calling it only matters after an
+         * earlier {@link #unknownEntryPolicy(UnknownEntryPolicy)} call on the same chain, to undo it.
+         * The shipped {@link DefaultUnknownEntryPolicy} steps aside for a single registered foreign
+         * provider; a classpath that registers more than one <em>foreign</em> provider makes
+         * {@link Builder#build(Path, Key)} throw {@link IllegalStateException} rather than guess
+         * between them.
+         * </p>
+         *
+         * @return a new builder with this value
+         * @since 1.2.0
+         */
+        @Contract(value = "-> new", pure = true)
+        public Builder discoverUnknownEntryPolicy() {
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.minimumDataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy,
+                    null,
                     true);
         }
 
@@ -711,7 +838,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * @return a new loader, independent of every other loader from this builder
          * @throws IllegalStateException if this builder was left on classpath discovery and the
          *                                classpath registers more than one foreign
-         *                                {@link ChunkVersionPolicy}
+         *                                {@link ChunkVersionPolicy} or more than one foreign
+         *                                {@link UnknownEntryPolicy}
          */
         @Contract(value = "_, _ -> new", pure = true)
         public FalcoAnvilLoader build(Path worldRoot, Key dimension) {
@@ -1205,6 +1333,21 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     @Contract(pure = true)
     @Nullable ChunkVersionPolicy versionPolicy() {
         return this.versionPolicy;
+    }
+
+    /**
+     * Returns the policy this loader resolved for an unknown palette entry.
+     * <p>
+     * Package-private for the same reason as {@link #versionPolicy()}: this exists for the
+     * builder's own pass-through tests, not for a caller outside this package.
+     * </p>
+     *
+     * @return the resolved policy, never null
+     * @since 1.2.0
+     */
+    @Contract(pure = true)
+    UnknownEntryPolicy unknownEntryPolicy() {
+        return this.unknownEntryPolicy;
     }
 
     /**
