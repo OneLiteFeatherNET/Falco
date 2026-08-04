@@ -537,12 +537,37 @@ git commit -m "feat(migration): the step chain, and the three that only move thi
 
 ---
 
-### Task 5: Sections — bit packing and biomes
+### Task 5: Sections — bit packing, biomes, and the Y range
 
 **Files:**
-- Create: `…/migration/steps/NormaliseBitPacking.java`, `…/migration/steps/RebuildBiomes.java`, `…/migration/steps/TranslateBlockStates.java`
+- Create: `…/migration/steps/NormaliseBitPacking.java`, `…/migration/steps/RebuildBiomes.java`, `…/migration/steps/TranslateBlockStates.java`, `…/migration/steps/SettleYRange.java`
 - Create: `…/migration/LegacyBitReader.java`
+- Modify: `…/migration/steps/UnfoldLevel.java` — hand `yPos` over to the new step
 - Test: `…/migration/LegacyBitReaderTest.java`, `…/migration/steps/SectionStepsTest.java`
+
+**Corrected after Task 4's review: this task owns the Y range.** The plan's chain has a step 5,
+"Widen the Y range", and neither Task 4 nor this one had been given it — it fell between them. Task 4
+consequently wrote `yPos = 0` inside `UnfoldLevel` as a stopgap, which is right for the *source* (a
+pre-1.18 world is sections 0–15) and unproven for the *target*. That value moves here.
+
+**Settle the meaning of `yPos` before writing the step, and do it from a source.** The review found
+the wiki's own wording ambiguous: it reads "Lowest Y section position **in the chunk** (e.g. `-4` in
+1.18)", where the sentence argues for the chunk's own lowest section and the example argues for the
+dimension's floor — vanilla writes every section of the range, so both readings coincide there and
+diverge for a converted chunk that has no sections below 0.
+
+Establish which it is, then implement accordingly:
+
+- **If `yPos` is the chunk's own lowest section**, `0` is already correct and the step only has to
+  prove it, with a test and a comment naming the source.
+- **If it anchors to the dimension**, the converted chunk needs `-4` for the overworld — and then the
+  spec's rule that empty sections are not invented has to be re-examined, because a chunk claiming a
+  floor it has no sections for is a second inconsistency, not a fix.
+
+The primary source is what actually reads it. `Chunk format` on minecraft.wiki settles the intent;
+Minestom's own Anvil loader settles what Falco's target will do with it, and that one is in the
+sources jar rather than the ten-month-old clone. **If the two disagree, say so and stop** — that is a
+finding about the target platform, not a detail to decide in passing.
 
 **Interfaces:**
 - Consumes: `BlockStateRules.translate` from Task 3, the chain from Task 4.
