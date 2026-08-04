@@ -66,6 +66,44 @@ class SectionStepsTest {
     }
 
     @Test
+    void testAnOverWidthPackedPaletteIsReadAtTheWidthItWasActuallyPackedWith() {
+        // 17 entries need only 5 bits (BitPacker.bitsPerEntry(17, 4)), but the format explicitly
+        // allows a writer to use more. This fixture deliberately packs with 6 to prove the width
+        // is derived from the array's own length rather than assumed from the palette size, which
+        // would silently misread 6-bit data as 5-bit and corrupt every block in the section
+        // without throwing.
+        int bitsPerEntry = 6;
+        int[] values = new int[16 * 16 * 16];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i % 17;
+        }
+        long[] overWidthPacked = legacyPack(values, bitsPerEntry);
+
+        ListBinaryTag palette = ListBinaryTag.empty();
+        for (int i = 0; i < 17; i++) {
+            palette = palette.add(CompoundBinaryTag.builder().putString("Name", "minecraft:test_" + i).build());
+        }
+
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("Level", CompoundBinaryTag.builder()
+                        .put("Sections", ListBinaryTag.from(List.of(CompoundBinaryTag.builder()
+                                .putByte("Y", (byte) 0)
+                                .put("Palette", palette)
+                                .putLongArray("BlockStates", overWidthPacked)
+                                .build())))
+                        .build())
+                .build();
+
+        CompoundBinaryTag normalised = new NormaliseBitPacking().apply(chunk, ANY_CONTEXT);
+
+        long[] repacked = normalised.getCompound("Level").getList("Sections").getCompound(0).getLongArray("BlockStates");
+        int[] roundTripped = BitPacker.unpack(repacked, values.length, bitsPerEntry);
+        assertArrayEquals(values, roundTripped,
+                "the 6-bit width the writer actually used must survive, not the 5 bits the palette size "
+                        + "alone would suggest");
+    }
+
+    @Test
     void testASingleValueSectionWithNoBlockStatesArrayIsLeftAlone() {
         CompoundBinaryTag section = CompoundBinaryTag.builder()
                 .putByte("Y", (byte) 0)
@@ -86,7 +124,7 @@ class SectionStepsTest {
     // --- RebuildBiomes ---------------------------------------------------------------------------
 
     @Test
-    void testAWidenedTwentyFourEntryBiomeArrayBecomesAUniformPaletteForItsSection() {
+    void testAOneThousandTwentyFourEntryBiomeArrayBecomesAUniformPaletteForItsSection() {
         int[] biomes = new int[1024];
         java.util.Arrays.fill(biomes, 0, 64, 1); // section Y=0: every cell is id 1 (plains)
 
@@ -179,6 +217,77 @@ class SectionStepsTest {
         assertTrue(exception.getMessage().contains("253"));
     }
 
+    // --- Sections outside the fixed 0..15 range ---------------------------------------------------
+
+    @Test
+    void testASectionBelowZeroDoesNotCrashRebuildBiomesAndIsDroppedRatherThanKept() {
+        // Vanilla writes one extra section below the real 0..15 range (Y = -1) purely to carry
+        // lighting data for the section it borders. Without discarding it first, its offset into
+        // the widened biome array (-1 * 64 = -64) is negative and indexing it throws
+        // ArrayIndexOutOfBoundsException rather than a MigrationException.
+        int[] biomes = new int[1024];
+        java.util.Arrays.fill(biomes, 1);
+
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .putIntArray("Biomes", biomes)
+                .put("sections", ListBinaryTag.from(List.of(
+                        CompoundBinaryTag.builder().putInt("Y", -1).build(),
+                        CompoundBinaryTag.builder().putInt("Y", 0).build())))
+                .build();
+
+        CompoundBinaryTag rebuilt = new RebuildBiomes().apply(chunk, ANY_CONTEXT);
+
+        ListBinaryTag sections = rebuilt.getList("sections");
+        assertEquals(1, sections.size(), "the Y=-1 lighting-only section must not survive into the output");
+        assertEquals(0, sections.getCompound(0).getInt("Y"));
+    }
+
+    @Test
+    void testAnOutOfRangeSectionDoesNotCountTowardsSettleYRangesMinimum() {
+        // Exercised directly against SettleYRange, independent of whether RebuildBiomes already
+        // ran and already cleaned the list - the step re-checks the range itself rather than
+        // trusting the chain's ordering (see its own Javadoc).
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("sections", ListBinaryTag.from(List.of(
+                        CompoundBinaryTag.builder().putInt("Y", -1).build())))
+                .build();
+
+        CompoundBinaryTag settled = new SettleYRange().apply(chunk, ANY_CONTEXT);
+
+        assertEquals(0, settled.getInt("yPos"),
+                "no in-range section is present, so this falls back to the same default an empty list gets");
+    }
+
+    @Test
+    void testSectionsAtYMinusOneAndYSixteenSurviveTheWholeChainDiscardedRatherThanCorruptingItOrYPos() {
+        // The end-to-end version of the two direct tests above: a chunk with a lighting-only
+        // section on both sides of the real range must migrate cleanly, end up with only its one
+        // real section, and settle yPos on that real section's own Y rather than the discarded one.
+        int[] biomes = new int[1024];
+        java.util.Arrays.fill(biomes, 1);
+
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .putInt("DataVersion", 1519)
+                .put("Level", CompoundBinaryTag.builder()
+                        .putInt("xPos", 0)
+                        .putInt("zPos", 0)
+                        .putString("Status", "full")
+                        .putIntArray("Biomes", biomes)
+                        .put("Sections", ListBinaryTag.from(List.of(
+                                CompoundBinaryTag.builder().putByte("Y", (byte) -1).build(),
+                                CompoundBinaryTag.builder().putByte("Y", (byte) 0).build(),
+                                CompoundBinaryTag.builder().putByte("Y", (byte) 16).build())))
+                        .build())
+                .build();
+
+        CompoundBinaryTag migrated = ChunkMigration.migrate(chunk, 4790);
+
+        ListBinaryTag sections = migrated.getList("sections");
+        assertEquals(1, sections.size(), "only Y=0 is real content; Y=-1 and Y=16 are lighting-only");
+        assertEquals(0, sections.getCompound(0).getInt("Y"));
+        assertEquals(0, migrated.getInt("yPos"), "the lowest REAL section is 0, not the discarded Y=-1");
+    }
+
     // --- TranslateBlockStates, including the full-chain Gegenprobe target -----------------------
 
     @Test
@@ -200,6 +309,74 @@ class SectionStepsTest {
         CompoundBinaryTag blockStates = translatedSection.getCompound("block_states");
         assertEquals("minecraft:smooth_stone_slab", blockStates.getList("palette").getCompound(0).getString("Name"),
                 "stone_slab renamed below DataVersion 1901, same as BlockStateRulesTest pins directly");
+    }
+
+    @Test
+    void testAnOverWidthPackedLegacyPaletteIsDecodedAtItsActualWidthNotThePaletteMinimum() {
+        // A palette of 17 entries needs only 5 bits (BitPacker.bitsPerEntry(17, 4)); this fixture
+        // packs it with 6 instead - a valid choice the format explicitly allows a writer to make,
+        // and exactly what NormaliseBitPacking itself would hand this step if the original writer
+        // had done the same (it preserves whatever width it finds rather than compacting to the
+        // minimum - see its own testAnOverWidthPackedPaletteIsReadAtTheWidthItWasActuallyPackedWith).
+        // Entry 0 is a stone_slab so a rule actually fires at DataVersion 1519, forcing the full
+        // decode-translate-reencode path to run rather than short-circuiting as unchanged.
+        int bitsPerEntry = 6;
+        int[] values = new int[16 * 16 * 16];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i % 17;
+        }
+        long[] overWidthPacked = BitPacker.pack(values, bitsPerEntry);
+
+        ListBinaryTag palette = ListBinaryTag.empty()
+                .add(CompoundBinaryTag.builder().putString("Name", "minecraft:stone_slab").build());
+        for (int i = 1; i < 17; i++) {
+            palette = palette.add(CompoundBinaryTag.builder().putString("Name", "minecraft:test_" + i).build());
+        }
+
+        CompoundBinaryTag section = CompoundBinaryTag.builder()
+                .putInt("Y", 0)
+                .put("Palette", palette)
+                .putLongArray("BlockStates", overWidthPacked)
+                .build();
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("sections", ListBinaryTag.from(List.of(section)))
+                .build();
+
+        CompoundBinaryTag translated = new TranslateBlockStates().apply(chunk, new MigrationContext(1519, 4790));
+
+        CompoundBinaryTag blockStates = translated.getList("sections").getCompound(0).getCompound("block_states");
+        assertEquals("minecraft:smooth_stone_slab", blockStates.getList("palette").getCompound(0).getString("Name"),
+                "sanity check that the rename actually fired, which is what forces the full decode/reencode path");
+
+        // The rebuilt container re-encodes at its own minimal width (5 bits for 17 entries),
+        // regardless of the 6 bits the input used - what must survive is the actual VALUES, i.e.
+        // that decoding the 6-bit input read the right indices in the first place.
+        int outputBitsPerEntry = BitPacker.bitsPerEntry(17, 4);
+        long[] repacked = blockStates.getLongArray("data");
+        int[] roundTripped = BitPacker.unpack(repacked, values.length, outputBitsPerEntry);
+        assertArrayEquals(values, roundTripped,
+                "the 6-bit width the section was actually packed at must be used to decode it, not the "
+                        + "5-bit minimum a palette of 17 entries alone would suggest");
+    }
+
+    @Test
+    void testASectionAlreadyInTheModernShapeWithNoFiringRuleIsPassedThroughRatherThanReencoded() {
+        CompoundBinaryTag palette = CompoundBinaryTag.builder().putString("Name", "minecraft:stone").build();
+        CompoundBinaryTag blockStates = CompoundBinaryTag.builder()
+                .put("palette", ListBinaryTag.from(List.of(palette)))
+                .build();
+        CompoundBinaryTag section = CompoundBinaryTag.builder()
+                .putInt("Y", 0)
+                .put("block_states", blockStates)
+                .build();
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("sections", ListBinaryTag.from(List.of(section)))
+                .build();
+
+        CompoundBinaryTag translated = new TranslateBlockStates().apply(chunk, new MigrationContext(4790, 4790));
+
+        assertEquals(section, translated.getList("sections").getCompound(0),
+                "no rule applies at DataVersion 4790, so the whole section must come back exactly as read");
     }
 
     /**

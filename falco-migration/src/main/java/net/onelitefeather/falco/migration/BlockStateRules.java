@@ -49,8 +49,8 @@ public final class BlockStateRules {
      * that a per-property implementation is guaranteed wrong, and that 9 of the 81 direction
      * combinations change (times 16 {@code power} values = 144 states). It does not say which 9
      * combinations change or what they become — only the count. That is not enough to reproduce
-     * V2531's logic exactly, and a guessed whole-state table for redstone wiring is exactly the
-     * silent corruption this task was told to refuse: the chunk still loads, the wiring looks
+     * V2531's logic exactly, and a guessed whole-state table for redstone wiring would be exactly the
+     * silent corruption this module exists to avoid: the chunk still loads, the wiring looks
      * subtly different, and nobody notices. A state this module does not recognize — including every
      * {@code redstone_wire} state — passes through {@link #translate(BlockState, int)} unchanged;
      * see {@code BlockStateRulesTest.testAStateNoRuleKnowsAboutPassesThroughUnchanged}.

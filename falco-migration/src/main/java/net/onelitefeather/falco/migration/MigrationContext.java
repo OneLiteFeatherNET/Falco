@@ -11,8 +11,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * A step decides whether it runs at all from {@code sourceVersion} alone, through
  * {@link MigrationStep#appliesTo(int)}. {@code targetVersion} is carried for the steps that have to
- * know how far a chunk is going, not only where it started — none of the three structural steps built
- * in Task 4 need it, but a step that resolves a rename table for a specific target does.
+ * know how far a chunk is going, not only where it started — a step that only moves or deletes data
+ * (unfolding {@code Level}, discarding heightmaps and light) never needs it, but a step that resolves
+ * a rename table for a specific target does.
  * </p>
  * <p>
  * {@code entityCounter} is this context's counting sink: {@code CountEntities} adds to it through

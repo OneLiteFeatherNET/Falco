@@ -10,6 +10,7 @@ import net.onelitefeather.falco.anvil.BitPacker;
 import net.onelitefeather.falco.migration.BlockState;
 import net.onelitefeather.falco.migration.BlockStateRules;
 import net.onelitefeather.falco.migration.MigrationContext;
+import net.onelitefeather.falco.migration.MigrationException;
 import net.onelitefeather.falco.migration.MigrationStep;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
@@ -62,8 +63,12 @@ public final class TranslateBlockStates implements MigrationStep {
     private static final int BLOCK_ENTRIES = 16 * 16 * 16;
 
     /**
-     * Minestom's {@code net.minestom.server.instance.palette.Palette.BLOCK_PALETTE_MIN_BITS},
-     * pinned here for the same reason {@link NormaliseBitPacking#BLOCK_PALETTE_MIN_BITS} is.
+     * Minestom's {@code net.minestom.server.instance.palette.Palette.BLOCK_PALETTE_MIN_BITS}
+     * (checked in the sources jar of {@code net.minestom:minestom}). This module cannot depend on
+     * {@code net.minestom} — {@code falco-archunit}'s {@code migrationKnowsNoMinestom} forbids it —
+     * so the constant is pinned here instead, with its source named, rather than imported. Used only
+     * when this step chooses its own bits-per-entry while <em>writing</em> a container — never while
+     * reading one back; see {@link #readFrom} for why a palette-derived guess is not safe there.
      */
     private static final int BLOCK_PALETTE_MIN_BITS = 4;
 
@@ -95,14 +100,26 @@ public final class TranslateBlockStates implements MigrationStep {
     }
 
     private static CompoundBinaryTag translate(CompoundBinaryTag section, int sourceVersion) {
+        boolean alreadyModernShape = section.get(BLOCK_STATES_KEY) instanceof CompoundBinaryTag;
         PaletteContainer container = readContainer(section);
         if (container == null) {
             return section;
         }
 
         List<BlockState> translatedPalette = new ArrayList<>(container.palette().size());
+        boolean anyStateChanged = false;
         for (BlockState state : container.palette()) {
-            translatedPalette.add(BlockStateRules.translate(state, sourceVersion));
+            BlockState translated = BlockStateRules.translate(state, sourceVersion);
+            anyStateChanged |= !translated.equals(state);
+            translatedPalette.add(translated);
+        }
+
+        if (alreadyModernShape && !anyStateChanged) {
+            // Nothing to restructure (the container is already in the modern shape) and no rule
+            // fired: unpacking and re-packing the section's data would only cost time and risk
+            // re-encoding it differently for no reason, so the whole section is passed through
+            // exactly as read, packed data included.
+            return section;
         }
 
         CompoundBinaryTag rebuilt = writeContainer(translatedPalette, container.indices());
@@ -119,6 +136,19 @@ public final class TranslateBlockStates implements MigrationStep {
         return null;
     }
 
+    /**
+     * Reads a palette and its packed indices, if any.
+     * <p>
+     * <b>The bits-per-entry a writer actually used is not assumed from the palette size.</b> The
+     * format explicitly permits a writer to use more bits than a palette strictly needs, which is
+     * exactly why {@code falco-anvil}'s own {@code PaletteData.read} resolves the width against the
+     * packed array's own length instead of trusting the palette-derived minimum — and why this method
+     * does the same, through {@code BitPacker.resolveBitsPerEntry}, rather than repeating the mistake
+     * a palette-size guess would make: silently reading a 6-bit-packed palette of 17 entries as if it
+     * were the 5 bits the palette alone would suggest, corrupting every block in the section without
+     * throwing.
+     * </p>
+     */
     private static PaletteContainer readFrom(ListBinaryTag paletteTag, @Nullable BinaryTag dataTag) {
         List<BlockState> palette = new ArrayList<>(paletteTag.size());
         for (BinaryTag entryTag : paletteTag) {
@@ -129,8 +159,15 @@ public final class TranslateBlockStates implements MigrationStep {
 
         int[] indices;
         if (dataTag instanceof LongArrayBinaryTag data) {
-            int bitsPerEntry = BitPacker.bitsPerEntry(palette.size(), BLOCK_PALETTE_MIN_BITS);
-            indices = BitPacker.unpack(data.value(), BLOCK_ENTRIES, bitsPerEntry);
+            long[] packed = data.value();
+            int expected = BitPacker.bitsPerEntry(palette.size(), BLOCK_PALETTE_MIN_BITS);
+            int bitsPerEntry = BitPacker.resolveBitsPerEntry(packed.length, BLOCK_ENTRIES, expected);
+            if (bitsPerEntry == 0) {
+                throw new MigrationException("A section's block data holds " + packed.length
+                        + " longs, which matches no valid bits-per-entry for a palette of " + palette.size()
+                        + " entries over " + BLOCK_ENTRIES + " block positions");
+            }
+            indices = BitPacker.unpack(packed, BLOCK_ENTRIES, bitsPerEntry);
         } else {
             indices = new int[0];
         }

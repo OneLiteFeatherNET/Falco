@@ -44,8 +44,9 @@ public final class NormaliseBitPacking implements MigrationStep {
      * in chunks has been slightly changed... {@code BlockStates} in {@code Sections} elements no
      * longer contain values stretching over multiple 64-bit fields", DataVersion 2529. This is the
      * same release-instead-of-snapshot mistake this module has already found and corrected several
-     * times over for the block-state rename table and, in Task 6, {@code CountEntities} — so it was
-     * checked here too rather than trusted. A chunk in the gap this correction closes, DataVersion
+     * times over elsewhere — in the block-state rename table and in {@code CountEntities}'s own
+     * threshold — so it was checked here too rather than trusted. A chunk in the gap this correction
+     * closes, DataVersion
      * 2529 up to but not including 2566 (20w17a's own pre-releases through 1.16 Release Candidate 1),
      * already writes the non-spanning layout; treating it as spanning would have this step and
      * {@link LegacyBitReader} misread already-correct data for any bits-per-entry that does not evenly
@@ -55,18 +56,10 @@ public final class NormaliseBitPacking implements MigrationStep {
 
     private static final String LEVEL_KEY = "Level";
     private static final String SECTIONS_KEY = "Sections";
-    private static final String PALETTE_KEY = "Palette";
     private static final String BLOCK_STATES_KEY = "BlockStates";
 
     private static final int BLOCK_ENTRIES = 16 * 16 * 16;
-
-    /**
-     * Minestom's {@code net.minestom.server.instance.palette.Palette.BLOCK_PALETTE_MIN_BITS}
-     * (checked in the sources jar of {@code net.minestom:minestom}). This module cannot depend on
-     * {@code net.minestom} — {@code falco-archunit}'s {@code migrationKnowsNoMinestom} forbids it —
-     * so the constant is pinned here instead, with its source named, rather than imported.
-     */
-    private static final int BLOCK_PALETTE_MIN_BITS = 4;
+    private static final int BITS_PER_LONG = Long.SIZE;
 
     /**
      * Creates a new instance of this stateless step.
@@ -105,12 +98,33 @@ public final class NormaliseBitPacking implements MigrationStep {
             return section;
         }
 
-        ListBinaryTag palette = section.getList(PALETTE_KEY, BinaryTagTypes.COMPOUND);
-        int bitsPerEntry = BitPacker.bitsPerEntry(palette.size(), BLOCK_PALETTE_MIN_BITS);
+        long[] packed = legacy.value();
+        int bitsPerEntry = exactBitsPerEntry(packed.length);
 
-        int[] indices = LegacyBitReader.unpack(legacy.value(), bitsPerEntry, BLOCK_ENTRIES);
+        int[] indices = LegacyBitReader.unpack(packed, bitsPerEntry, BLOCK_ENTRIES);
         long[] repacked = BitPacker.pack(indices, bitsPerEntry);
 
         return section.putLongArray(BLOCK_STATES_KEY, repacked);
+    }
+
+    /**
+     * Derives the bits-per-entry a legacy writer actually used from the packed array's own length,
+     * rather than from the palette size the way an earlier version of this method did.
+     * <p>
+     * The format explicitly allows a writer to use more bits than a palette strictly needs —
+     * {@code falco-anvil}'s own {@code PaletteData.read} carries the same caveat for the modern
+     * layout, and assuming the minimum here silently misreads an over-width-packed section and then
+     * corrupts it on repacking, without throwing. This derivation is exact rather than a best guess:
+     * the legacy layout has no padding at all — every long is completely full except possibly the
+     * last few bits of the final one — and {@link #BLOCK_ENTRIES} (4096) is itself a multiple of 64,
+     * so {@code longCount * 64} is always evenly divisible by {@code BLOCK_ENTRIES} with no rounding,
+     * for any {@code bitsPerEntry} a real writer could have used.
+     * </p>
+     *
+     * @param longCount the length of the packed {@code BlockStates} array
+     * @return the exact bits-per-entry that array was packed with
+     */
+    private static int exactBitsPerEntry(int longCount) {
+        return longCount * BITS_PER_LONG / BLOCK_ENTRIES;
     }
 }

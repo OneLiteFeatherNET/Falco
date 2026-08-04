@@ -46,8 +46,9 @@ import java.util.Map;
  * <b>Every entry, in either shape, is a legacy numeric biome id, not a name.</b> String biome names
  * only exist in chunk data from 1.18 onward. Resolving a numeric id therefore needs a per-version
  * table, and — unlike blocks — this project's own vendored source for such tables, the ViaVersion
- * {@code mapping-<version>.json} registry lists Task 3 built {@code BlockStateRules} from, does not
- * carry a {@code biomes} list at all (see the design document's "registry lists" section). The table
+ * {@code mapping-<version>.json} registry lists {@link net.onelitefeather.falco.migration.BlockStateRules}
+ * is itself built from, does not carry a {@code biomes} list at all (see the design document's
+ * "registry lists" section). The table
  * below is instead sourced from PaperMC/DataConverter's own {@code V2832} (commit {@code 0782df72},
  * GPL-3.0, DataVersion 2832 — the fix that performs this exact conversion for the real 1.18 upgrade),
  * whose {@code BIOMES_BY_ID} array is reproduced here as a set of id-to-name facts, not copied as
@@ -70,6 +71,19 @@ import java.util.Map;
  * inventing a biome is the same silent corruption an unmappable block is refused for elsewhere in
  * this module.
  * </p>
+ * <p>
+ * <b>A section outside the fixed pre-1.18 range, {@code Y} {@value #MIN_SECTION_Y} to
+ * {@value #MAX_SECTION_Y}, is discarded before anything else runs.</b> Vanilla itself writes one
+ * extra section below and one above that range purely to carry lighting data for the sections that
+ * border them — Minestom's own Anvil loader throws exactly these away on load, with the comment
+ * "Vanilla stores a section below and above the world for lighting, throw it out" (checked in the
+ * sources jar of {@code net.minestom:minestom}, {@code AnvilLoader.java:207-209}). Nothing upstream of
+ * this step drops them, so without this check {@code Y = -1} would index this step's widened biome
+ * array at a negative offset and throw {@link ArrayIndexOutOfBoundsException} — an unchecked failure
+ * this module's fail-loud stance does not consider acceptable — and a border section that happened
+ * to unpack cleanly would otherwise survive into the target's own {@code -4}..{@code 19} range as a
+ * spurious empty section nobody asked for.
+ * </p>
  *
  * @since 2.1.0
  */
@@ -88,6 +102,14 @@ public final class RebuildBiomes implements MigrationStep {
     private static final int PRE_WIDENING_ENTRIES = 256;
     private static final int WIDENED_ENTRIES = 1024;
     private static final int SECTION_BIOME_ENTRIES = 4 * 4 * 4;
+
+    /**
+     * The fixed section range every pre-1.18 chunk in this module's range actually stores content
+     * for — see this class's own javadoc for why a section outside it is discarded rather than
+     * processed.
+     */
+    private static final int MIN_SECTION_Y = 0;
+    private static final int MAX_SECTION_Y = 15;
 
     /**
      * Minestom's {@code net.minestom.server.instance.palette.Palette.BIOME_PALETTE_MIN_BITS}
@@ -121,6 +143,8 @@ public final class RebuildBiomes implements MigrationStep {
      */
     @Override
     public CompoundBinaryTag apply(CompoundBinaryTag chunk, MigrationContext context) {
+        chunk = discardSectionsOutsideTheFixedRange(chunk);
+
         if (!(chunk.get(BIOMES_KEY) instanceof IntArrayBinaryTag biomesTag)) {
             return chunk;
         }
@@ -145,6 +169,34 @@ public final class RebuildBiomes implements MigrationStep {
         }
 
         return chunk.remove(BIOMES_KEY).put(SECTIONS_KEY, rebuilt);
+    }
+
+    /**
+     * Drops every section whose {@code Y} falls outside {@value #MIN_SECTION_Y}..
+     * {@value #MAX_SECTION_Y} — see this class's own javadoc for why vanilla writes them and why they
+     * must not reach the biome-rebuilding logic below. Runs first, and unconditionally, so it also
+     * protects a chunk that has no {@code Biomes} field at all (an early return further down would
+     * otherwise skip this check entirely for such a chunk).
+     */
+    private static CompoundBinaryTag discardSectionsOutsideTheFixedRange(CompoundBinaryTag chunk) {
+        ListBinaryTag sections = chunk.getList(SECTIONS_KEY, BinaryTagTypes.COMPOUND);
+        if (sections.size() == 0) {
+            return chunk;
+        }
+
+        ListBinaryTag kept = ListBinaryTag.empty();
+        boolean droppedAny = false;
+        for (BinaryTag sectionTag : sections) {
+            if (sectionTag instanceof CompoundBinaryTag section) {
+                int sectionY = section.getInt(SECTION_Y_KEY);
+                if (sectionY < MIN_SECTION_Y || sectionY > MAX_SECTION_Y) {
+                    droppedAny = true;
+                    continue;
+                }
+            }
+            kept = kept.add(sectionTag);
+        }
+        return droppedAny ? chunk.put(SECTIONS_KEY, kept) : chunk;
     }
 
     private static int[] widen(int[] legacy) {

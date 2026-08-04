@@ -11,6 +11,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * Pins down the two block-entity-facing steps this task adds: {@link TranslateBlockEntities}, which
@@ -47,12 +48,12 @@ class BlockEntityStepTest {
     }
 
     @Test
-    void testALegacyTileEntitiesListSurvivesUnderItsOwnKeyBecauseNoStepInThisChainRenamesTheContainer() {
-        // UnfoldLevel (Task 4) moves every child of Level onto the root without renaming it, except
-        // Sections -> sections; TileEntities is therefore still called TileEntities once it reaches
-        // this step. TranslateBlockEntities does not rename the container either - only the id inside
-        // each entry - so it stays TileEntities all the way through. Documented as a known gap in
-        // this class's Javadoc and the task report, not silently patched here.
+    void testALegacyTileEntitiesListEndsUpUnderBlockEntitiesBecauseUnfoldLevelRenamesTheContainerToo() {
+        // UnfoldLevel renames TileEntities to block_entities in the same move that renames
+        // Sections to sections, both landing in the snapshot that removed Level in the first
+        // place (21w43a, DataVersion 2844) - see UnfoldLevel's own Javadoc for the source.
+        // TranslateBlockEntities' own TileEntities fallback is therefore never actually reached
+        // for a chunk that goes through this chain; this pins the fixed, end-to-end behaviour.
         CompoundBinaryTag chunk = CompoundBinaryTag.builder()
                 .putInt("DataVersion", 2566)
                 .put("Level", CompoundBinaryTag.builder()
@@ -66,10 +67,11 @@ class BlockEntityStepTest {
 
         CompoundBinaryTag migrated = ChunkMigration.migrate(chunk, 4790);
 
-        ListBinaryTag tileEntities = assertInstanceOf(ListBinaryTag.class, migrated.get("TileEntities"),
-                "no step in this chain renames the TileEntities container key - see the report");
-        CompoundBinaryTag tileEntity = (CompoundBinaryTag) tileEntities.iterator().next();
-        assertEquals("minecraft:furnace", tileEntity.getString("id"));
+        assertNull(migrated.get("TileEntities"), "the legacy container key must not survive");
+        ListBinaryTag blockEntities = assertInstanceOf(ListBinaryTag.class, migrated.get("block_entities"),
+                "UnfoldLevel renames TileEntities to block_entities alongside Sections -> sections");
+        CompoundBinaryTag blockEntity = (CompoundBinaryTag) blockEntities.iterator().next();
+        assertEquals("minecraft:furnace", blockEntity.getString("id"));
     }
 
     @Test
