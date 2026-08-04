@@ -58,38 +58,75 @@ public final class BlockStateRules {
      */
     private static final List<BlockStateRule> RULES = List.of(
             // sign -> oak_sign. Oak was the only wood type a sign could be in 1.13, so this is a
-            // plain rename with no ambiguity. Source: blockstate-property-research.md,
-            // "Widerspruch 2" (V1802, 18w43a, Minecraft 1.14).
-            renameRule("minecraft:sign", "minecraft:oak_sign", 1802),
+            // plain rename with no ambiguity.
+            // Source for the RENAME ITSELF: blockstate-property-research.md, "Widerspruch 2" (names
+            // the snapshot "18w43a", not a DataVersion integer — the research document's own "V1802"
+            // for this fact turned out to be wrong; see the NUMBER source below).
+            // Source for the NUMBER 1901: not the research document. minecraft.wiki's own changelog
+            // for snapshot 18w43a states the rename directly ("Renamed 'Sign' to 'Oak Sign'."), and
+            // that snapshot's infobox lists DataVersion 1901 — checked via two independent fetches,
+            // 2026-08-04. This replaces the research document's "V1802", which does not correspond to
+            // any named public snapshot or release — 1631 (1.13.2) and 1901 (18w43a) are the nearest
+            // named points, and 1802 sits in the unnamed gap between them. Unlike the grass/grass_path
+            // corrections, this error made the rule fire too LATE rather than too early: a source
+            // between 1802 and 1900 still stored the pre-rename name "sign" but the old, too-low
+            // threshold would have left it untranslated, and Minestom throws a NullPointerException on
+            // an unknown block name rather than tolerating it.
+            renameRule("minecraft:sign", "minecraft:oak_sign", 1901),
 
-            // wall_sign -> oak_wall_sign, same reasoning as sign above.
-            // Source: blockstate-property-research.md, "Widerspruch 2" (V1802, 18w43a, Minecraft 1.14).
-            renameRule("minecraft:wall_sign", "minecraft:oak_wall_sign", 1802),
+            // wall_sign -> oak_wall_sign, same reasoning and same NUMBER correction as sign above
+            // (1802 -> 1901). Unlike sign and stone_slab, no changelog text names "wall_sign"
+            // explicitly in 18w43a's patch notes — searched directly and found nothing. The snapshot
+            // attribution is inferred rather than directly quoted: wall_sign is the placement-derived
+            // variant of sign, both are part of the same wood-type ID-prefixing pass that shipped in
+            // one snapshot, and the research document groups the two facts under one citation even
+            // after its number turned out to be wrong. This is weaker sourcing than sign's and
+            // stone_slab's direct changelog quotes, and is flagged as such rather than presented as
+            // equally solid.
+            renameRule("minecraft:wall_sign", "minecraft:oak_wall_sign", 1901),
 
             // stone_slab -> smooth_stone_slab. The name is reused by a different block from 1.14 on
             // (1.13's stone_slab and 26.x's stone_slab both have 6 states, but they mean different
             // blocks), which is why this rule MUST be versioned: unversioned, it would rename a
             // 1.16+ world's already-correct stone_slab and corrupt it.
-            // Source: blockstate-property-research.md, section "A) Die Zahl", two-case table
-            // (V1802, 1.14; verified 1.13 stone_slab = 6 states, 26.3 stone_slab AND
-            // smooth_stone_slab each = 6 states).
-            renameRule("minecraft:stone_slab", "minecraft:smooth_stone_slab", 1802),
+            // Source for the RENAME ITSELF: blockstate-property-research.md, section "A) Die Zahl",
+            // two-case table (names the snapshot "18w43a"; verified 1.13 stone_slab = 6 states, 26.3
+            // stone_slab AND smooth_stone_slab each = 6 states).
+            // Source for the NUMBER 1901: same as sign above — minecraft.wiki's 18w43a changelog
+            // states "Stone slabs have been renamed to smooth stone slabs." directly, and the
+            // snapshot's infobox lists DataVersion 1901, replacing the research document's wrong
+            // "V1802". This is the case the whole versioning mechanism exists for, so its own boundary
+            // is pinned by a dedicated test rather than only the two far-apart sources 1519 and 2566;
+            // see BlockStateRulesTest.testARuleAppliesExactlyBelowItsOwnVersionAndNotAtOrAboveIt.
+            renameRule("minecraft:stone_slab", "minecraft:smooth_stone_slab", 1901),
 
             // cobblestone_wall / mossy_cobblestone_wall: north/south/east/west go from a boolean
             // (false/true) to none/low/tall, as a pure lookup (true -> low, false -> none). `tall`
             // is not reachable from a 1.13 state and Mojang's own fix does not attempt it either.
-            // Source: blockstate-property-research.md, "Widerspruch 3" (V2503, Minecraft 1.16,
-            // DataConverter's BOOL_TO_WALL_HEIGHT-equivalent; confirmed no neighbor/chunk context is
-            // needed, contrary to what the wiki route alone suggested).
-            wallRule(2503),
+            // Source for the RENAME ITSELF: blockstate-property-research.md, "Widerspruch 3" (names
+            // the snapshot family as "1.16"; confirmed no neighbor/chunk context is needed, contrary
+            // to what the wiki route alone suggested).
+            // Source for the NUMBER 2504: not the research document, whose "V2503" is off by one from
+            // any named snapshot. minecraft.wiki's own changelog for snapshot 20w06a states the change
+            // directly ("Block state now uses none, low, and tall for east, west, north, and south
+            // directional values."), and that snapshot's infobox lists DataVersion 2504 — checked via
+            // two independent fetches, 2026-08-04.
+            wallRule(2504),
 
             // cauldron[level]: level=0 -> cauldron (properties emptied, the property is dropped
             // entirely); level=1..3 -> water_cauldron[level=n]. The block name is decided by a
             // property value, which is why this rule changes the name rather than only a value —
             // and exactly why the case was invisible to a plain name diff.
-            // Source: blockstate-property-research.md, section "A) Die Zahl", row
-            // "(c) Property weggefallen" (V2679, Minecraft 1.17).
-            cauldronRule(2679),
+            // Source for the RENAME ITSELF: blockstate-property-research.md, section "A) Die Zahl",
+            // row "(c) Property weggefallen" (names the snapshot family as "1.17").
+            // Source for the NUMBER 2681: not the research document, whose "V2679" names neither the
+            // right number nor (per a table lookup that turned out to be unreliable) the right
+            // snapshot — 21w03a, DataVersion 2689, whose changelog has nothing about cauldrons beyond
+            // a subtitle capitalization fix. minecraft.wiki's own changelog for snapshot 20w45a states
+            // the split directly ("Have been split into normal, water and lava cauldrons."), and that
+            // snapshot's infobox lists DataVersion 2681 — checked via three independent fetches,
+            // 2026-08-04. This is the same snapshot as grass_path's rename below.
+            cauldronRule(2681),
 
             // grass_path -> dirt_path, Minecraft 1.17.
             // Source for the RENAME ITSELF: falco-migration-design.md, "What the registry lists do
@@ -132,8 +169,8 @@ public final class BlockStateRules {
      * names the {@code DataVersion} the change happened in, so a source strictly older than that
      * version has not seen the change yet and needs it, while a source at or after that version
      * already carries the change's meaning and must be left alone. A rule with
-     * {@code since() == 1802} therefore applies to a 1.13 world ({@code 1519 < 1802}) and not to a
-     * 1.16 world ({@code 2566 > 1802}).
+     * {@code since() == 1901} therefore applies to a 1.13 world ({@code 1519 < 1901}) and not to a
+     * 1.16 world ({@code 2566 > 1901}).
      * </p>
      * <p>
      * A state no rule recognizes — including every {@code redstone_wire} state, for which this

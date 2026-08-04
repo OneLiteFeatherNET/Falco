@@ -60,10 +60,13 @@ class BlockStateRulesTest {
 
     @Test
     void testARuleAppliesExactlyBelowItsOwnVersionAndNotAtOrAboveIt() {
+        // stone_slab's rule fires below DataVersion 1901 (snapshot 18w43a, where the rename actually
+        // happened) and not at or above it. An earlier version of this test used 1801/1802, matching
+        // an earlier, wrong value for the rule itself; see BlockStateRules for the correction.
         assertEquals("minecraft:smooth_stone_slab",
-                BlockStateRules.translate(BlockState.of("minecraft:stone_slab"), 1801).name());
+                BlockStateRules.translate(BlockState.of("minecraft:stone_slab"), 1900).name());
         assertEquals("minecraft:stone_slab",
-                BlockStateRules.translate(BlockState.of("minecraft:stone_slab"), 1802).name());
+                BlockStateRules.translate(BlockState.of("minecraft:stone_slab"), 1901).name());
     }
 
     @Test
