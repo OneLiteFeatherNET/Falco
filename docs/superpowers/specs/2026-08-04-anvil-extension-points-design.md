@@ -74,15 +74,19 @@ number, because the layout check does not rest on a version at all.
 ```java
 public interface UnknownEntryPolicy {
 
-    int onUnknownBlock(String name, @Nullable CompoundBinaryTag properties) throws ChunkDataException;
+    String onUnknownBlock(String name, @Nullable CompoundBinaryTag properties);
 
-    int onUnknownBiome(String name) throws ChunkDataException;
+    String onUnknownBiome(String name);
 }
 ```
 
 Consulted by `BlockPaletteResolver` and `BiomePaletteResolver` where they substitute today. Returning
-an id substitutes it; throwing fails the chunk. The built-in implementation returns air and plains and
-keeps the existing counting, so behaviour without a provider is byte-for-byte what it is now.
+a name substitutes it; throwing `AnvilChunkException` fails the chunk. Built as `String` rather than
+`int` as this section originally specified: the id belongs to the registry lookup, and the project's
+architecture rule keeps that lookup in exactly one adapter — the resolver that already owns it for the
+entry it could not otherwise decode — not duplicated into every implementation of this interface. The
+built-in implementation returns `"minecraft:air"` and `"minecraft:plains"` and keeps the existing
+counting, so behaviour without a provider is byte-for-byte what it is now.
 
 This is the seam `falco-migration` needs: a converter installs a policy that throws, because on the
 upgrade path an unmappable block means the mapping data is incomplete and must be seen.
