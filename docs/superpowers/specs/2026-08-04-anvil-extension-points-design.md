@@ -89,13 +89,25 @@ upgrade path an unmappable block means the mapping data is incomplete and must b
 
 ### Resolution rules, shared by all three services
 
-The same three rules the migration spec sets out, applied uniformly:
+Applied uniformly to every service here:
 
-- **More than one provider throws**, naming them. Silent selection is how a world gets read under a
-  policy nobody chose.
+- **The shipped default steps aside for a foreign provider.** `falco-anvil` registers its own
+  implementations, so without this rule a third party taking the documented route would *always*
+  produce two providers and always hit the refusal below. Discovery could never return anything but
+  the default, and the extension point would be decoration. A named default is therefore removed from
+  the candidate set before the candidates are counted. **Added after the first implementation review
+  found the point unusable as this document originally specified it.**
+- **More than one *foreign* provider throws**, naming them — the default is not among the names,
+  because by then it is not a candidate. Silent selection between two foreign providers is how a
+  world gets read under a policy nobody chose.
 - **The builder slot and discovery are exclusive.** Setting both is a configuration error.
 - **A builder slot always wins over the classpath** when only it is used — that is what "explicit"
-  means.
+  means, and it short-circuits before the class path is consulted at all.
+- **Discovery loads with the service's own class loader**, not the thread context loader. Under
+  CloudNet, extension or plugin class loaders the context loader may not see the `falco-anvil` jar;
+  discovery would then find nothing, resolve to no policy, and put the pre-21w43a air chunk back —
+  silently, which is the failure mode this whole line of work exists to end. The contract and its
+  shipped provider live in the same module, so that module's loader is the one to ask.
 
 Discovery happens once, when the loader is built, not per chunk.
 
