@@ -640,6 +640,11 @@ class FalcoAnvilLoaderIntegrationTest {
             ChunkDataException cause = assertInstanceOf(ChunkDataException.class, failure.getCause());
             assertEquals(ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION, cause.reason());
             assertEquals(Map.of("2724", 1L), diagnostics.unsupportedChunkVersions());
+            // A refused chunk is counted once through the version breakdown above and once more as
+            // a load error, deliberately -- failedLoad's countError() runs in addition to the guard's
+            // own reporting, not instead of it. Without this line a change that moved the guard behind
+            // failedLoad, or dropped its reporting altogether, would pass unnoticed.
+            assertEquals(1, diagnostics.errors());
         }
     }
 
@@ -740,6 +745,42 @@ class FalcoAnvilLoaderIntegrationTest {
                     () -> loader.loadChunk(instance, 9, 9));
             ChunkDataException cause = assertInstanceOf(ChunkDataException.class, failure.getCause());
             assertEquals(ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION, cause.reason());
+        }
+    }
+
+    @Test
+    void testASectionsKeyStoredAsTheWrongTypeWithLevelIsRefused(Env env) throws Exception {
+        // The layout half of the guard used to ask only whether "sections" was present at all
+        // (data.get(SECTIONS_KEY) == null). A root that carries a "sections" key of the wrong type --
+        // here a string, sitting next to a full Level compound -- passed that presence check and
+        // reached decodeSections, which reads nothing usable from a string and hands back air. The
+        // check has to ask what type sections holds, not merely whether the key exists, so a chunk
+        // shaped like this is refused instead of silently decoding to air.
+        CompoundBinaryTag malformed = CompoundBinaryTag.builder()
+                .putString("sections", "not-a-list")
+                .put("Level", CompoundBinaryTag.builder()
+                        .putString("Status", "minecraft:full")
+                        .put("Sections", ListBinaryTag.empty())
+                        .build())
+                .build();
+        writeRawChunk(10, 10, malformed);
+
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            AnvilChunkException failure = assertThrows(AnvilChunkException.class,
+                    () -> loader.loadChunk(instance, 10, 10));
+            ChunkDataException cause = assertInstanceOf(ChunkDataException.class, failure.getCause());
+            assertEquals(ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION, cause.reason());
+            // No DataVersion was stamped either, so this is the layout branch of the guard, not the
+            // version branch -- the same distinction testAPreRootLayoutChunkIsRefusedInsteadOfReadAsAir
+            // makes for the plain "sections absent" shape.
+            assertEquals(Map.of(AnvilDiagnostics.UNKNOWN_DATA_VERSION, 1L), diagnostics.unsupportedChunkVersions());
         }
     }
 

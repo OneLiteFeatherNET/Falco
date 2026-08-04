@@ -7,6 +7,7 @@ import net.kyori.adventure.nbt.BinaryTagTypes;
 import net.kyori.adventure.nbt.ByteArrayBinaryTag;
 import net.kyori.adventure.nbt.CompoundBinaryTag;
 import net.kyori.adventure.nbt.ListBinaryTag;
+import net.kyori.adventure.nbt.NumberBinaryTag;
 import net.kyori.adventure.nbt.StringBinaryTag;
 import net.minestom.server.MinecraftServer;
 import net.minestom.server.coordinate.CoordConversion;
@@ -78,7 +79,7 @@ import java.util.stream.Stream;
  * </p>
  *
  * @author TheMeinerLP
- * @version 1.2.0
+ * @version 1.1.0
  * @since 0.1.0
  */
 @ApiStatus.Experimental
@@ -297,7 +298,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * </p>
      *
      * @author TheMeinerLP
-     * @version 1.0.0
+     * @version 1.1.0
      * @since 0.4.0
      */
     @ApiStatus.Experimental
@@ -1433,9 +1434,13 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      */
     private void requireReadableVersion(CompoundBinaryTag data) throws ChunkDataException {
         boolean versionMissing = data.get(DATA_VERSION_KEY) == null;
+        // A stored value that is not a number falls back to the same -1 as an absent key, but the
+        // two are not the same failure: this flag is what lets the exception below say "not a
+        // number" instead of misreporting a value ("-1") that was never actually stored.
+        boolean versionMistyped = !versionMissing && !(data.get(DATA_VERSION_KEY) instanceof NumberBinaryTag);
         int version = NbtReads.optionalInteger(data, DATA_VERSION_KEY, -1);
         String reported = versionMissing ? AnvilDiagnostics.UNKNOWN_DATA_VERSION : Integer.toString(version);
-        boolean legacyChunkLayout = data.get(SECTIONS_KEY) == null
+        boolean legacyChunkLayout = !(data.get(SECTIONS_KEY) instanceof ListBinaryTag)
                 && NbtReads.optionalCompound(data, LEGACY_LEVEL_KEY) != null;
 
         if (!legacyChunkLayout && (versionMissing || version >= this.minimumDataVersion)) {
@@ -1456,8 +1461,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                 ChunkDataException.Reason.UNSUPPORTED_CHUNK_VERSION,
                 legacyChunkLayout
                         ? "The chunk stores its data under Level, which means a version before 1.18"
-                        : "The chunk stores data version " + version
-                                + " but the loader accepts " + this.minimumDataVersion + " and above"
+                        : versionMistyped
+                                ? "The chunk does not store its DataVersion as a number"
+                                : "The chunk stores data version " + version
+                                        + " but the loader accepts " + this.minimumDataVersion + " and above"
         );
     }
 
