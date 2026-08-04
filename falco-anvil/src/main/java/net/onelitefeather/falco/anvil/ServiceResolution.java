@@ -61,7 +61,7 @@ final class ServiceResolution {
      * @return the provider, or null if the classpath carries none
      * @throws IllegalStateException if more than one provider other than {@code shippedDefault} is
      *                                registered
-     * @since 1.2.0
+     * @since 2.1.0
      */
     static <T> @Nullable T discover(Class<T> service, @Nullable Class<? extends T> shippedDefault) {
         List<T> providers = new ArrayList<>();
@@ -126,7 +126,7 @@ final class ServiceResolution {
      * @param <T>            the service type
      * @return the chosen provider, or null if the caller asked for neither
      * @throws IllegalStateException if the caller asked for both, or if discovery is ambiguous
-     * @since 1.2.0
+     * @since 2.1.0
      */
     static <T> @Nullable T choose(Class<T> service, @Nullable T explicit, boolean discover,
                                    @Nullable Class<? extends T> shippedDefault) {

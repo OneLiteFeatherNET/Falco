@@ -60,7 +60,7 @@ public final class BlockPaletteResolver implements PaletteEntryResolver {
      *
      * @param diagnostics the diagnostics which throttle the reports
      * @param policy      the policy consulted for a block the server does not know
-     * @since 1.2.0
+     * @since 2.1.0
      */
     public BlockPaletteResolver(AnvilDiagnostics diagnostics, UnknownEntryPolicy policy) {
         this.diagnostics = diagnostics;

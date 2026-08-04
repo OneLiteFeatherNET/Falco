@@ -19,7 +19,7 @@ import org.jetbrains.annotations.Nullable;
  *
  * @author TheMeinerLP
  * @version 1.0.0
- * @since 1.2.0
+ * @since 2.1.0
  */
 @ApiStatus.Experimental
 public interface UnknownEntryPolicy {

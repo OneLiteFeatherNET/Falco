@@ -65,7 +65,7 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
      *
      * @param diagnostics the diagnostics which throttle the reports
      * @param policy      the policy consulted for a biome the registry does not know
-     * @since 1.2.0
+     * @since 2.1.0
      */
     public BiomePaletteResolver(AnvilDiagnostics diagnostics, UnknownEntryPolicy policy) {
         this(diagnostics, policy, MinecraftServer::getBiomeRegistry);
@@ -102,7 +102,7 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
      * @param diagnostics      the diagnostics which throttle the reports
      * @param policy           the policy consulted for a biome the registry does not know
      * @param registrySupplier the supplier which provides the registry of the known biomes
-     * @since 1.2.0
+     * @since 2.1.0
      */
     BiomePaletteResolver(AnvilDiagnostics diagnostics, UnknownEntryPolicy policy,
                           Supplier<DynamicRegistry<Biome>> registrySupplier) {

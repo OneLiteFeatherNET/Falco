@@ -143,7 +143,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * substituting the default itself.
      * </p>
      *
-     * @since 1.2.0
+     * @since 2.1.0
      */
     private final @Nullable ChunkVersionPolicy versionPolicy;
 
@@ -162,7 +162,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * decoding.
      * </p>
      *
-     * @since 1.2.0
+     * @since 2.1.0
      */
     private final UnknownEntryPolicy unknownEntryPolicy;
 
@@ -701,7 +701,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * @param versionPolicy the policy to consult before a chunk is decoded, or null to consult
          *                      none
          * @return a new builder with this value
-         * @since 1.2.0
+         * @since 2.1.0
          */
         @Contract(value = "_ -> new", pure = true)
         public Builder versionPolicy(@Nullable ChunkVersionPolicy versionPolicy) {
@@ -733,7 +733,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * </p>
          *
          * @return a new builder with this value
-         * @since 1.2.0
+         * @since 2.1.0
          */
         @Contract(value = "-> new", pure = true)
         public Builder discoverVersionPolicy() {
@@ -774,7 +774,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * @param unknownEntryPolicy the policy to consult for an unknown palette entry, or null to
          *                           fall back to the classpath default
          * @return a new builder with this value
-         * @since 1.2.0
+         * @since 2.1.0
          */
         @Contract(value = "_ -> new", pure = true)
         public Builder unknownEntryPolicy(@Nullable UnknownEntryPolicy unknownEntryPolicy) {
@@ -806,7 +806,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
          * </p>
          *
          * @return a new builder with this value
-         * @since 1.2.0
+         * @since 2.1.0
          */
         @Contract(value = "-> new", pure = true)
         public Builder discoverUnknownEntryPolicy() {
@@ -1328,7 +1328,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * </p>
      *
      * @return the resolved policy, or null if the loader checks no chunk version at all
-     * @since 1.2.0
+     * @since 2.1.0
      */
     @Contract(pure = true)
     @Nullable ChunkVersionPolicy versionPolicy() {
@@ -1343,7 +1343,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * </p>
      *
      * @return the resolved policy, never null
-     * @since 1.2.0
+     * @since 2.1.0
      */
     @Contract(pure = true)
     UnknownEntryPolicy unknownEntryPolicy() {
