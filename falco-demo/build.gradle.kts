@@ -30,6 +30,9 @@ val demoGroup = "falco demo"
 val mainSourceSet = extensions.getByType<SourceSetContainer>().named("main")
 val toolchains = extensions.getByType<JavaToolchainService>()
 
+val demoWorld = providers.gradleProperty("world")
+    .orElse(layout.projectDirectory.dir("world").asFile.absolutePath)
+
 fun JavaExec.configureDemo(loader: String) {
     group = demoGroup
     mainClass.set(demoMain)
@@ -38,7 +41,7 @@ fun JavaExec.configureDemo(loader: String) {
         languageVersion.set(JavaLanguageVersion.of(25))
     })
 
-    systemProperty("falco.demo.world", layout.projectDirectory.dir("world").asFile.absolutePath)
+    systemProperty("falco.demo.world", demoWorld.get())
 
     argumentProviders.add(CommandLineArgumentProvider {
         val options = mutableListOf("--loader=$loader")
@@ -71,7 +74,7 @@ fun JavaExec.configureServer(stack: String) {
         languageVersion.set(JavaLanguageVersion.of(25))
     })
 
-    systemProperty("falco.demo.world", layout.projectDirectory.dir("world").asFile.absolutePath)
+    systemProperty("falco.demo.world", demoWorld.get())
     systemProperty("minestom.chunk-view-distance", viewDistance.get())
 
     systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "info")
