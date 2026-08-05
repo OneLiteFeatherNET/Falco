@@ -265,7 +265,7 @@ class SectionStepsTest {
         CompoundBinaryTag chunk = CompoundBinaryTag.builder()
                 .putIntArray("Biomes", biomes)
                 .put("sections", ListBinaryTag.from(List.of(
-                        CompoundBinaryTag.builder().putInt("Y", 0).build())))
+                        CompoundBinaryTag.builder().putInt("Y", 0).put("Palette", airPalette()).build())))
                 .build();
 
         CompoundBinaryTag rebuilt = new RebuildBiomes().apply(chunk, ANY_CONTEXT);
@@ -307,8 +307,8 @@ class SectionStepsTest {
         CompoundBinaryTag chunk = CompoundBinaryTag.builder()
                 .putIntArray("Biomes", legacy)
                 .put("sections", ListBinaryTag.from(List.of(
-                        CompoundBinaryTag.builder().putInt("Y", 0).build(),
-                        CompoundBinaryTag.builder().putInt("Y", 5).build())))
+                        CompoundBinaryTag.builder().putInt("Y", 0).put("Palette", airPalette()).build(),
+                        CompoundBinaryTag.builder().putInt("Y", 5).put("Palette", airPalette()).build())))
                 .build();
 
         CompoundBinaryTag rebuilt = new RebuildBiomes().apply(chunk, ANY_CONTEXT);
@@ -343,7 +343,7 @@ class SectionStepsTest {
         CompoundBinaryTag chunk = CompoundBinaryTag.builder()
                 .putIntArray("Biomes", biomes)
                 .put("sections", ListBinaryTag.from(List.of(
-                        CompoundBinaryTag.builder().putInt("Y", 0).build())))
+                        CompoundBinaryTag.builder().putInt("Y", 0).put("Palette", airPalette()).build())))
                 .build();
 
         MigrationException exception = assertThrows(MigrationException.class,
@@ -351,36 +351,75 @@ class SectionStepsTest {
         assertTrue(exception.getMessage().contains("253"));
     }
 
-    // --- Sections outside the fixed 0..15 range ---------------------------------------------------
+    // --- Sections without block data, discarded by content rather than by Y range -----------------
 
     @Test
-    void testASectionBelowZeroDoesNotCrashRebuildBiomesAndIsDroppedRatherThanKept() {
-        // Vanilla writes one extra section below the real 0..15 range (Y = -1) purely to carry
-        // lighting data for the section it borders. Without discarding it first, its offset into
-        // the widened biome array (-1 * 64 = -64) is negative and indexing it throws
-        // ArrayIndexOutOfBoundsException rather than a MigrationException.
-        int[] biomes = new int[1024];
-        java.util.Arrays.fill(biomes, 1);
-
+    void testASectionWithoutBlockDataAtNegativeYIsDroppedRatherThanKept() {
+        // Vanilla writes one extra section below a chunk's real content (Y = -1) purely to carry
+        // lighting data for the section it borders; such a section never carries Palette,
+        // BlockStates or block_states. No Biomes array is present, so only the content-based
+        // discarding itself is exercised here, independent of the Y < 0 guard around the biome
+        // offset (that guard is proven separately below).
+        CompoundBinaryTag lightingOnly = CompoundBinaryTag.builder().putInt("Y", -1).build();
+        CompoundBinaryTag realContent = CompoundBinaryTag.builder().putInt("Y", 0).put("Palette", airPalette()).build();
         CompoundBinaryTag chunk = CompoundBinaryTag.builder()
-                .putIntArray("Biomes", biomes)
-                .put("sections", ListBinaryTag.from(List.of(
-                        CompoundBinaryTag.builder().putInt("Y", -1).build(),
-                        CompoundBinaryTag.builder().putInt("Y", 0).build())))
+                .put("sections", ListBinaryTag.from(List.of(lightingOnly, realContent)))
                 .build();
 
         CompoundBinaryTag rebuilt = new RebuildBiomes().apply(chunk, ANY_CONTEXT);
 
         ListBinaryTag sections = rebuilt.getList("sections");
-        assertEquals(1, sections.size(), "the Y=-1 lighting-only section must not survive into the output");
+        assertEquals(1, sections.size(), "the section without block data must not survive into the output");
         assertEquals(0, sections.getCompound(0).getInt("Y"));
     }
 
     @Test
-    void testAnOutOfRangeSectionDoesNotCountTowardsSettleYRangesMinimum() {
-        // Exercised directly against SettleYRange, independent of whether RebuildBiomes already
-        // ran and already cleaned the list - the step re-checks the range itself rather than
-        // trusting the chain's ordering (see its own Javadoc).
+    void testASectionWithBlockDataAtNegativeYSurvivesWhenNoBiomesArrayIsPresent() {
+        // A configurable-height world (possible from DataVersion 2685 onward) can genuinely store
+        // real content below Y = 0; a section carrying block data there must survive discarding,
+        // regardless of its Y. No Biomes array is present, so the offset guard below never fires.
+        CompoundBinaryTag realContentBelowZero = CompoundBinaryTag.builder()
+                .putInt("Y", -1)
+                .put("Palette", airPalette())
+                .build();
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("sections", ListBinaryTag.from(List.of(realContentBelowZero)))
+                .build();
+
+        CompoundBinaryTag rebuilt = new RebuildBiomes().apply(chunk, ANY_CONTEXT);
+
+        ListBinaryTag sections = rebuilt.getList("sections");
+        assertEquals(1, sections.size(), "a section with real block data must survive regardless of its Y");
+        assertEquals(-1, sections.getCompound(0).getInt("Y"));
+    }
+
+    @Test
+    void testABiomesArrayWithASurvivingSectionBelowZeroThrowsRatherThanMisplacingTheOffset() {
+        // The section at Y = -1 carries block data, so it survives discarding and reaches the
+        // offset guard; this step's Y * SECTION_BIOME_ENTRIES offset assumes the lowest section is
+        // Y = 0, which does not hold here, so the chunk must be refused rather than writing every
+        // biome layer 64 blocks off from where it belongs.
+        int[] biomes = new int[1024];
+        java.util.Arrays.fill(biomes, 1);
+        CompoundBinaryTag sectionBelowZero = CompoundBinaryTag.builder()
+                .putInt("Y", -1)
+                .put("Palette", airPalette())
+                .build();
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .putIntArray("Biomes", biomes)
+                .put("sections", ListBinaryTag.from(List.of(sectionBelowZero)))
+                .build();
+
+        MigrationException exception = assertThrows(MigrationException.class,
+                () -> new RebuildBiomes().apply(chunk, ANY_CONTEXT));
+        assertTrue(exception.getMessage().contains("-1"));
+    }
+
+    @Test
+    void testSettleYRangeUsesTheActualLowestSectionEvenWhenItIsNegative() {
+        // The range filter this step used to apply is gone: every remaining section counts, because
+        // RebuildBiomes (earlier in the chain) is now trusted to have already removed anything
+        // without block data, whatever its Y.
         CompoundBinaryTag chunk = CompoundBinaryTag.builder()
                 .put("sections", ListBinaryTag.from(List.of(
                         CompoundBinaryTag.builder().putInt("Y", -1).build())))
@@ -388,15 +427,25 @@ class SectionStepsTest {
 
         CompoundBinaryTag settled = new SettleYRange().apply(chunk, ANY_CONTEXT);
 
-        assertEquals(0, settled.getInt("yPos"),
-                "no in-range section is present, so this falls back to the same default an empty list gets");
+        assertEquals(-1, settled.getInt("yPos"), "the chunk's only section is at Y = -1, so yPos must be -1");
     }
 
     @Test
-    void testSectionsAtYMinusOneAndYSixteenSurviveTheWholeChainDiscardedRatherThanCorruptingItOrYPos() {
-        // The end-to-end version of the two direct tests above: a chunk with a lighting-only
-        // section on both sides of the real range must migrate cleanly, end up with only its one
-        // real section, and settle yPos on that real section's own Y rather than the discarded one.
+    void testSettleYRangeLeavesAChunkWithNoSectionsUnchangedRatherThanInventingYPosZero() {
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("sections", ListBinaryTag.empty())
+                .build();
+
+        CompoundBinaryTag settled = new SettleYRange().apply(chunk, ANY_CONTEXT);
+
+        assertNull(settled.get("yPos"), "there is no section for yPos to describe, so none must be invented");
+    }
+
+    @Test
+    void testASectionWithoutBlockDataAtBothBordersIsDiscardedByTheWholeChainRatherThanCorruptingItOrYPos() {
+        // The end-to-end version of the direct tests above: a chunk with a lighting-only section on
+        // both sides of its real content must migrate cleanly, end up with only its one real
+        // section, and settle yPos on that real section's own Y rather than a discarded one.
         int[] biomes = new int[1024];
         java.util.Arrays.fill(biomes, 1);
 
@@ -409,7 +458,8 @@ class SectionStepsTest {
                         .putIntArray("Biomes", biomes)
                         .put("Sections", ListBinaryTag.from(List.of(
                                 CompoundBinaryTag.builder().putByte("Y", (byte) -1).build(),
-                                CompoundBinaryTag.builder().putByte("Y", (byte) 0).build(),
+                                CompoundBinaryTag.builder().putByte("Y", (byte) 0)
+                                        .put("Palette", airPalette()).build(),
                                 CompoundBinaryTag.builder().putByte("Y", (byte) 16).build())))
                         .build())
                 .build();
@@ -417,9 +467,20 @@ class SectionStepsTest {
         CompoundBinaryTag migrated = ChunkMigration.migrate(chunk, 4790);
 
         ListBinaryTag sections = migrated.getList("sections");
-        assertEquals(1, sections.size(), "only Y=0 is real content; Y=-1 and Y=16 are lighting-only");
+        assertEquals(1, sections.size(), "only Y=0 carries block data; Y=-1 and Y=16 are lighting-only");
         assertEquals(0, sections.getCompound(0).getInt("Y"));
-        assertEquals(0, migrated.getInt("yPos"), "the lowest REAL section is 0, not the discarded Y=-1");
+        assertEquals(0, migrated.getInt("yPos"), "the lowest REAL section is 0, not a discarded lighting-only one");
+    }
+
+    /**
+     * A section built by hand for these tests, carrying just enough block data ({@code Palette} with
+     * one air entry, no {@code BlockStates} — a single-entry palette needs no packed data, per
+     * {@link NormaliseBitPacking}'s own javadoc) to survive {@link RebuildBiomes}'s content-based
+     * discarding without affecting a test's own assertions.
+     */
+    private static ListBinaryTag airPalette() {
+        return ListBinaryTag.from(List.of(
+                CompoundBinaryTag.builder().putString("Name", "minecraft:air").build()));
     }
 
     // --- TranslateBlockStates, including the full-chain Gegenprobe target -----------------------

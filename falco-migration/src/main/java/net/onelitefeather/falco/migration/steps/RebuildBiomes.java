@@ -72,17 +72,42 @@ import java.util.Map;
  * this module.
  * </p>
  * <p>
- * <b>A section outside the fixed pre-1.18 range, {@code Y} {@value #MIN_SECTION_Y} to
- * {@value #MAX_SECTION_Y}, is discarded before anything else runs.</b> Vanilla itself writes one
- * extra section below and one above that range purely to carry lighting data for the sections that
- * border them — Minestom's own Anvil loader throws exactly these away on load, with the comment
- * "Vanilla stores a section below and above the world for lighting, throw it out" (checked in the
- * sources jar of {@code net.minestom:minestom}, {@code AnvilLoader.java:207-209}). Nothing upstream of
- * this step drops them, so without this check {@code Y = -1} would index this step's widened biome
- * array at a negative offset and throw {@link ArrayIndexOutOfBoundsException} — an unchecked failure
- * this module's fail-loud stance does not consider acceptable — and a border section that happened
- * to unpack cleanly would otherwise survive into the target's own {@code -4}..{@code 19} range as a
- * spurious empty section nobody asked for.
+ * <b>A section that carries no block data is discarded before anything else runs, regardless of its
+ * {@code Y}.</b> Vanilla itself writes one extra section below and one above a chunk's real content
+ * purely to carry lighting data for the sections that border them — Minestom's own Anvil loader
+ * throws exactly these away on load, with the comment "Vanilla stores a section below and above the
+ * world for lighting, throw it out" (checked in the sources jar of {@code net.minestom:minestom},
+ * {@code AnvilLoader.java:207-209}). An earlier version of this step told such a section apart from a
+ * real one by a fixed {@code Y} range, {@code 0} to {@code 15} — which only holds for a world whose
+ * height is the pre-1.18 default, {@code 0}..{@code 255}. Configurable world height is not a 1.18
+ * feature: it landed three snapshots into 1.17's own cycle, 20w49a, DataVersion 2685 (confirmed
+ * against that snapshot's own minecraft.wiki changelog, fetched 2026-08-05: "Added {@code height} and
+ * {@code min_y} variables to dimension types, allowing for the height limit to be increased in custom
+ * world settings") — below every source version this step ever runs for. A world converted while
+ * using such a custom height genuinely stores content sections outside {@code 0}..{@code 15}; the
+ * fixed-range check silently discarded those instead of the lighting-only sections it meant to catch,
+ * for both a custom-height 1.17 world and a stock 1.18-generation Overworld caught mid-conversion
+ * (DataVersion 2836-2843) whose sections already span the new {@code -4}..{@code 19} range under the
+ * old {@code Level}-based layout. This step instead discards a section carrying none of
+ * {@code Palette}, {@code BlockStates}, or {@code block_states} — the only names a legacy or an
+ * already-normalised section's block data is ever stored under — which is exactly the lighting-only
+ * sections vanilla writes, independent of where they sit, and never a section that actually holds
+ * blocks. Nothing upstream of this step drops them, so without this check a lighting-only section at
+ * a negative {@code Y} would otherwise index this step's widened biome array at a negative offset and
+ * throw {@link ArrayIndexOutOfBoundsException} — an unchecked failure this module's fail-loud stance
+ * does not consider acceptable — and a border section that happened to unpack cleanly would otherwise
+ * survive into the target's own section range as a spurious empty section nobody asked for.
+ * </p>
+ * <p>
+ * <b>Where the surviving sections actually start still has to be known to place biomes correctly, and
+ * this step refuses to guess it.</b> {@link #biomeContainer} indexes the widened, whole-chunk biome
+ * array with {@code sectionY * SECTION_BIOME_ENTRIES}, which only lands on the right layer if the
+ * chunk's lowest surviving section is {@code Y = 0} — true for every fixed-height pre-1.18 world, but
+ * not for a world converted from a custom height range whose sections start below zero, which
+ * {@code Y} alone no longer distinguishes from the fixed-height case now that content is what decides
+ * a section's survival. Rather than writing a biome layer 64 blocks off from the section it actually
+ * belongs to, this step throws {@link MigrationException} the moment a whole-chunk {@code Biomes}
+ * array is present alongside any surviving section at {@code Y < 0}.
  * </p>
  *
  * @since 2.1.0
@@ -99,17 +124,18 @@ public final class RebuildBiomes implements MigrationStep {
     private static final String DATA_KEY = "data";
     private static final String SECTION_Y_KEY = "Y";
 
+    /**
+     * The three names a section's own block data is ever stored under in this module's source range —
+     * see this class's own javadoc for why their absence, rather than a fixed {@code Y} range, is what
+     * marks a lighting-only section.
+     */
+    private static final String LEGACY_PALETTE_KEY = "Palette";
+    private static final String LEGACY_BLOCK_STATES_KEY = "BlockStates";
+    private static final String MODERN_BLOCK_STATES_KEY = "block_states";
+
     private static final int PRE_WIDENING_ENTRIES = 256;
     private static final int WIDENED_ENTRIES = 1024;
     private static final int SECTION_BIOME_ENTRIES = 4 * 4 * 4;
-
-    /**
-     * The fixed section range every pre-1.18 chunk in this module's range actually stores content
-     * for — see this class's own javadoc for why a section outside it is discarded rather than
-     * processed.
-     */
-    private static final int MIN_SECTION_Y = 0;
-    private static final int MAX_SECTION_Y = 15;
 
     /**
      * Minestom's {@code net.minestom.server.instance.palette.Palette.BIOME_PALETTE_MIN_BITS}
@@ -138,12 +164,13 @@ public final class RebuildBiomes implements MigrationStep {
      * @param chunk   {@inheritDoc}
      * @param context {@inheritDoc}
      * @return {@inheritDoc}
-     * @throws MigrationException if {@code Biomes} holds neither 256 nor 1024 entries, or holds a
-     *                             legacy numeric id this step's table does not know
+     * @throws MigrationException if {@code Biomes} holds neither 256 nor 1024 entries, holds a legacy
+     *                             numeric id this step's table does not know, or is present alongside
+     *                             a surviving section at {@code Y < 0}
      */
     @Override
     public CompoundBinaryTag apply(CompoundBinaryTag chunk, MigrationContext context) {
-        chunk = discardSectionsOutsideTheFixedRange(chunk);
+        chunk = discardSectionsWithoutBlockData(chunk);
 
         if (!(chunk.get(BIOMES_KEY) instanceof IntArrayBinaryTag biomesTag)) {
             return chunk;
@@ -158,6 +185,17 @@ public final class RebuildBiomes implements MigrationStep {
         }
 
         ListBinaryTag sections = chunk.getList(SECTIONS_KEY, BinaryTagTypes.COMPOUND);
+        for (BinaryTag sectionTag : sections) {
+            if (sectionTag instanceof CompoundBinaryTag section && section.getInt(SECTION_Y_KEY) < 0) {
+                throw new MigrationException("The chunk carries a whole-chunk 'Biomes' array and a "
+                        + "surviving section at Y = " + section.getInt(SECTION_Y_KEY) + "; this step's "
+                        + "biome offset (Y * " + SECTION_BIOME_ENTRIES + ") assumes the chunk's lowest "
+                        + "section is Y = 0, which does not hold for a world with a shifted "
+                        + "(below-zero) height range, so the chunk is refused instead of silently "
+                        + "writing every biome layer at the wrong height");
+            }
+        }
+
         ListBinaryTag rebuilt = ListBinaryTag.empty();
         for (BinaryTag sectionTag : sections) {
             if (!(sectionTag instanceof CompoundBinaryTag section)) {
@@ -172,13 +210,13 @@ public final class RebuildBiomes implements MigrationStep {
     }
 
     /**
-     * Drops every section whose {@code Y} falls outside {@value #MIN_SECTION_Y}..
-     * {@value #MAX_SECTION_Y} — see this class's own javadoc for why vanilla writes them and why they
-     * must not reach the biome-rebuilding logic below. Runs first, and unconditionally, so it also
-     * protects a chunk that has no {@code Biomes} field at all (an early return further down would
-     * otherwise skip this check entirely for such a chunk).
+     * Drops every section carrying none of {@link #LEGACY_PALETTE_KEY}, {@link #LEGACY_BLOCK_STATES_KEY}
+     * or {@link #MODERN_BLOCK_STATES_KEY} — see this class's own javadoc for why the absence of block
+     * data, rather than a fixed {@code Y} range, is what marks a lighting-only section. Runs first, and
+     * unconditionally, so it also protects a chunk that has no {@code Biomes} field at all (an early
+     * return further down would otherwise skip this check entirely for such a chunk).
      */
-    private static CompoundBinaryTag discardSectionsOutsideTheFixedRange(CompoundBinaryTag chunk) {
+    private static CompoundBinaryTag discardSectionsWithoutBlockData(CompoundBinaryTag chunk) {
         ListBinaryTag sections = chunk.getList(SECTIONS_KEY, BinaryTagTypes.COMPOUND);
         if (sections.size() == 0) {
             return chunk;
@@ -187,16 +225,19 @@ public final class RebuildBiomes implements MigrationStep {
         ListBinaryTag kept = ListBinaryTag.empty();
         boolean droppedAny = false;
         for (BinaryTag sectionTag : sections) {
-            if (sectionTag instanceof CompoundBinaryTag section) {
-                int sectionY = section.getInt(SECTION_Y_KEY);
-                if (sectionY < MIN_SECTION_Y || sectionY > MAX_SECTION_Y) {
-                    droppedAny = true;
-                    continue;
-                }
+            if (sectionTag instanceof CompoundBinaryTag section && !hasBlockData(section)) {
+                droppedAny = true;
+                continue;
             }
             kept = kept.add(sectionTag);
         }
         return droppedAny ? chunk.put(SECTIONS_KEY, kept) : chunk;
+    }
+
+    private static boolean hasBlockData(CompoundBinaryTag section) {
+        return section.get(LEGACY_PALETTE_KEY) != null
+                || section.get(LEGACY_BLOCK_STATES_KEY) != null
+                || section.get(MODERN_BLOCK_STATES_KEY) != null;
     }
 
     private static int[] widen(int[] legacy) {

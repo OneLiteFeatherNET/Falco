@@ -42,18 +42,22 @@ import org.jetbrains.annotations.ApiStatus;
  * </p>
  * <p>
  * Runs after {@link UnfoldLevel}, so it reads the root {@code sections} list. A chunk whose
- * {@code sections} list is empty, or absent, gets {@code yPos = 0} — the floor every version below
- * 2844 in this module's range actually used (see {@code UnfoldLevel}'s own javadoc) — rather than an
- * arbitrary default.
+ * {@code sections} list is empty, or absent, is returned unchanged rather than stamped with an
+ * invented {@code yPos} — there is no section in the chunk for any such value to describe.
  * </p>
  * <p>
- * <b>A section outside {@value #MIN_SECTION_Y}..{@value #MAX_SECTION_Y} does not count.</b> Vanilla
- * writes one extra section below and one above the real range purely to carry lighting data — see
- * {@link RebuildBiomes}'s own javadoc, which discards these before this step ever runs, for the
- * sourcing. This step re-checks the same range on its own rather than trusting that ordering: were it
- * ever exercised on a chunk {@code RebuildBiomes} had not already cleaned — directly, in a test, or
- * because the chain is reordered later — a lighting-only section at {@code Y = -1} would otherwise
- * compute {@code yPos = -1}, which is not a section this chunk has any real content for.
+ * <b>Every remaining section counts, without a fixed range filter.</b> An earlier version of this
+ * step ignored a section outside a fixed {@code Y} range of {@code 0}..{@code 15} on the theory that
+ * only vanilla's own lighting-only border sections — one below and one above a chunk's real content,
+ * discarded by {@link RebuildBiomes} earlier in the chain — could ever fall outside it. That theory
+ * held only for a world at the pre-1.18 fixed height, {@code 0}..{@code 255}; see
+ * {@link RebuildBiomes}'s own javadoc for why a world converted from a custom height (possible from
+ * DataVersion 2685 onward, well below every source version this step runs for) can genuinely store
+ * real content sections outside that range, and for why {@code Y} alone can no longer be trusted to
+ * tell such a section apart from a lighting-only one. This step now trusts {@link RebuildBiomes} to
+ * have already removed every section that carries no block data, and simply takes the lowest
+ * {@code Y} among whatever sections remain — never filtering by, or falling back to, a fixed number
+ * that might not correspond to any section the chunk actually has.
  * </p>
  *
  * @since 2.1.0
@@ -70,13 +74,6 @@ public final class SettleYRange implements MigrationStep {
     private static final String SECTIONS_KEY = "sections";
     private static final String SECTION_Y_KEY = "Y";
     private static final String Y_POS_KEY = "yPos";
-
-    /**
-     * The fixed section range every pre-1.18 chunk in this module's range actually stores content
-     * for — see this class's own javadoc for why a section outside it must not count.
-     */
-    private static final int MIN_SECTION_Y = 0;
-    private static final int MAX_SECTION_Y = 15;
 
     /**
      * Creates a new instance of this stateless step.
@@ -98,9 +95,6 @@ public final class SettleYRange implements MigrationStep {
         for (BinaryTag sectionTag : sections) {
             if (sectionTag instanceof CompoundBinaryTag section) {
                 int sectionY = section.getInt(SECTION_Y_KEY);
-                if (sectionY < MIN_SECTION_Y || sectionY > MAX_SECTION_Y) {
-                    continue;
-                }
                 if (!any || sectionY < lowest) {
                     lowest = sectionY;
                     any = true;
@@ -108,6 +102,6 @@ public final class SettleYRange implements MigrationStep {
             }
         }
 
-        return chunk.putInt(Y_POS_KEY, lowest);
+        return any ? chunk.putInt(Y_POS_KEY, lowest) : chunk;
     }
 }
