@@ -785,3 +785,254 @@ what Task 5's Gegenprobe attacks. `MigrationException` is this module's own **un
 transcribed from a research document rather than derived. If it is wrong it is silent — the chunk
 loads and the wiring looks subtly different. Task 3 says to stop and report rather than invent, and
 the acceptance does not claim the rule is verified against a real world, because nothing here can.
+
+## Result
+
+Acceptance run against `999b9fc6` (branch tip, `feat/migration-engine`), worktree
+`/mnt/projects/oss/onelitefeather/Falco-worktrees/migration-engine`, forked from `origin/main` at
+`94dc7617` (#47, `feat(anvil)!: make the version guard and the unknown-entry fallback replaceable
+services`). Two changes landed during this acceptance itself, both explicitly permitted by the task
+brief; everything else below is measurement and two reverted attacks.
+
+### Cases added per task (from the JUnit XML, `falco-migration` — 43 total)
+
+| File | Cases | Task |
+| --- | ---: | --- |
+| `WorldLayoutTest` | 7 | Task 2 |
+| `BlockStateRulesTest` | 10 | Task 3 |
+| `ChunkMigrationTest` | 5 | Task 4 |
+| `LegacyBitReaderTest` | 2 | Task 5 |
+| `SectionStepsTest` | 13 | Tasks 5 + 6 (shared file; the wiring got contaminated across the two parallel worktrees, see the ledger) |
+| `BlockEntityStepTest` | 6 | Task 6 |
+
+`7 + 10 + 5 + 2 + 13 + 6 = 43`, matching the module's own measured total exactly. Task 1 added no
+test file of its own (`MigrationBoundaryTest` lives in `falco-archunit`, counted in that module's 48).
+
+### This acceptance's own additions
+
+- **`falco-anvil/src/test/java/net/onelitefeather/falco/anvil/MigrationEnginePropertyDefaultTest.java`**
+  (Step 3, the free half the plan pins rather than implements) — 3 cases:
+  `testAConvertedCoralWithoutWaterloggedEndsUpWaterloggedTrue`,
+  `testAConvertedConduitWithoutWaterloggedEndsUpWaterloggedTrue`,
+  `testAnOrdinaryWaterloggableBlockWithoutWaterloggedEndsUpWaterloggedFalse`. It exercises
+  `Block.fromKey(name).withProperties(...)`, the exact call `BlockPaletteResolver.toId` already uses
+  in production, and its defaults are cross-checked against `net.minestom:data:26.1.2-rv1`'s own
+  `block.json` rather than assumed: `defaultStateId` for `minecraft:tube_coral` and
+  `minecraft:conduit` both resolve to their `[waterlogged=true]` state; `minecraft:oak_fence`'s
+  resolves to `[...,waterlogged=false,...]`. Lives in `falco-anvil` rather than `falco-migration`
+  because resolving a default needs `Block`, which `migrationKnowsNoMinestom` forbids.
+- **`falco-migration/src/main/java/net/onelitefeather/falco/migration/steps/RebuildBiomes.java:117`**
+  — the dead `{@link NormaliseBitPacking#BLOCK_PALETTE_MIN_BITS}` (a field the same diff that added
+  it, `999b9fc6`, removed from that class) now reads `{@link TranslateBlockStates#BLOCK_PALETTE_MIN_BITS}`,
+  the field the pinned constant's comment was actually pointing at ("this module cannot depend on
+  Minestom" — true of both classes' own pinned constants, and `TranslateBlockStates.BLOCK_PALETTE_MIN_BITS`
+  is the one that still exists). No behavioural change; javadoc never rendered this link either way
+  because the target was always `private`.
+
+### Gate attacks (Task 7 Step 4 / brief item c, each run against the full seven-module suite, each reverted)
+
+**Attack 1 — `RebuildBiomes.discardSectionsOutsideTheFixedRange` neutralised to `return chunk;`
+immediately.** This is the exact regression the previous acceptance round found in real world data
+(ledger: "RebuildBiomes warf AIOOBE auf jedem echten Vanilla-Chunk vor 1.18") and Task 5+6's fix
+round closed. Full suite run: `BUILD FAILED`, `:falco-migration:test FAILED`, two cases in
+`SectionStepsTest` red, both `java.lang.ArrayIndexOutOfBoundsException: Index -64 out of bounds for
+length 1024`:
+- `testASectionBelowZeroDoesNotCrashRebuildBiomesAndIsDroppedRatherThanKept`
+- `testSectionsAtYMinusOneAndYSixteenSurviveTheWholeChainDiscardedRatherThanCorruptingItOrYPos`
+
+No other module's tests moved. Reverted; `git diff` against the file was empty afterward.
+
+**Attack 2 — `TranslateBlockStates.apply` passed `context.targetVersion()` to `translate` instead of
+`context.sourceVersion()`.** This is Task 5's own Gegenprobe, re-injected as the brief instructs.
+Full suite run: `BUILD FAILED`, `:falco-migration:test FAILED`, three cases in `SectionStepsTest`
+red:
+- `testACobblestoneWallWithNorthTrueSurvivesTheWholeChainAsNorthLow` — `expected: <low> but was:
+  <true>`, exactly the wall case the brief predicted ("Der Wandfall muss rot werden").
+- `testALegacyTopLevelPaletteBecomesAModernBlockStatesContainer` and
+  `testAnOverWidthPackedLegacyPaletteIsDecodedAtItsActualWidthNotThePaletteMinimum` — both assert
+  `stone_slab` renamed to `smooth_stone_slab` below DataVersion 1901 and got `minecraft:stone_slab`
+  back unchanged, because with the target version (4790) substituted in, no rule's `since()` is ever
+  greater than the version handed to `translate`.
+
+Reverted; `git diff` against the file was empty afterward. Both attacks confirm what the brief asked
+for: the full suite catches each defect, not a narrowly scoped test class — `SectionStepsTest` is the
+one file exercising the whole chain end-to-end, and it is what goes red in both cases.
+
+### Module counts (`./gradlew :falco-anvil:test :falco-light:test :falco-instance:test :falco-demo:test :falco-benchmarks:test :falco-archunit:test :falco-migration:test --rerun-tasks`, counted from `<testcase>` elements under `build/test-results/test/`)
+
+| Module | Baseline cited in `2026-08-04-anvil-extension-points.md`'s own `## Result` | Re-measured at the actual fork point `94dc7617` | Count now | Delta vs. fork point |
+| --- | ---: | ---: | ---: | ---: |
+| falco-anvil | 255 | 258 | 261 | +3 |
+| falco-light | 223 | — | 223 | 0 |
+| falco-instance | 259 | — | 259 | 0 |
+| falco-demo | 167 | — | 167 | 0 |
+| falco-benchmarks | 42 (1 skipped) | — | 42 (1 skipped) | 0 |
+| falco-archunit | 47 | 48 | 48 | 0 (see below) |
+| falco-migration | — (new module) | — | 43 | new |
+
+**A discrepancy worth recording, not smoothing over.** The brief points at the anvil-extension-points
+document's baseline of 255 for `falco-anvil`. Re-running that document's own commit
+(`94dc7617`, which is where `origin/main` — and this branch's fork point — actually sit; `git
+merge-base HEAD origin/main` returns `94dc7617` exactly) with `:falco-anvil:test --rerun-tasks`
+measures **258**, not 255, with zero other differences: `git diff 94dc7617 HEAD -- falco-anvil/src/test`
+is empty apart from this acceptance's own new file. The most likely explanation is that the cited
+255 was measured against `a7f7b574`, a pre-merge branch tip the document names explicitly, and three
+more `falco-anvil` tests landed between that commit and the squash/merge that became `94dc7617` —
+the document does not re-verify itself against the merged commit. Either way, **no count fell**:
+261 (now) ≥ 258 (re-measured fork point) ≥ 255 (document's own baseline), and the module's real
+growth this acceptance is the +3 pinning test from Step 3, not an unexplained gap.
+`falco-archunit`'s own baseline in that document is 47; this branch's fork point already carries 48
+(one more than the document's post-fix figure), and it holds at 48 here too — `MigrationBoundaryTest`
+existing without failing confirms Task 1's rule still sees the module it guards (matching the ledger:
+"Task 1: complete ... Gegenprobe gefahren").
+
+All seven modules: `BUILD SUCCESSFUL`, zero failures, zero errors, the one pre-existing skip in
+`falco-benchmarks` unchanged.
+
+### Build with javadoc and the API check (`./gradlew build -x test --rerun-tasks`)
+
+`BUILD SUCCESSFUL`. Full `--rerun-tasks` output grepped case-insensitively for "warning": zero
+matches.
+
+**`javadoc` genuinely executed** for `falco-anvil`, `falco-light`, `falco-instance` (the three
+modules `withJavadocJar()` is applied to) and, separately, `falco-demo` — the latter is not a
+published module either, but its own `build.gradle.kts` explicitly wires
+`tasks.named("check") { dependsOn(tasks.named("javadoc")) }`.
+
+**`javadoc` did *not* run for `falco-migration` under this exact command — confirmed, not assumed.**
+The full `--rerun-tasks` task graph for `build -x test` lists `:falco-migration:compileJava`,
+`:falco-migration:classes`, `:falco-migration:jar`, `:falco-migration:assemble`,
+`:falco-migration:check`, `:falco-migration:build` — no `:falco-migration:javadoc` anywhere in it.
+`falco-migration/build.gradle.kts` has no `check`/`javadoc` wiring of its own (unlike `falco-demo`'s),
+and the root build only wires `javadoc` into the build graph for the three modules that call
+`withJavadocJar()`. The task itself exists (`./gradlew :falco-migration:tasks --all` lists a plain
+`javadoc` task, inherited from the `java-library` plugin applied to every subproject) but nothing in
+the `build`/`check` lifecycle ever asks for it. Invoked directly and in isolation,
+`./gradlew :falco-migration:javadoc --rerun-tasks` does succeed cleanly under this project's
+`-Werror` setting (`BUILD SUCCESSFUL`, no warnings) — so the content is fine, including the corrected
+link above — but the acceptance's own `build -x test` step never exercises it. This is the same class
+of gap the previous acceptance's `falco-archunit` regression was: a check that exists but that
+nothing in this module's own build file asks the aggregate build to run.
+
+**`checkApiCompatibility` is not silently skipped for `falco-migration` — it is not registered at
+all, and that is a structural fact, not a workaround.** `publishedModules` in the root
+`build.gradle.kts` (line 66) is `listOf(falco-anvil, falco-light, falco-instance, falco-bom)`;
+`falco-migration` is not in it. The `japicmp` plugin, `withJavadocJar()`/`withSourcesJar()`, and
+`maven-publish` are all applied only to that list (lines 68–102, 122–171), so `falco-migration` gets
+none of them — confirmed by `./gradlew :falco-migration:tasks --all`, which lists no
+`checkApiCompatibility`, no `javadocJar`, no `sourcesJar`, no `publish` task whatsoever. There is
+consequently no baseline lookup, no `net.onelitefeather:falco-migration:1.0.0` resolution attempt,
+and nothing to fail or pass — the module is simply not part of the API-compatibility machinery yet,
+the same way it is not yet part of publishing. For the three modules that are configured,
+`checkApiCompatibility` ran and reported, verbatim, for all three: `Comparing binary compatibility of
+<module>-1.0.0.jar against <module>-1.0.0.jar` / `No changes.` — a real (if trivial, same-version)
+comparison, not a no-op.
+This is worth a decision before `falco-migration` ships: its own source carries `@since 2.1.0` tags
+throughout, which reads as an intent to publish it alongside the next release of `falco-anvil` et al.,
+but nothing in the build currently treats it that way. Adding it to `publishedModules` is a one-line
+change with a real consequence — `checkApiCompatibility` would need a first baseline to compare
+against, which for a module with no prior published jar is its own separate decision (compare against
+nothing, or against its own first release once it exists) — and is explicitly not made here, because
+touching `build.gradle.kts` beyond what the brief names was out of scope for this acceptance.
+
+### The missing third evidence stage (real old worlds)
+
+**Searched, not found.** `find /mnt/projects -type d -iname region` (156 unique world roots after
+stripping `DIM-1`/`DIM1`/`dimensions/<ns>/<key>` suffixes and de-duplicating) turned up region
+directories under dozens of unrelated projects on this machine — Minestom/Microtus test fixtures,
+old plugin `run/` directories, CloudNet templates, PlotSquared/FastAsyncWorldEdit test servers. Every
+`level.dat` found and readable (raw NBT parsed by hand — gzip envelope, then the root compound walked
+for a `DataVersion` `TAG_Int` under `Data`, no external NBT library available in this environment) was
+checked. **The oldest `DataVersion` found anywhere was 2975** (Minecraft 1.19), already above this
+module's whole operating range of 1519 (1.13, the floor) through 2843 (below 1.18, the last version
+`RebuildBiomes` still has to run for). Nothing in the 1.13–1.17 window, and nothing even in the
+1.18–1.18.2 window `RebuildBiomes`'s own upper bound cares about, exists anywhere this search reached.
+One `level.dat` (`.../oasisnetwork-master/.../Normallobby/level.dat`) failed to decompress as either
+gzip or raw zlib and was left unread rather than guessed at — it is not old enough to matter even if
+it were readable (nothing in that project predates 2019). No server jar was downloaded and no EULA
+was touched, per instruction — this was a read-only survey of what already exists on disk.
+
+**What this stage would cost, and what it would prove, since it cannot be run.** Fixtures are written
+by the person who also wrote the code they test, so all three of them encode the same set of
+assumptions about what a chunk looks like — which is exactly the failure mode the previous round's
+three real-world findings (Y=-1/Y=16 lighting sections, over-width packed palettes, the
+`TileEntities` key) share: none of the three was reachable from a hand-built fixture, because building
+the fixture means writing down what you already believe. A single real pre-1.18 region file, run
+through `ChunkMigration.migrate` and then loaded by Minestom's own `AnvilLoader` without throwing,
+would settle a materially larger set of assumptions in one pass than any number of additional
+hand-built fixtures can: the true distribution of section `Y` values a real world writes (not just
+the two boundary cases this acceptance's fixtures anticipate), whether a real chunk's `BlockStates`
+array is ever packed at a width the palette-derived minimum would get wrong in a way no test has
+tried yet, whether the legacy `Biomes` shape assumptions hold against terrain a human, not a test
+author, generated, and — the one this project's own rules explicitly cannot verify any other way —
+whether the 144-state `redstone_wire` gap (left unimplemented by Task 3, on record) actually shows up
+as a visibly wrong wire in a real build rather than a value nobody happened to place. Acquiring one
+would cost approximately: one real pre-1.18 Minecraft server run (a version this environment is
+explicitly not authorized to download or accept the EULA for) or a donated/found world backup in that
+DataVersion range, which this search did not find on this machine. Absent that, this plan's own
+Self-Review already says it plainly and this acceptance can only confirm it remains true: "the
+acceptance does not claim the rule is verified against a real world, because nothing here can."
+
+### Machine load
+
+`uptime` before the seven-module test run (09:46:10): `load average: 1,53, 2,54, 1,63`
+`uptime` after the same run (09:48:31, `BUILD SUCCESSFUL`): `load average: 8,20, 5,85, 3,05`
+
+No timing figure is produced or quoted anywhere in this section, per this plan's own constraint. The
+two gate-attack runs and the final clean re-verification ran later and are not used for the load
+comparison above; all three completed with consistent, repeatable pass/fail outcomes matching what is
+reported here.
+
+### Block entity renames (Task 6 Step 2 — established exhaustively, not partially)
+
+**Zero renames encoded, zero left unresolved.** All 49 entries of the target version's block-entity
+registry were checked against what a 1.13 world can contain; two independent full histories were
+cross-checked rather than one: ViaVersion's own registry diff across every version from 1.18 onward
+(zero removals, ever) and PaperMC/DataConverter's `TileEntity`-rename register from `V99` to `V4661`
+(exactly one rename in the entire range, `suspicious_sand` → `brushable_block`, introduced far above
+this module's ceiling and irrelevant to a 1.13 source). `TranslateBlockEntities` therefore renames
+only the `id` field's *value* when a `BlockStateRules` name-rename fires for the corresponding block
+(the id and the block name are the same string) — it carries no rename table of its own, because
+there is nothing to put in one. Separately, `UnfoldLevel` does rename the *container key* `Level.TileEntities` → `block_entities`,
+sourced to the same snapshot that renamed `Sections` → `sections` — a key rename, not a
+block-entity-id rename, and not part of this acceptance's own changes. It was fixed in Task 5+6's
+review round (`999b9fc6`), before this acceptance began; it is restated here only because Task 6
+Step 2 asks specifically for this section to record the renames established, with their sources.
+
+### What this plan does not deliver
+
+Restated explicitly, as the brief requires:
+
+- **No batch runner and no CLI.** `ChunkMigration.migrate` converts one already-loaded chunk compound;
+  nothing here walks a `region/` directory, opens an `.mca` file, or is invoked from a command line.
+- **No loader hook.** `ChunkMigrator`, the extension point that would let `falco-anvil`'s loader call
+  into this module automatically, is explicitly plan 2's, not this one's — `falco-migration` has no
+  dependency on `falco-anvil`'s service-resolution machinery at all beyond its plain library
+  dependency for `BitPacker`.
+- **No entity move.** `CountEntities` counts what `Level.Entities`/`entities` still holds after
+  conversion and moves nothing; every mob, item frame, and painting in a converted chunk stays exactly
+  where 1.13 left it, in a place the target version's entity storage never looks.
+- **Nothing outside `region/`.** Player data, `poi/`, `data/`, `advancements/`, `stats/` and every
+  other per-world directory are untouched; `WorldLayout` only discovers region directories.
+- **Nothing below Minecraft 1.13 (DataVersion 1519).** `ChunkMigration.migrate` declines with
+  `MigrationException` rather than guessing, unchanged from Task 4.
+- **No `redstone_wire` rule.** 144 states (9 of 81 direction combinations × 16 power values) pass
+  through unconverted, on record since Task 3 — the research document names the count but not which
+  nine combinations or what they become, and inventing them was refused as silent corruption.
+- **No third evidence stage.** Covered above: no real pre-1.18 world was available to run through the
+  chain, and none was manufactured to paper over the gap.
+
+### Status
+
+**DONE.** All six acceptance parts (a–f) ran to completion against `999b9fc6`. Every module's test
+count held or grew against every baseline consulted (the document's own, and the more precise
+re-measurement at the actual fork commit); `falco-migration` adds 43 cases of its own and this
+acceptance adds 3 more in `falco-anvil`. Javadoc is warning-free everywhere it runs, and this
+acceptance identified — rather than silently accepted — that it does not yet run for `falco-migration`
+under the standard build command, and that `checkApiCompatibility` is not yet wired up for it either,
+both traced to the same root cause (`falco-migration` absent from `publishedModules`) rather than two
+unrelated gaps. Both gate attacks were caught by the full suite, not a narrowed test selection, and
+both reverted cleanly (`git status --short` empty afterward in each case). No usable real-world Anvil
+data older than DataVersion 2975 exists anywhere this search reached on this machine, so the third
+evidence stage the spec calls for remains unfilled — recorded here with its cost and what it would
+prove, not silently dropped.
