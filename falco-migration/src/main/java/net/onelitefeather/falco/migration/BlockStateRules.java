@@ -194,7 +194,28 @@ public final class BlockStateRules {
             // two independent fetches, 2026-08-04. This replaces an earlier, wrong value of 3698
             // (1.20.3's *final release* DataVersion), the same release-vs-snapshot mistake as
             // grass_path above: the change happened 5 versions before the release it shipped in.
-            renameRule("minecraft:grass", "minecraft:short_grass", 3693)
+            renameRule("minecraft:grass", "minecraft:short_grass", 3693),
+
+            // chain -> iron_chain, when copper chains arrived and the plain chain had to be
+            // disambiguated.
+            // Source for the RENAME ITSELF: the running Minestom registry, measured 2026-08-05.
+            // "minecraft:chain" resolves to nothing on 26.1.2, while "minecraft:iron_chain" and
+            // "minecraft:copper_chain" both resolve — so the old name is gone, and iron_chain is what
+            // it became.
+            // Source for the NUMBER 4556: not a document. Measured from a real world, because the
+            // wiki numbers behind grass_path and grass above were each wrong on the first attempt in
+            // the same release-vs-snapshot way. 1399 nether region files were scanned and every
+            // chunk's block names correlated with that same chunk's stored DataVersion: "chain"
+            // appears at DataVersion 3465, 3578, 3955 and 4435 (4930 chunks in total), "iron_chain"
+            // only at 4556 (189 chunks), and no chunk carries both. The change therefore happened in
+            // (4435, 4556]; that world holds no chunk from between those two versions, so the data
+            // cannot resolve it any finer.
+            // Why the UPPER bound of that interval is the safe end to pick: too HIGH only lets this
+            // rule inspect chunks that no longer contain the old name, where its predicate does not
+            // match and nothing happens. Too LOW would leave "chain" standing in every chunk between
+            // the true version and the chosen one — and a name the server does not know is what the
+            // loader silently turns into air, which is the entire failure this rule exists to stop.
+            renameRule("minecraft:chain", "minecraft:iron_chain", 4556)
     );
 
     private static final List<BlockStateRule> RULES_BY_VERSION =

@@ -84,6 +84,31 @@ class BlockStateRulesTest {
     }
 
     @Test
+    void testChainIsRenamedToIronChainAtTheMeasuredBoundary() {
+        // The two versions here are the ones the measurement actually observed: 4435 is the newest
+        // DataVersion a real chunk carried "chain" at, 4556 the oldest carrying "iron_chain".
+        // Asserting the boundary with those rather than with round numbers is what makes this test
+        // fail if the rule's since() is ever moved off the evidence behind it.
+        assertEquals("minecraft:iron_chain",
+                BlockStateRules.translate(BlockState.of("minecraft:chain"), 4435).name());
+        assertEquals("minecraft:iron_chain",
+                BlockStateRules.translate(BlockState.of("minecraft:chain"), 1519).name());
+        assertEquals("minecraft:chain",
+                BlockStateRules.translate(BlockState.of("minecraft:chain"), 4556).name());
+    }
+
+    @Test
+    void testTheChainTargetsAreLeftAlone() {
+        // The rule renames one name and must not touch what it renames to. A Paper world in practice
+        // holds both forms side by side, so a rule that also rewrote the new name would convert the
+        // already-converted half a second time.
+        assertEquals("minecraft:iron_chain",
+                BlockStateRules.translate(BlockState.of("minecraft:iron_chain"), 1519).name());
+        assertEquals("minecraft:copper_chain",
+                BlockStateRules.translate(BlockState.of("minecraft:copper_chain"), 1519).name());
+    }
+
+    @Test
     void testARenameCarriesItsPropertiesAlong() {
         BlockState sign = new BlockState("minecraft:sign", Map.of("rotation", "4", "waterlogged", "false"));
 
