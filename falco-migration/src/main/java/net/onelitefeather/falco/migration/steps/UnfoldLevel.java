@@ -16,10 +16,15 @@ import java.util.Map;
  * Two field names change as they move, because the snapshot that removed {@code Level} (21w43a,
  * DataVersion 2844) renamed them in the same breath: {@code Sections} becomes {@code sections}, and
  * {@code TileEntities} becomes {@code block_entities}. Both renames are confirmed directly by that
- * snapshot's own minecraft.wiki changelog: "Removed chunk's {@code Level} and moved everything it
- * contained up. {@code Level.Entities} has moved to {@code entities}. {@code Level.TileEntities} has
- * moved to {@code block_entities}..." — checked 2026-08-04. Every other child keeps its own name as
- * it moves. A field that would silently overwrite a same-named field already present at the root is
+ * snapshot's own minecraft.wiki changelog, checked 2026-08-04. That same changelog entry also states
+ * {@code Level.Entities} moved to {@code entities} — a third rename this step deliberately does
+ * <b>not</b> perform: {@link CountEntities}, earlier in the chain, already establishes that nothing
+ * in this slice moves a chunk's entities anywhere, on purpose (see that class's own javadoc for "the
+ * entity debt"), so a chunk's {@code Entities} list is left exactly where {@code Level} leaves it —
+ * under whatever key it already has, moved to the root unrenamed like every other field this step
+ * does not know a rename for — rather than the destination the changelog names for a mover this
+ * module does not have. Every child keeps its own name as it moves except the two named above. A
+ * field that would silently overwrite a same-named field already present at the root is
  * refused with a {@link MigrationException} instead: for every pre-1.18 format known to this module
  * that case cannot happen, since a chunk's own top-level keys and {@code Level}'s children never
  * collide, but a silent overwrite would contradict this project's fail-loud stance the moment some

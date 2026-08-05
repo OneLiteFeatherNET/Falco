@@ -193,8 +193,18 @@ public final class TranslateBlockStates implements MigrationStep {
             paletteTag = paletteTag.add(writeState(state));
         }
 
+        if (palette.size() > 1 && indices.length == 0) {
+            // A multi-entry palette with no indices to address it is not a uniform section the format
+            // can express by omitting 'data' — that shape means exactly one entry. Writing the palette
+            // anyway would produce a container no reader (including this loader's own, or vanilla's)
+            // can make sense of: several named options and nothing saying which block holds which.
+            throw new MigrationException("A section's palette holds " + palette.size()
+                    + " entries but no packed indices to address them; a multi-entry palette without "
+                    + "block data cannot be written as a valid container");
+        }
+
         CompoundBinaryTag container = CompoundBinaryTag.builder().put(PALETTE_KEY, paletteTag).build();
-        if (palette.size() > 1 && indices.length > 0) {
+        if (palette.size() > 1) {
             int bitsPerEntry = BitPacker.bitsPerEntry(palette.size(), BLOCK_PALETTE_MIN_BITS);
             long[] packed = BitPacker.pack(indices, bitsPerEntry);
             container = container.put(DATA_KEY, LongArrayBinaryTag.longArrayBinaryTag(packed));

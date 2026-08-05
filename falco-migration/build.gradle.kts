@@ -16,3 +16,11 @@ dependencies {
     testImplementation(libs.junit.platform.launcher)
     testRuntimeOnly(libs.junit.jupiter.engine)
 }
+
+// This module gets -Werror on javadoc from the root build, but nothing otherwise calls javadoc for
+// it: unlike falco-anvil/-light/-instance it has no withJavadocJar(), on purpose (no publishing and
+// no japicmp baseline for a module that has never been released — see the design doc). Without this,
+// a broken javadoc comment would compile clean and pass check regardless.
+tasks.named("check") {
+    dependsOn(tasks.named("javadoc"))
+}

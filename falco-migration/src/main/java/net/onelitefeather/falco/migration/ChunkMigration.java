@@ -67,10 +67,21 @@ public final class ChunkMigration {
      * @param chunk         the chunk's root compound, as read from a region file
      * @param targetVersion the {@code DataVersion} the result should carry
      * @return the converted chunk, stamped with {@code targetVersion}
-     * @throws MigrationException if the chunk's own {@code DataVersion} is older than
+     * @throws MigrationException if {@code chunk} carries no {@code DataVersion} field at all, or if
+     *                             the value it does carry is older than
      *                             {@link #MINIMUM_SOURCE_VERSION}
      */
     public static CompoundBinaryTag migrate(CompoundBinaryTag chunk, int targetVersion) {
+        if (chunk.get(DATA_VERSION_KEY) == null) {
+            // Distinguished from "present but too old" on purpose: a missing field is a chunk this
+            // module was never told the age of, while a present-but-low one is a chunk this module
+            // knows for certain predates its floor. CompoundBinaryTag#getInt below would otherwise
+            // collapse both into the same misleading "DataVersion 0", a number no real chunk of any
+            // age actually carries.
+            throw new MigrationException(
+                    "The chunk carries no DataVersion field at all, so its source version cannot be "
+                            + "determined and this module cannot decide which steps would even apply");
+        }
         int sourceVersion = chunk.getInt(DATA_VERSION_KEY);
         return migrate(chunk, new MigrationContext(sourceVersion, targetVersion));
     }

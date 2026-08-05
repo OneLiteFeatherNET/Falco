@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SectionStepsTest {
 
     private static final MigrationContext ANY_CONTEXT = new MigrationContext(1519, 4790);
+    private static final int BLOCK_ENTRIES = 16 * 16 * 16;
 
     // --- NormaliseBitPacking -------------------------------------------------------------------
 
@@ -66,12 +67,14 @@ class SectionStepsTest {
     }
 
     @Test
-    void testAnOverWidthPackedPaletteIsReadAtTheWidthItWasActuallyPackedWith() {
+    void testAnOverWidthPackedPaletteIsReadAtTheWidthItWasActuallyPackedWithButWrittenBackCanonically() {
         // 17 entries need only 5 bits (BitPacker.bitsPerEntry(17, 4)), but the format explicitly
-        // allows a writer to use more. This fixture deliberately packs with 6 to prove the width
-        // is derived from the array's own length rather than assumed from the palette size, which
-        // would silently misread 6-bit data as 5-bit and corrupt every block in the section
-        // without throwing.
+        // allows a writer to use more. This fixture deliberately packs with 6 to prove that READING
+        // still derives the width from the array's own length rather than assumed from the palette
+        // size, which would silently misread 6-bit data as 5-bit and corrupt every block in the
+        // section without throwing. What comes back out, though, is re-packed at the 5-bit canonical
+        // width, not the 6 bits the input used — see this step's own javadoc for why preserving an
+        // over-provisioned width is not safe for TranslateBlockStates to read back later.
         int bitsPerEntry = 6;
         int[] values = new int[16 * 16 * 16];
         for (int i = 0; i < values.length; i++) {
@@ -97,10 +100,141 @@ class SectionStepsTest {
         CompoundBinaryTag normalised = new NormaliseBitPacking().apply(chunk, ANY_CONTEXT);
 
         long[] repacked = normalised.getCompound("Level").getList("Sections").getCompound(0).getLongArray("BlockStates");
-        int[] roundTripped = BitPacker.unpack(repacked, values.length, bitsPerEntry);
+        int canonicalBitsPerEntry = BitPacker.bitsPerEntry(17, 4);
+        assertEquals(5, canonicalBitsPerEntry, "sanity check on the fixture's own arithmetic");
+        int[] roundTripped = BitPacker.unpack(repacked, values.length, canonicalBitsPerEntry);
         assertArrayEquals(values, roundTripped,
-                "the 6-bit width the writer actually used must survive, not the 5 bits the palette size "
-                        + "alone would suggest");
+                "the values read at the 6-bit width the writer actually used must survive, but the "
+                        + "output must be written at the 5-bit canonical width, not 6");
+    }
+
+    /**
+     * The measured failure from the final review: a palette of 2000 entries needs 11 bits
+     * ({@code BitPacker.bitsPerEntry(2000, 4)}), but a writer packing at 12 bits (still a legal,
+     * over-provisioned choice) produces an array of the same length —
+     * {@code BitPacker.expectedLongCount(4096, 11) == BitPacker.expectedLongCount(4096, 12) == 820} —
+     * because both widths fit exactly 5 entries per 64-bit long. A step that preserved the 12-bit
+     * read width verbatim left {@link TranslateBlockStates}'s own read-side heuristic no way to tell
+     * the two apart from the array's length and the (untranslated) palette size alone, and it always
+     * resolves the ambiguity to the smaller width — silently misreading 3274 of 4096 blocks in the
+     * section the reviewer actually measured this against. Canonicalising to the palette's own
+     * 11-bit minimum on the way out removes the ambiguity outright: there is no longer a 12-bit
+     * array for the heuristic to guess wrong about.
+     */
+    @Test
+    void testAnOverWidthPackedSectionIsCanonicalisedRatherThanPreservingTheAmbiguousWidth() {
+        int paletteSize = 2000;
+        int readBitsPerEntry = 12;
+        int canonicalBitsPerEntry = BitPacker.bitsPerEntry(paletteSize, 4);
+        assertEquals(11, canonicalBitsPerEntry, "sanity check on the fixture's own arithmetic");
+        assertEquals(BitPacker.expectedLongCount(BLOCK_ENTRIES, readBitsPerEntry),
+                BitPacker.expectedLongCount(BLOCK_ENTRIES, canonicalBitsPerEntry),
+                "sanity check: 11 and 12 bits must actually collide on long count for this to be the "
+                        + "case the review measured");
+
+        int[] values = new int[BLOCK_ENTRIES];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i % paletteSize;
+        }
+        long[] overWidthPacked = legacyPack(values, readBitsPerEntry);
+
+        ListBinaryTag palette = ListBinaryTag.empty();
+        for (int i = 0; i < paletteSize; i++) {
+            palette = palette.add(CompoundBinaryTag.builder().putString("Name", "minecraft:test_" + i).build());
+        }
+
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("Level", CompoundBinaryTag.builder()
+                        .put("Sections", ListBinaryTag.from(List.of(CompoundBinaryTag.builder()
+                                .putByte("Y", (byte) 0)
+                                .put("Palette", palette)
+                                .putLongArray("BlockStates", overWidthPacked)
+                                .build())))
+                        .build())
+                .build();
+
+        CompoundBinaryTag normalised = new NormaliseBitPacking().apply(chunk, ANY_CONTEXT);
+
+        long[] repacked = normalised.getCompound("Level").getList("Sections").getCompound(0).getLongArray("BlockStates");
+        assertEquals(BitPacker.expectedLongCount(BLOCK_ENTRIES, canonicalBitsPerEntry), repacked.length,
+                "the output must be written at the unambiguous 11-bit width, so its own length no "
+                        + "longer collides with 12 bits' length for a downstream reader");
+        int[] roundTripped = BitPacker.unpack(repacked, values.length, canonicalBitsPerEntry);
+        assertArrayEquals(values, roundTripped,
+                "every one of the 4096 values read at 12 bits must survive being written back at 11");
+    }
+
+    @Test
+    void testASectionWithBlockStatesButNoPaletteFailsRatherThanGuessingTheWidth() {
+        long[] packed = new long[820]; // a plausible length; the point is the missing Palette
+        CompoundBinaryTag section = CompoundBinaryTag.builder()
+                .putByte("Y", (byte) 0)
+                .putLongArray("BlockStates", packed)
+                .build();
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("Level", CompoundBinaryTag.builder()
+                        .put("Sections", ListBinaryTag.from(List.of(section)))
+                        .build())
+                .build();
+
+        MigrationException exception = assertThrows(MigrationException.class,
+                () -> new NormaliseBitPacking().apply(chunk, ANY_CONTEXT));
+        assertTrue(exception.getMessage().contains("Palette"));
+    }
+
+    @Test
+    void testABlockStatesArrayWhoseLengthIsNotAMultipleOfSixtyFourEntriesFailsRatherThanRoundingDown() {
+        // 63 longs cannot hold any whole number of bits-per-entry over 4096 positions (63 * 64 / 4096
+        // rounds down to 0 under plain integer division): the old, unchecked division would have
+        // silently accepted this as "0 bits per entry" and only failed two calls later, inside
+        // LegacyBitReader, with an unrelated-looking IllegalArgumentException. A single palette entry
+        // is fine here — even a valid single-entry section carries no BlockStates array at all, so an
+        // array of any length alongside a palette is already a shape only a corrupt or hand-built
+        // chunk could produce, and the step must say so itself rather than let a lower-level class do
+        // it by accident.
+        long[] tooShort = new long[63];
+        ListBinaryTag palette = ListBinaryTag.from(List.of(
+                CompoundBinaryTag.builder().putString("Name", "minecraft:stone").build(),
+                CompoundBinaryTag.builder().putString("Name", "minecraft:air").build()));
+        CompoundBinaryTag section = CompoundBinaryTag.builder()
+                .putByte("Y", (byte) 0)
+                .put("Palette", palette)
+                .putLongArray("BlockStates", tooShort)
+                .build();
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("Level", CompoundBinaryTag.builder()
+                        .put("Sections", ListBinaryTag.from(List.of(section)))
+                        .build())
+                .build();
+
+        MigrationException exception = assertThrows(MigrationException.class,
+                () -> new NormaliseBitPacking().apply(chunk, ANY_CONTEXT));
+        assertTrue(exception.getMessage().contains("63"));
+    }
+
+    @Test
+    void testABlockStatesArrayLongEnoughForOneBitButNotAnExactMultipleFailsRatherThanRoundingDown() {
+        // 100 longs: at least one bit's worth (64 longs) but 100 * 64 = 6400, which does not divide
+        // evenly by 4096 (6400 / 4096 = 1.5625). Plain integer division would silently round this
+        // down to "1 bit per entry" and misread the array rather than refusing it.
+        long[] notAMultiple = new long[100];
+        ListBinaryTag palette = ListBinaryTag.from(List.of(
+                CompoundBinaryTag.builder().putString("Name", "minecraft:stone").build(),
+                CompoundBinaryTag.builder().putString("Name", "minecraft:air").build()));
+        CompoundBinaryTag section = CompoundBinaryTag.builder()
+                .putByte("Y", (byte) 0)
+                .put("Palette", palette)
+                .putLongArray("BlockStates", notAMultiple)
+                .build();
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("Level", CompoundBinaryTag.builder()
+                        .put("Sections", ListBinaryTag.from(List.of(section)))
+                        .build())
+                .build();
+
+        MigrationException exception = assertThrows(MigrationException.class,
+                () -> new NormaliseBitPacking().apply(chunk, ANY_CONTEXT));
+        assertTrue(exception.getMessage().contains("100"));
     }
 
     @Test
@@ -271,7 +405,7 @@ class SectionStepsTest {
                 .put("Level", CompoundBinaryTag.builder()
                         .putInt("xPos", 0)
                         .putInt("zPos", 0)
-                        .putString("Status", "full")
+                        .putString("Status", "postprocessed")
                         .putIntArray("Biomes", biomes)
                         .put("Sections", ListBinaryTag.from(List.of(
                                 CompoundBinaryTag.builder().putByte("Y", (byte) -1).build(),
@@ -289,6 +423,28 @@ class SectionStepsTest {
     }
 
     // --- TranslateBlockStates, including the full-chain Gegenprobe target -----------------------
+
+    @Test
+    void testAMultiEntryPaletteWithNoIndicesToAddressItFailsRatherThanWritingAnIncompleteContainer() {
+        // A multi-entry palette with no BlockStates array at all is not a shape a genuine writer
+        // produces — the format's single-value shape (no data array) means exactly one entry — but
+        // nothing upstream of this step rules it out, so this step has to refuse it itself rather
+        // than silently write a palette with several named options and nothing saying which block
+        // holds which.
+        CompoundBinaryTag section = CompoundBinaryTag.builder()
+                .putInt("Y", 0)
+                .put("Palette", ListBinaryTag.from(List.of(
+                        CompoundBinaryTag.builder().putString("Name", "minecraft:stone_slab").build(),
+                        CompoundBinaryTag.builder().putString("Name", "minecraft:air").build())))
+                .build();
+        CompoundBinaryTag chunk = CompoundBinaryTag.builder()
+                .put("sections", ListBinaryTag.from(List.of(section)))
+                .build();
+
+        MigrationException exception = assertThrows(MigrationException.class,
+                () -> new TranslateBlockStates().apply(chunk, new MigrationContext(1519, 4790)));
+        assertTrue(exception.getMessage().contains("2"));
+    }
 
     @Test
     void testALegacyTopLevelPaletteBecomesAModernBlockStatesContainer() {
@@ -405,7 +561,7 @@ class SectionStepsTest {
                 .put("Level", CompoundBinaryTag.builder()
                         .putInt("xPos", 0)
                         .putInt("zPos", 0)
-                        .putString("Status", "full")
+                        .putString("Status", "postprocessed")
                         .put("Sections", ListBinaryTag.from(List.of(wallSection)))
                         .build())
                 .build();

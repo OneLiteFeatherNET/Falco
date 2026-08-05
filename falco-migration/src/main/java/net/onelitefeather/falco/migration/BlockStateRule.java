@@ -28,8 +28,9 @@ public interface BlockStateRule {
      * <p>
      * This is the version a fix landed in, not the version the rule targets: a rule applies to a
      * chunk's source version exactly when the source is older than this number, i.e. when
-     * {@code since() > sourceVersion}. A rule with {@code since() == 1802} therefore applies to a
-     * 1.13 world ({@code 1519 < 1802}) and leaves a 1.16 world ({@code 2566 > 1802}) alone, because
+     * {@code since() > sourceVersion}. A rule with {@code since() == 1901} — {@code stone_slab}'s own
+     * rule in {@link BlockStateRules}, DataVersion 1901, snapshot 18w43a — therefore applies to a
+     * 1.13 world ({@code 1519 < 1901}) and leaves a 1.16 world ({@code 2566 > 1901}) alone, because
      * by 1.16 the change already happened and the state already carries its later meaning.
      * </p>
      *

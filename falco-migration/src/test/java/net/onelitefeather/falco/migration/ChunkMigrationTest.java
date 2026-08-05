@@ -5,6 +5,7 @@ import net.kyori.adventure.nbt.ListBinaryTag;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -19,12 +20,16 @@ class ChunkMigrationTest {
 
     @Test
     void testAPreEighteenChunkGetsItsFieldsOnTheRoot() {
+        // "postprocessed", not "full" — a 1.13-era chunk's own terminal status, per NamespaceStatus's
+        // own sourced javadoc. Every fixture in this module used to write "full" by hand, a value a
+        // pre-1.14 chunk never actually produces, which is exactly how the missing value translation
+        // this test now exercises went unnoticed by every other test in the suite.
         CompoundBinaryTag legacy = CompoundBinaryTag.builder()
                 .putInt("DataVersion", 2566)
                 .put("Level", CompoundBinaryTag.builder()
                         .putInt("xPos", 3)
                         .putInt("zPos", 4)
-                        .putString("Status", "full")
+                        .putString("Status", "postprocessed")
                         .put("Sections", ListBinaryTag.empty())
                         .build())
                 .build();
@@ -33,7 +38,9 @@ class ChunkMigrationTest {
 
         assertNull(migrated.get("Level"));
         assertEquals(3, migrated.getInt("xPos"));
-        assertEquals("minecraft:full", migrated.getString("Status"));
+        assertEquals("minecraft:full", migrated.getString("Status"),
+                "a 1.13 chunk's own terminal status, postprocessed, must become minecraft:full, not "
+                        + "minecraft:postprocessed, or FalcoAnvilLoader silently skips every migrated chunk");
         assertNotNull(migrated.get("sections"));
         // yPos = 0 because SettleYRange computes it from the chunk's own (here: empty) sections
         // list rather than assuming a fixed floor — see that step's javadoc for the sourced reading
@@ -95,6 +102,23 @@ class ChunkMigrationTest {
     void testAChunkBelowTheFloorIsDeclinedRatherThanGuessedAt() {
         CompoundBinaryTag ancient = CompoundBinaryTag.builder().putInt("DataVersion", 1000).build();
 
-        assertThrows(MigrationException.class, () -> ChunkMigration.migrate(ancient, 4790));
+        MigrationException exception = assertThrows(MigrationException.class,
+                () -> ChunkMigration.migrate(ancient, 4790));
+        assertTrue(exception.getMessage().contains("1000"),
+                "a present, too-old DataVersion must be named in the failure");
+    }
+
+    @Test
+    void testAChunkWithNoDataVersionAtAllIsDeclinedWithADifferentMessageThanATooOldOne() {
+        // CompoundBinaryTag#getInt on a missing key defaults to 0, which is indistinguishable from a
+        // chunk that genuinely stamped "DataVersion: 0" unless the missing case is checked before
+        // that default is ever read — a real chunk of any age never carries a literal 0.
+        CompoundBinaryTag noVersion = CompoundBinaryTag.builder().build();
+
+        MigrationException exception = assertThrows(MigrationException.class,
+                () -> ChunkMigration.migrate(noVersion, 4790));
+        assertFalse(exception.getMessage().contains("0"),
+                "a chunk with no DataVersion field at all must not be reported as DataVersion 0, which "
+                        + "no real chunk of any age actually stores");
     }
 }

@@ -249,12 +249,12 @@ source version intersects, in order.
 
 | # | Step | Applies below | Notes |
 | --- | --- | --- | --- |
-| 1 | Normalise the bit packing | 2566 (1.16) | Pre-1.16 entries span long boundaries. `BitPacker` cannot read that: `pack` is documented "without letting an entry span two longs" and `unpack` computes `longIndex = index / entriesPerLong`. A separate legacy unpack is required |
-| 2 | **Count** entities still in the chunk | 2724 (1.17) | Counted and reported, **not moved**. See "The entity debt" |
+| 1 | Normalise the bit packing | 2529 (20w17a, pre-1.16) | Pre-1.16 entries span long boundaries. `BitPacker` cannot read that: `pack` is documented "without letting an entry span two longs" and `unpack` computes `longIndex = index / entriesPerLong`. A separate legacy unpack is required. This row previously named 2566, 1.16's *release* DataVersion; the change actually landed in the 20w17a snapshot, DataVersion 2529 — the implementation (`NormaliseBitPacking.APPLIES_BELOW`) already carried the corrected, sourced number, and this row is now brought in line with it |
+| 2 | **Count** entities still in the chunk | 2681 (20w45a, pre-1.17) | Counted and reported, **not moved**. See "The entity debt". This row previously named 2724, 1.17's *release* DataVersion; the change actually landed in the 20w45a snapshot, DataVersion 2681 — the implementation (`CountEntities.APPLIES_BELOW`) already carried the corrected, sourced number, and this row is now brought in line with it |
 | 3 | Unfold `Level` | 2844 | Fields onto the root, `Sections`→`sections`, `yPos` added |
 | 4 | Rebuild biomes | 2844 | Array (256 bytes pre-1.15, 1024 ints from 1.15) → palettised container per section |
 | 5 | Widen the Y range | 2844 | Existing sections keep their `Y`. **Empty sections are not invented** |
-| 6 | Namespace the status | see note | `full` → `minecraft:full` |
+| 6 | Namespace the status | see note | Namespaces a bare status, and also renames 1.13's own terminal values (`fullchunk`, `postprocessed` — *not* `full`, which did not exist as a name until 1.14) to `full` before namespacing; see `NamespaceStatus`'s own javadoc for the sourced rename chain |
 | 7 | Apply renames | throughout | Blocks **and block entities**, from the module's own table. Two block entries are known for the whole 1.13–26.1 span; the block entity entries have no comparable source |
 | 8 | **Discard** heightmaps and light | always | See below |
 
