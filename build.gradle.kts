@@ -4,7 +4,7 @@ plugins {
     alias(libs.plugins.japicmp) apply false
 }
 
-version = "2.0.0" // x-release-please-version
+version = "2.1.0" // x-release-please-version
 
 if (providers.gradleProperty("snapshot").isPresent) {
     val parts = version.toString().substringBefore('-').split('.')
