@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.0](https://github.com/OneLiteFeatherNET/Falco/compare/v1.0.0...v2.0.0) (2026-08-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **anvil:** make the version guard and the unknown-entry fallback replaceable services ([#47](https://github.com/OneLiteFeatherNET/Falco/issues/47))
+* **anvil:** refuse a world the loader cannot read instead of returning air ([#45](https://github.com/OneLiteFeatherNET/Falco/issues/45))
+
+### Features
+
+* **anvil:** make the version guard and the unknown-entry fallback replaceable services ([#47](https://github.com/OneLiteFeatherNET/Falco/issues/47)) ([94dc761](https://github.com/OneLiteFeatherNET/Falco/commit/94dc7617cf985ddf1b72037ffd3a50138a0070e6))
+* **migration:** an engine that lifts a stored 1.13 chunk to the version the server writes ([#48](https://github.com/OneLiteFeatherNET/Falco/issues/48)) ([22a9736](https://github.com/OneLiteFeatherNET/Falco/commit/22a973613dcdec973f781838952a38f331097f01))
+
+
+### Bug Fixes
+
+* **anvil:** refuse a world the loader cannot read instead of returning air ([#45](https://github.com/OneLiteFeatherNET/Falco/issues/45)) ([1bdd0cc](https://github.com/OneLiteFeatherNET/Falco/commit/1bdd0cca920d19ed934395fcedc620a01cb84507))
+
 ## [1.0.0](https://github.com/OneLiteFeatherNET/Falco/compare/v0.3.0...v1.0.0) (2026-08-03)
 
 
