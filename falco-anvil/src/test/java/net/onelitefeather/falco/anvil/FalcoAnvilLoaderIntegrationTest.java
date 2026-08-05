@@ -619,6 +619,92 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
+    void testAFullChunkWithoutSectionsIsRefusedInsteadOfReadAsAir(Env env) throws Exception {
+        // The remaining third of the air hole #45 half closed. This chunk is in the current layout
+        // and carries a current DataVersion, so the version guard has nothing to object to, and it
+        // claims to be fully generated, so the status check waves it through. What it does not carry
+        // is block data of any kind: NbtReads.optionalList answers a missing "sections" key with an
+        // empty list, decodeSections produces nothing from that, and the caller receives a chunk of
+        // air that reports itself as loaded. A save then writes that emptiness back over whatever
+        // the region file still held.
+        CompoundBinaryTag hollow = CompoundBinaryTag.builder()
+                .putInt("DataVersion", 4000)
+                .putString("Status", "minecraft:full")
+                .build();
+        writeRawChunk(9, 9, hollow);
+
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            AnvilChunkException failure = assertThrows(AnvilChunkException.class,
+                    () -> loader.loadChunk(instance, 9, 9));
+            ChunkDataException cause = assertInstanceOf(ChunkDataException.class, failure.getCause());
+            assertEquals(ChunkDataException.Reason.MISSING_OR_MISTYPED_KEY, cause.reason());
+
+            // The counters matter as much as the exception. The defect's signature was a chunk that
+            // counted as loaded while carrying nothing, so a fix that threw but still counted it as
+            // loaded would leave the misleading half of the report in place.
+            assertEquals(0, diagnostics.chunksLoaded());
+            assertEquals(1, diagnostics.errors());
+        }
+    }
+
+    @Test
+    void testAChunkThatIsNotFullyGeneratedIsStillOnlySkipped(Env env) throws Exception {
+        // The counterpart of the test above, and the reason this check cannot live in the version
+        // policy: a chunk that is honestly unfinished carries no sections either, and that
+        // combination is not a contradiction but the normal state of a world edge. It has to stay a
+        // skip, not become an error.
+        CompoundBinaryTag unfinished = CompoundBinaryTag.builder()
+                .putInt("DataVersion", 4000)
+                .putString("Status", "minecraft:carvers")
+                .build();
+        writeRawChunk(10, 10, unfinished);
+
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNull(loader.loadChunk(instance, 10, 10));
+            assertEquals(0, diagnostics.errors());
+            assertEquals(1, diagnostics.chunksSkippedAsPartial());
+        }
+    }
+
+    @Test
+    void testAFullChunkWithAnEmptySectionListIsAccepted(Env env) throws Exception {
+        // Where the new check deliberately stops. An empty list is a statement — something wrote
+        // "this chunk has no sections" — while an absent key is the absence of a statement, and only
+        // the second is the contradiction being refused. Drawing the line at the key rather than at
+        // the resulting block count is also what keeps this from rejecting a legitimately empty
+        // chunk written by some other tool.
+        CompoundBinaryTag empty = CompoundBinaryTag.builder()
+                .putInt("DataVersion", 4000)
+                .putString("Status", "minecraft:full")
+                .put("sections", ListBinaryTag.empty())
+                .build();
+        writeRawChunk(11, 11, empty);
+
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNotNull(loader.loadChunk(instance, 11, 11));
+        }
+    }
+
+    @Test
     void testAChunkBelowTheFloorIsRefused(Env env) throws Exception {
         CompoundBinaryTag old = CompoundBinaryTag.builder()
                 .putInt("DataVersion", 2724)
