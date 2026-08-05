@@ -95,12 +95,136 @@ class BlockStateRulesTest {
 
     @Test
     void testAStateNoRuleKnowsAboutPassesThroughUnchanged() {
-        BlockState redstoneWire = new BlockState("minecraft:redstone_wire",
-                Map.of("north", "side", "south", "none", "east", "up", "west", "none", "power", "0"));
+        // Used to be redstone_wire, back when this module carried no rule for it at all. Now that
+        // BlockStateRules does resolve redstone_wire (see the dedicated tests below), a passthrough
+        // block that stays genuinely unmapped is furnace: its facing/lit properties exist unchanged
+        // from 1.13 to today, with nothing in RULES that names it.
+        BlockState furnace = new BlockState("minecraft:furnace", Map.of("facing", "north", "lit", "false"));
 
-        assertEquals(redstoneWire, BlockStateRules.translate(redstoneWire, 1519),
-                "redstone_wire has no rule: the research this module is built from did not carry enough "
-                        + "detail to reproduce V2531's cross-direction logic exactly, and a guessed table "
-                        + "would be silent corruption rather than a fix");
+        assertEquals(furnace, BlockStateRules.translate(furnace, 1519),
+                "a state no rule recognizes must pass through translate() unchanged");
+    }
+
+    /**
+     * Builds a {@code redstone_wire} state with a fixed, deliberately odd {@code power} so tests can
+     * assert it is never read or written by the rule.
+     */
+    private static BlockState redstoneWire(String north, String south, String east, String west) {
+        return new BlockState("minecraft:redstone_wire",
+                Map.of("north", north, "south", south, "east", east, "west", west, "power", "11"));
+    }
+
+    private static void assertRedstoneSides(BlockState state, String north, String south, String east,
+                                             String west) {
+        assertEquals(north, state.properties().get("north"), "north");
+        assertEquals(south, state.properties().get("south"), "south");
+        assertEquals(east, state.properties().get("east"), "east");
+        assertEquals(west, state.properties().get("west"), "west");
+    }
+
+    // The nine affected direction combinations (of 81), individually, so a crossed-axis mistake in
+    // the implementation cannot hide behind a shared helper's own bug. Each one is checked against
+    // BlockStateRules's derivation by hand in the redstone_wire rule's own comment.
+
+    @Test
+    void testRedstoneWireWithNoConnectionsBecomesIsolatedOnAllFourSides() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("none", "none", "none", "none"), 1519);
+
+        assertRedstoneSides(converted, "side", "side", "side", "side");
+    }
+
+    @Test
+    void testRedstoneWireConnectedOnlyOnWestTurnsEastAndBothCrossSidesToSide() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("none", "none", "none", "side"), 1519);
+
+        assertRedstoneSides(converted, "none", "none", "side", "side");
+    }
+
+    @Test
+    void testRedstoneWireConnectedUpwardOnWestStillTurnsEastToSide() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("none", "none", "none", "up"), 1519);
+
+        assertRedstoneSides(converted, "none", "none", "side", "up");
+    }
+
+    @Test
+    void testRedstoneWireConnectedOnlyOnEastTurnsWestAndBothCrossSidesToSide() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("none", "none", "side", "none"), 1519);
+
+        assertRedstoneSides(converted, "none", "none", "side", "side");
+    }
+
+    @Test
+    void testRedstoneWireConnectedUpwardOnEastStillTurnsWestToSide() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("none", "none", "up", "none"), 1519);
+
+        assertRedstoneSides(converted, "none", "none", "up", "side");
+    }
+
+    @Test
+    void testRedstoneWireConnectedOnlyOnSouthTurnsNorthAndBothCrossSidesToSide() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("none", "side", "none", "none"), 1519);
+
+        assertRedstoneSides(converted, "side", "side", "none", "none");
+    }
+
+    @Test
+    void testRedstoneWireConnectedUpwardOnSouthStillTurnsNorthToSide() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("none", "up", "none", "none"), 1519);
+
+        assertRedstoneSides(converted, "side", "up", "none", "none");
+    }
+
+    @Test
+    void testRedstoneWireConnectedOnlyOnNorthTurnsSouthAndBothCrossSidesToSide() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("side", "none", "none", "none"), 1519);
+
+        assertRedstoneSides(converted, "side", "side", "none", "none");
+    }
+
+    @Test
+    void testRedstoneWireConnectedUpwardOnNorthStillTurnsSouthToSide() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("up", "none", "none", "none"), 1519);
+
+        assertRedstoneSides(converted, "up", "side", "none", "none");
+    }
+
+    // Fixed points: none of the 72 combinations outside the nine above may change.
+
+    @Test
+    void testRedstoneWireWithTwoConnectionsOnTheSameAxisIsAFixedPoint() {
+        BlockState state = redstoneWire("none", "none", "side", "side");
+
+        assertEquals(state, BlockStateRules.translate(state, 1519));
+    }
+
+    @Test
+    void testRedstoneWireWithThreeConnectionsIsAFixedPoint() {
+        BlockState state = redstoneWire("side", "side", "side", "none");
+
+        assertEquals(state, BlockStateRules.translate(state, 1519));
+    }
+
+    @Test
+    void testRedstoneWireWithTwoConnectionsIncludingUpIsAFixedPoint() {
+        BlockState state = redstoneWire("up", "side", "none", "none");
+
+        assertEquals(state, BlockStateRules.translate(state, 1519));
+    }
+
+    @Test
+    void testRedstoneWiresPowerIsNeverReadOrWritten() {
+        BlockState converted = BlockStateRules.translate(redstoneWire("none", "none", "none", "none"), 1519);
+
+        assertEquals("11", converted.properties().get("power"),
+                "power is a plain multiplier and must survive translate() untouched");
+    }
+
+    @Test
+    void testRedstoneWireIsUnchangedFromDataVersionTwentyFiveThirtyTwoOnwards() {
+        BlockState state = redstoneWire("none", "none", "none", "none");
+
+        assertEquals(state, BlockStateRules.translate(state, 2532),
+                "a source at or after DataVersion 2532 already carries the later connection meaning");
     }
 }

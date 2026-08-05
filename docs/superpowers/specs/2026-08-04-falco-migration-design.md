@@ -448,7 +448,12 @@ Vanilla silently tolerates a stale state, Falco's loader refuses the whole chunk
 | meaning changed, signature identical (`redstone_wire`) | — | loads, looks wrong | 144 |
 
 **178 states are load-blocking**: a 1.13 world with a single cobblestone wall aborts the chunk, not
-just the block. `redstone_wire` loads cleanly and renders wrong. So the order is **names → walls →
+just the block. `redstone_wire` loads cleanly and renders wrong — that was true when this section was
+written and is why the priority order below put it last. It is no longer true of this module's
+output: `redstone_wire` now has a rule too (`BlockStateRules`, DataVersion 2532, snapshot 20w18a), so
+the "loads, looks wrong" outcome in the table is what happens without that rule, not what Falco does
+today. The table and the priority order are kept as the historical record that justified doing walls
+and cauldron first; they are not a statement of current coverage. So the order is **names → walls →
 cauldron → stone_slab → redstone_wire**, which is damage order and not state-count order.
 
 ## Where the work actually is

@@ -18,8 +18,8 @@ import java.util.function.UnaryOperator;
  * version, or a diff computed directly over the vendored registry lists — because none of them is
  * written from memory; see
  * {@code docs/superpowers/specs/2026-08-04-blockstate-property-research.md} for the full
- * measurement. One fact from that measurement, {@code redstone_wire}, is deliberately absent; see
- * the note above {@link #RULES} for why.
+ * measurement. One fact from that measurement, {@code redstone_wire}, took a second pass beyond it
+ * to land here safely; see the note above {@link #RULES} for how.
  * </p>
  *
  * @since 2.1.0
@@ -43,17 +43,29 @@ public final class BlockStateRules {
      * order for readability — {@link #translate(BlockState, int)} sorts its own copy regardless, so
      * this ordering is not load-bearing.
      * <p>
-     * <b>{@code redstone_wire} (V2531, 20w17a, Minecraft 1.16, 144 states) is not in this list.</b>
-     * The research document establishes that a direction's new value depends on the other three
-     * directions of the same state (DataConverter's {@code connectedX}/{@code connectedZ} in V2531),
-     * that a per-property implementation is guaranteed wrong, and that 9 of the 81 direction
-     * combinations change (times 16 {@code power} values = 144 states). It does not say which 9
-     * combinations change or what they become — only the count. That is not enough to reproduce
-     * V2531's logic exactly, and a guessed whole-state table for redstone wiring would be exactly the
-     * silent corruption this module exists to avoid: the chunk still loads, the wiring looks
-     * subtly different, and nobody notices. A state this module does not recognize — including every
-     * {@code redstone_wire} state — passes through {@link #translate(BlockState, int)} unchanged;
-     * see {@code BlockStateRulesTest.testAStateNoRuleKnowsAboutPassesThroughUnchanged}.
+     * <b>{@code redstone_wire}</b> (DataVersion 2532, snapshot 20w18a, Minecraft 1.16, 144 of 1296
+     * states) took a second pass to land in this list. The research document establishes only the
+     * shape of the change — a direction's new value depends on the other three directions of the
+     * same state, a per-property implementation is guaranteed wrong, and 9 of the 81 direction
+     * combinations change (times 16 {@code power} values = 144 states) — not which nine or what they
+     * become. That was not enough on its own: a guessed whole-state table for redstone wiring would
+     * have been exactly the silent corruption this module exists to avoid, the chunk still loads, the
+     * wiring looks subtly different, and nobody notices. The rule below closes that gap directly from
+     * the connection semantics: a direction becomes {@code side} exactly when it is itself
+     * unconnected AND the axis perpendicular to it has no connection either — {@code north}/
+     * {@code south} are decided by whether {@code east}/{@code west} connects, {@code east}/
+     * {@code west} by whether {@code north}/{@code south} connects. The axes are crossed on purpose,
+     * not mirrored, and getting that backwards produces a rule that looks plausible and is wrong; see
+     * {@code BlockStateRulesTest} for the nine affected combinations this guards against. It was
+     * cross-checked against DataConverter's V2531, Yarn's {@code RedstoneConnectionsFix}, and
+     * Chunker's {@code JavaLegacyRedstonePreTransformHandler} — three independently maintained
+     * reimplementations of the same 1.16 change — all of which agree with the derivation above.
+     * {@code power} is a plain multiplier and is neither read nor written by this rule.
+     * </p>
+     * <p>
+     * A state this module does not otherwise recognize passes through
+     * {@link #translate(BlockState, int)} unchanged; see
+     * {@code BlockStateRulesTest.testAStateNoRuleKnowsAboutPassesThroughUnchanged}.
      * </p>
      */
     private static final List<BlockStateRule> RULES = List.of(
@@ -112,6 +124,36 @@ public final class BlockStateRules {
             // directional values."), and that snapshot's infobox lists DataVersion 2504 — checked via
             // two independent fetches, 2026-08-04.
             wallRule(2504),
+
+            // redstone_wire: north/south/east/west each flip from their raw connection value to
+            // "side" exactly when two conditions both hold — the direction itself is unconnected
+            // ("none"), and the axis PERPENDICULAR to it has no connection of its own. north/south
+            // are decided by east/west; east/west are decided by north/south. Implementing this
+            // gleichachsig (north/south checked against north/south) produces a rule that reads fine
+            // and is wrong for every asymmetric case; see BlockStateRulesTest for the nine
+            // combinations that catch exactly that mistake. "up" counts as connected for this check
+            // but is itself never rewritten — it has no opposite in this scheme. "power" is a plain
+            // multiplier, read by nothing here and written by nothing here.
+            // Source for the RULE ITSELF: not the research document, whose measurement gave the size
+            // of the change (9 of 81 direction combinations, times 16 power values) but not which
+            // nine or what they become. The connection semantics above were derived directly and then
+            // cross-checked against DataConverter's V2531, Yarn's RedstoneConnectionsFix, and
+            // Chunker's JavaLegacyRedstonePreTransformHandler — three independently maintained
+            // reimplementations of the same 1.16 change — all of which agree.
+            // Source for the NUMBER 2532: not the research document, whose "V2531" names a fix
+            // version that lands between two public snapshots rather than at either one, and whose
+            // snapshot label "20w17a" (DataVersion 2529) turned out not to match: that snapshot's own
+            // changelog has nothing about redstone wire. 20w18a's changelog and its dedicated
+            // Redstone Dust history entry state the change directly — "Unconnected redstone dust now
+            // has all direction block states set to 'side'" and direction states are "properly set to
+            // 'side' at the end of a redstone wire on both ends, rather than only the one with other
+            // redstone besides it" — word for word the derivation above. minecraft.wiki's data-version
+            // table and PrismarineJS/minecraft-data's protocolVersions.json, two independent sources,
+            // both give 20w18a DataVersion 2532 — checked via independent fetches, 2026-08-05. This
+            // corrects the research document's guess by exactly one snapshot, the same
+            // release-vs-actual-snapshot class of error as grass_path and grass below, just one
+            // snapshot early rather than landing on the final release.
+            redstoneWireRule(2532),
 
             // cauldron[level]: level=0 -> cauldron (properties emptied, the property is dropped
             // entirely); level=1..3 -> water_cauldron[level=n]. The block name is decided by a
@@ -173,8 +215,7 @@ public final class BlockStateRules {
      * 1.16 world ({@code 2566 > 1901}).
      * </p>
      * <p>
-     * A state no rule recognizes — including every {@code redstone_wire} state, for which this
-     * module deliberately carries no rule — passes through unchanged.
+     * A state no rule recognizes passes through unchanged.
      * </p>
      *
      * @param state         the state as read from the source chunk, or as already transformed by an
@@ -210,6 +251,74 @@ public final class BlockStateRules {
             }
         }
         return new BlockState(state.name(), properties);
+    }
+
+    private static BlockStateRule redstoneWireRule(int since) {
+        return new Rule(since,
+                state -> state.name().equals("minecraft:redstone_wire"),
+                BlockStateRules::rewriteRedstoneWireConnections);
+    }
+
+    /**
+     * Recomputes {@code redstone_wire}'s four direction properties from each other, crossing the
+     * axes on purpose: whether {@code north}/{@code south} collapse to {@code side} is decided by
+     * {@code east}/{@code west}'s connection state, and whether {@code east}/{@code west} collapse is
+     * decided by {@code north}/{@code south}'s. All four outputs are computed from the original,
+     * unmodified values first and only written afterward, so an earlier write in this same call can
+     * never leak into a later read — sequential writing gets the all-{@code none} case wrong.
+     *
+     * @param state a {@code redstone_wire} state as read from the source chunk
+     * @return {@code state} with its four direction properties resolved to their later meaning
+     */
+    private static BlockState rewriteRedstoneWireConnections(BlockState state) {
+        Map<String, String> properties = state.properties();
+        String north = properties.get("north");
+        String south = properties.get("south");
+        String east = properties.get("east");
+        String west = properties.get("west");
+
+        boolean eastWestConnected = isRedstoneConnected(east) || isRedstoneConnected(west);
+        boolean northSouthConnected = isRedstoneConnected(north) || isRedstoneConnected(south);
+
+        Map<String, String> rewritten = new LinkedHashMap<>(properties);
+        if (north != null) {
+            rewritten.put("north", resolveRedstoneSide(north, eastWestConnected));
+        }
+        if (south != null) {
+            rewritten.put("south", resolveRedstoneSide(south, eastWestConnected));
+        }
+        if (east != null) {
+            rewritten.put("east", resolveRedstoneSide(east, northSouthConnected));
+        }
+        if (west != null) {
+            rewritten.put("west", resolveRedstoneSide(west, northSouthConnected));
+        }
+        return new BlockState(state.name(), rewritten);
+    }
+
+    /**
+     * Whether a {@code redstone_wire} direction counts as connected. {@code up} counts here — it is
+     * a connection, just one this rule never overwrites — and only {@code none} does not.
+     *
+     * @param value a direction's raw property value, or {@code null} if the state omits it
+     * @return {@code true} unless {@code value} is {@code null} or {@code "none"}
+     */
+    private static boolean isRedstoneConnected(String value) {
+        return value != null && !"none".equals(value);
+    }
+
+    /**
+     * Resolves one {@code redstone_wire} direction: it becomes {@code side} exactly when it is
+     * itself unconnected and the perpendicular axis carries no connection either, otherwise it keeps
+     * its original value — including {@code up}, which this never touches.
+     *
+     * @param value                          the direction's original value
+     * @param perpendicularAxisHasConnection whether the OTHER axis (not this direction's own) has a
+     *                                        connection anywhere on it
+     * @return {@code "side"} or {@code value} unchanged
+     */
+    private static String resolveRedstoneSide(String value, boolean perpendicularAxisHasConnection) {
+        return (!isRedstoneConnected(value) && !perpendicularAxisHasConnection) ? "side" : value;
     }
 
     private static BlockStateRule cauldronRule(int since) {
