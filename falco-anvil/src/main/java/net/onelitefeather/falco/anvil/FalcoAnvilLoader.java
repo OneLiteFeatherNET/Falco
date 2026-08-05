@@ -96,6 +96,13 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     private static final String BLOCK_ENTITIES_KEY = "block_entities";
     private static final String STATUS_KEY = "Status";
     private static final String LEGACY_STATUS_KEY = "status";
+    /**
+     * The compound that held everything before snapshot 21w43a moved it onto the root. Read here
+     * only to tell the pre-1.18 layout apart from a truncated current one in
+     * {@link #requireSections(CompoundBinaryTag)}; deciding what to do about that layout belongs to
+     * the {@link ChunkVersionPolicy} and stays there.
+     */
+    private static final String LEGACY_LEVEL_KEY = "Level";
     private static final String FULL_STATUS = "minecraft:full";
 
     private static final int BLOCK_ENTRIES = 16 * 16 * 16;
@@ -1053,6 +1060,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                 return null;
             }
 
+            requireSections(data);
+
             Chunk chunk = instance.getChunkSupplier().createChunk(instance, chunkX, chunkZ);
             // The conversion runs before the lock is taken so only the transfer into the chunk is
             // guarded. That is what keeps parallel loading worthwhile.
@@ -1863,6 +1872,60 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @return the converted sections
      * @throws IOException if a section is malformed
      */
+    /**
+     * Refuses a chunk that claims to be fully generated but carries no {@code sections} key at all.
+     * <p>
+     * This closes the last of the three decisions that together let a world load as air, the two
+     * others of which {@link DefaultChunkVersionPolicy} closed. {@link NbtReads#optionalList} answers
+     * an absent or mistyped key with an empty list — correctly, because an absent optional key is not
+     * an error and other callers rely on that — and {@link #decodeSections} then produces no sections
+     * from it. The result reaches the caller as a chunk of air that reports itself loaded, and a save
+     * writes that emptiness back over whatever the region file still held. The distinction does not
+     * belong in {@code optionalList}, which cannot know what its caller considers required; it
+     * belongs here, where the contradiction is visible: a chunk that says {@code minecraft:full} and
+     * carries no block data at all is claiming something it has not got.
+     * </p>
+     * <p>
+     * <b>Only an absent or mistyped key is refused, not an empty list.</b> A present but empty list
+     * is a statement that this chunk has no sections, and something wrote it deliberately; the
+     * absence of the key is the absence of any statement. Refusing the empty list as well would
+     * reject legitimately empty chunks written by other tools, which is a different and much larger
+     * decision than the one this defect calls for.
+     * </p>
+     * <p>
+     * <b>Why this runs after the status check and not in the version policy.</b> A chunk that is
+     * honestly unfinished carries no sections either, and for it that is not a contradiction but the
+     * normal state of a world edge. The policy runs before the status is known and would have to
+     * refuse both alike; here the status has already been read, so only the chunk that claims to be
+     * complete has to prove it.
+     * </p>
+     * <p>
+     * <b>A chunk that carries {@code Level} is not this defect and is left alone here.</b> That is
+     * the pre-1.18 layout, it belongs to the {@link ChunkVersionPolicy}, and a caller who passed
+     * {@code versionPolicy(null)} has explicitly asked for that check not to run — a promise this
+     * method must not quietly take back. The two are different failures: one is a world in an old
+     * format, the other a truncated chunk in the current one, and only the second is refused here.
+     * </p>
+     *
+     * @param data the root compound of the chunk
+     * @throws ChunkDataException if the chunk holds no {@code sections} list
+     * @since 2.2.0
+     */
+    private void requireSections(CompoundBinaryTag data) throws ChunkDataException {
+        if (data.get(SECTIONS_KEY) instanceof ListBinaryTag
+                || NbtReads.optionalCompound(data, LEGACY_LEVEL_KEY) != null) {
+            return;
+        }
+
+        throw new ChunkDataException(
+                ChunkDataException.Reason.MISSING_OR_MISTYPED_KEY,
+                "The chunk reports itself as fully generated but holds no '" + SECTIONS_KEY + "' list"
+                        + (data.get(SECTIONS_KEY) == null ? " (the key is absent)"
+                                : " (the key holds a " + data.get(SECTIONS_KEY).type() + ")")
+                        + ". Loading it would hand out a chunk of air that counts as loaded, and "
+                        + "saving that chunk would write the emptiness back over the stored world");
+    }
+
     private List<DecodedSection> decodeSections(Chunk chunk, CompoundBinaryTag data) throws ChunkDataException {
         ListBinaryTag sections = NbtReads.optionalList(data, SECTIONS_KEY, BinaryTagTypes.COMPOUND);
         List<DecodedSection> decoded = new ArrayList<>(sections.size());
