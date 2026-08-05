@@ -8,6 +8,7 @@ include("falco-benchmarks")
 include("falco-demo")
 include("falco-bom")
 include("falco-archunit")
+include("falco-migration")
 
 dependencyResolutionManagement {
     repositories {

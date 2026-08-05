@@ -63,7 +63,14 @@ project(":falco-bom") {
     apply(plugin = "java-platform")
 }
 
-val publishedModules = listOf(project(":falco-anvil"), project(":falco-light"), project(":falco-instance"), project(":falco-bom"))
+val publishedModules = listOf(project(":falco-anvil"), project(":falco-light"), project(":falco-instance"), project(":falco-migration"), project(":falco-bom"))
+
+// falco-migration has never been released, so no artefact exists for japicmp to compare against.
+// The baseline check further down refuses an unresolvable baseline on purpose — a comparison against
+// nothing passes no matter what changed — so the module stays out of that one check until its first
+// release exists, and out of nothing else. Delete this list once falco-migration is on the
+// repository; the module then joins the same API guarantee as its siblings.
+val modulesWithoutAnApiBaseline = listOf(project(":falco-migration"))
 
 configure(publishedModules) {
     apply(plugin = "maven-publish")
@@ -88,7 +95,7 @@ configure(publishedModules) {
     }
 }
 
-configure(listOf(project(":falco-anvil"), project(":falco-light"), project(":falco-instance"))) {
+configure(publishedModules - project(":falco-bom")) {
     extensions.configure<JavaPluginExtension> {
         withJavadocJar()
         withSourcesJar()
@@ -119,7 +126,7 @@ val apiBreaks: Map<String, String> = if (!apiBreaksFile.exists()) emptyMap() els
         .entries
         .associate { it.key.toString() to it.value.toString().trim() }
 
-configure(publishedModules - project(":falco-bom")) {
+configure(publishedModules - project(":falco-bom") - modulesWithoutAnApiBaseline) {
     apply(plugin = "me.champeau.gradle.japicmp")
 
     val apiBaseline = configurations.detachedConfiguration(
