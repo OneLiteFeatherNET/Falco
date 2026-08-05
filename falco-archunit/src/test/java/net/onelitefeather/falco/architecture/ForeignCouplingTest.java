@@ -56,7 +56,12 @@ class ForeignCouplingTest {
           + "(FalcoAnvilLoader|SectionCodec|NbtReads|PaletteEntryResolver"
           + "|BlockPaletteResolver|BiomePaletteResolver"
           + "|ChunkVersionPolicy|DefaultChunkVersionPolicy"
-          + "|UnknownEntryPolicy|DefaultUnknownEntryPolicy)(\\$.*)?";
+          + "|UnknownEntryPolicy|DefaultUnknownEntryPolicy"
+          // ChunkMigrator takes and returns a CompoundBinaryTag, which makes it a member of this
+          // layer rather than an exception to it: the same shape as ChunkVersionPolicy above, a
+          // contract stated in terms of parsed NBT. ChunkMigrationMode names no NBT type and needs
+          // no entry, which is the check that this list is still describing what it claims to.
+          + "|ChunkMigrator)(\\$.*)?";
 
     private static final String ANVIL_FILE_BOUNDARY =
             "net\\.onelitefeather\\.falco\\.anvil\\.(RegionFile|FalcoAnvilLoader)(\\$.*)?";
