@@ -114,7 +114,7 @@ public final class RebuildBiomes implements MigrationStep {
     /**
      * Minestom's {@code net.minestom.server.instance.palette.Palette.BIOME_PALETTE_MIN_BITS}
      * (checked in the sources jar of {@code net.minestom:minestom}), pinned here for the same reason
-     * {@link NormaliseBitPacking#BLOCK_PALETTE_MIN_BITS} is: this module cannot depend on
+     * {@link TranslateBlockStates#BLOCK_PALETTE_MIN_BITS} is: this module cannot depend on
      * {@code net.minestom}.
      */
     private static final int BIOME_PALETTE_MIN_BITS = 1;
