@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.0](https://github.com/OneLiteFeatherNET/Falco/compare/v2.0.0...v2.1.0) (2026-08-05)
+
+
+### Features
+
+* **anvil:** let a loader migrate the chunks it reads ([#50](https://github.com/OneLiteFeatherNET/Falco/issues/50)) ([e6eefd0](https://github.com/OneLiteFeatherNET/Falco/commit/e6eefd02ae132c6a969c7e78fdb8d9d416b48b20))
+
+
+### Bug Fixes
+
+* **anvil:** refuse a full chunk that carries no sections ([#49](https://github.com/OneLiteFeatherNET/Falco/issues/49)) ([f198feb](https://github.com/OneLiteFeatherNET/Falco/commit/f198feb67052dc7236fd8b5fed153080922ce29f))
+
 ## [2.0.0](https://github.com/OneLiteFeatherNET/Falco/compare/v1.0.0...v2.0.0) (2026-08-05)
 
 
