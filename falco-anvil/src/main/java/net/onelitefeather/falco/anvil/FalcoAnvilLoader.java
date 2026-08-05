@@ -27,11 +27,13 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -121,6 +123,19 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      */
     public static final int DEFAULT_MINIMUM_DATA_VERSION = 2844;
 
+    /**
+     * The directory below the world root that {@link ChunkMigrationMode#ON_DISK} copies the original
+     * of a region file into, unless {@link Builder#migrationBackup(Path)} names another one.
+     * <p>
+     * Below the world root and not below the region directory: a region file copied into the
+     * directory the loader reads would be read back as world data, and the backup would become part
+     * of the world it was taken to protect.
+     * </p>
+     *
+     * @since 2.2.0
+     */
+    public static final String DEFAULT_MIGRATION_BACKUP_DIRECTORY = "falco-migration-backup";
+
     private final int openRegionLimit;
     private final int compressionLevel;
     private final Path regionDirectory;
@@ -134,6 +149,48 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     private final Semaphore saveLimit;
     private final int dataVersion;
     private final int minimumDataVersion;
+
+    /**
+     * How far a chunk written by an older version is carried, never null.
+     *
+     * @since 2.2.0
+     */
+    private final ChunkMigrationMode migrationMode;
+
+    /**
+     * The migrator outdated chunks are translated with, or null when {@link #migrationMode} is
+     * {@link ChunkMigrationMode#OFF}.
+     * <p>
+     * Resolved once, in the constructor. Unlike the two policies beside it there is no shipped
+     * default to fall back on: this module holds no migration rules, so a loader asked to migrate
+     * without an engine on the classpath fails to build rather than starting up and quietly
+     * migrating nothing. Silence there would be the exact failure the option exists to prevent.
+     * </p>
+     *
+     * @since 2.2.0
+     */
+    private final @Nullable ChunkMigrator chunkMigrator;
+
+    /**
+     * Where the original of a region file is copied before {@link ChunkMigrationMode#ON_DISK} first
+     * writes to it, or null in the other two modes, which never write.
+     *
+     * @since 2.2.0
+     */
+    private final @Nullable Path migrationBackupDirectory;
+
+    /**
+     * The region files whose original has already been copied into {@link #migrationBackupDirectory}.
+     * <p>
+     * A set rather than a check for the copy's existence, because the question is asked on every
+     * migrated chunk of an already-copied file — up to a thousand times per region — and a file
+     * system call each time would put the backup on the chunk loading path it was meant to stay out
+     * of. The set is only consulted in {@link ChunkMigrationMode#ON_DISK} and stays empty otherwise.
+     * </p>
+     *
+     * @since 2.2.0
+     */
+    private final Set<Path> backedUpRegionFiles;
 
     /**
      * The policy consulted before a chunk is decoded, or null to skip that check entirely.
@@ -297,6 +354,16 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                 ChunkVersionPolicy.class, settings.versionPolicy, settings.discoverVersionPolicy,
                 DefaultChunkVersionPolicy.class);
         this.closeLock = new ReentrantLock();
+        this.migrationMode = settings.migrationMode;
+        this.chunkMigrator = settings.migrationMode == ChunkMigrationMode.OFF
+                ? null
+                : resolveMigrator(settings);
+        this.migrationBackupDirectory = settings.migrationMode == ChunkMigrationMode.ON_DISK
+                ? (settings.migrationBackupDirectory == null
+                        ? worldRoot.resolve(DEFAULT_MIGRATION_BACKUP_DIRECTORY).resolve(dimension.value())
+                        : settings.migrationBackupDirectory)
+                : null;
+        this.backedUpRegionFiles = ConcurrentHashMap.newKeySet();
 
         // Which directory was chosen, and how many region files are in it, is the first thing
         // somebody needs when a loader returns no chunks. Without this line the choice between the
@@ -311,6 +378,57 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                 this.dimensionLabel,
                 this.versionPolicy == null ? "none" : this.versionPolicy.getClass().getName()
         );
+
+        // Migration is off by default, so this line only appears for a loader somebody deliberately
+        // configured — and then it has to appear, because both modes cost something that is invisible
+        // from the outside. IN_MEMORY spends time on every load of an outdated chunk and reports it
+        // nowhere else; ON_DISK rewrites the world, which nothing else in the log would ever mention.
+        if (this.migrationMode != ChunkMigrationMode.OFF) {
+            LOGGER.info(
+                    "Chunk migration is on: mode={} migrator={} target={} dim={}. {}",
+                    this.migrationMode,
+                    this.chunkMigrator == null ? "none" : this.chunkMigrator.getClass().getName(),
+                    this.dataVersion,
+                    this.dimensionLabel,
+                    this.migrationMode == ChunkMigrationMode.IN_MEMORY
+                            ? "Every load of an outdated chunk pays for its translation again, and this world is "
+                                    + "never written to."
+                            : "Outdated chunks are translated once and written back, so this world is rewritten. "
+                                    + "Originals are copied to " + this.migrationBackupDirectory + " before the "
+                                    + "first write to each region file."
+            );
+        }
+    }
+
+    /**
+     * Resolves the migrator a loader was configured to migrate with.
+     * <p>
+     * Separate from the constructor because the failure has to be explained rather than shown as a
+     * null field: a caller who selected a migration mode and put no engine on the classpath has a
+     * loader that would silently do nothing, which is the failure mode the mode was chosen to avoid.
+     * </p>
+     *
+     * @param settings the builder the loader is being built from
+     * @return the migrator to use, never null
+     * @throws IllegalStateException if no migrator could be resolved
+     */
+    private static ChunkMigrator resolveMigrator(Builder settings) {
+        if (settings.chunkMigrator != null) {
+            return settings.chunkMigrator;
+        }
+
+        ChunkMigrator discovered = ServiceResolution.discover(ChunkMigrator.class);
+
+        if (discovered == null) {
+            throw new IllegalStateException(
+                    "The loader was configured with migration mode " + settings.migrationMode
+                            + " but no " + ChunkMigrator.class.getName() + " is registered on the classpath. "
+                            + "Add a migration engine such as falco-migration, or name one through "
+                            + "Builder#chunkMigrator. Building a loader that was told to migrate and then "
+                            + "migrates nothing would hide exactly the data loss this mode prevents."
+            );
+        }
+        return discovered;
     }
 
     /**
@@ -351,7 +469,8 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
     public static Builder builder() {
         return new Builder(DEFAULT_OPEN_REGION_LIMIT, ChunkCompression.DEFAULT_LEVEL,
                 Math.max(Runtime.getRuntime().availableProcessors(), 2), MinecraftServer.DATA_VERSION,
-                DEFAULT_MINIMUM_DATA_VERSION, null, null, null, null, null, true, null, true, false);
+                DEFAULT_MINIMUM_DATA_VERSION, null, null, null, null, null, true, null, true, false,
+                ChunkMigrationMode.OFF, null, null);
     }
 
     /**
@@ -400,6 +519,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
         private final @Nullable UnknownEntryPolicy unknownEntryPolicy;
         private final boolean discoverUnknownEntryPolicy;
         private final boolean unknownEntryPolicyConfigured;
+        private final ChunkMigrationMode migrationMode;
+        private final @Nullable ChunkMigrator chunkMigrator;
+        private final @Nullable Path migrationBackupDirectory;
 
         private Builder(int openRegionLimit, int compressionLevel, int saveParallelism, int dataVersion,
                         int minimumDataVersion, @Nullable AnvilDiagnostics diagnostics,
@@ -410,7 +532,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                         boolean discoverVersionPolicy,
                         @Nullable UnknownEntryPolicy unknownEntryPolicy,
                         boolean discoverUnknownEntryPolicy,
-                        boolean unknownEntryPolicyConfigured) {
+                        boolean unknownEntryPolicyConfigured,
+                        ChunkMigrationMode migrationMode,
+                        @Nullable ChunkMigrator chunkMigrator,
+                        @Nullable Path migrationBackupDirectory) {
             this.openRegionLimit = openRegionLimit;
             this.compressionLevel = compressionLevel;
             this.saveParallelism = saveParallelism;
@@ -425,6 +550,9 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             this.unknownEntryPolicy = unknownEntryPolicy;
             this.discoverUnknownEntryPolicy = discoverUnknownEntryPolicy;
             this.unknownEntryPolicyConfigured = unknownEntryPolicyConfigured;
+            this.migrationMode = migrationMode;
+            this.chunkMigrator = chunkMigrator;
+            this.migrationBackupDirectory = migrationBackupDirectory;
         }
 
         /**
@@ -456,7 +584,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -492,7 +623,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -524,7 +658,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -553,7 +690,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -588,7 +728,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -622,7 +765,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -661,7 +807,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -691,7 +840,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -728,7 +880,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -774,7 +929,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     false,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -807,7 +965,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     true,
                     this.unknownEntryPolicy,
                     this.discoverUnknownEntryPolicy,
-                    this.unknownEntryPolicyConfigured);
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -863,7 +1024,10 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     unknownEntryPolicy,
                     false,
-                    true);
+                    true,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
         }
 
         /**
@@ -902,7 +1066,142 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                     this.discoverVersionPolicy,
                     null,
                     true,
-                    true);
+                    true,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
+        }
+
+        /**
+         * Sets how far the loader carries a chunk that an older version of the game wrote.
+         * <p>
+         * The default is {@link ChunkMigrationMode#OFF}, which is the behaviour this loader had
+         * before the option existed: a chunk is decoded as stored, and whatever the running server
+         * no longer knows by name is replaced by the {@link UnknownEntryPolicy}. That is silent
+         * data loss on any world older than the server, which is what the other two modes are for.
+         * </p>
+         * <p>
+         * <b>Both other modes cost time, and they say so.</b> {@link ChunkMigrationMode#IN_MEMORY}
+         * pays it on every load of every outdated chunk, for the whole life of the process.
+         * {@link ChunkMigrationMode#ON_DISK} pays it once per chunk and writes the result back, so a
+         * long-running server converges on doing no migration work at all — at the price of
+         * rewriting the world. Which trade is right depends on whether the world may change on
+         * disk, not on which is faster.
+         * </p>
+         * <p>
+         * Choosing anything but {@code OFF} turns on classpath discovery of the
+         * {@link ChunkMigrator} unless {@link #chunkMigrator(ChunkMigrator)} named one explicitly.
+         * This differs on purpose from {@link #discoverVersionPolicy()}, where discovery is a
+         * separate opt-in: a caller who selects a migration mode has already said that chunks are to
+         * be migrated, and requiring a second call to say "and do find something that can" would
+         * only produce loaders that were configured to migrate and quietly did not.
+         * </p>
+         *
+         * @param migrationMode how far a chunk written by an older version is carried
+         * @return a new builder with this value
+         * @see #migrationBackup(Path)
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder migration(ChunkMigrationMode migrationMode) {
+            Objects.requireNonNull(migrationMode, "migrationMode");
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.minimumDataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured,
+                    migrationMode,
+                    this.chunkMigrator,
+                    this.migrationBackupDirectory);
+        }
+
+        /**
+         * Sets the migrator the loader translates outdated chunks with, instead of looking for one
+         * on the classpath.
+         * <p>
+         * Naming one here closes discovery for this builder, the same way the other extension points
+         * behave: a caller who states which implementation to use should not also get whatever else
+         * happens to be on the classpath.
+         * </p>
+         *
+         * @param chunkMigrator the migrator to use, or null to return to classpath discovery
+         * @return a new builder with this value
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder chunkMigrator(@Nullable ChunkMigrator chunkMigrator) {
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.minimumDataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    chunkMigrator,
+                    this.migrationBackupDirectory);
+        }
+
+        /**
+         * Sets the directory the original of a region file is copied into before
+         * {@link ChunkMigrationMode#ON_DISK} first writes to it.
+         * <p>
+         * <b>There is no way to turn the backup off.</b> A slot that sets the location exists; one
+         * that removes the safety net does not. Migration on disk replaces stored chunks with
+         * translated ones, a rule that turns out to be wrong is only discovered afterwards, and by
+         * then the original is the only thing that can undo it. A world that is already backed up
+         * elsewhere pays for a second copy — that cost is accepted, because the alternative is a
+         * flag whose only purpose is to make an irreversible mistake reachable.
+         * </p>
+         * <p>
+         * The default is {@code <worldRoot>/falco-migration-backup/<dimension>}. It sits beside the
+         * region directory rather than inside it on purpose: a region file copied into the directory
+         * the loader reads would be read back as world data.
+         * </p>
+         * <p>
+         * Copying happens once per region file, immediately before that file is first written to,
+         * rather than for the whole world at startup. A world whose chunks are all current is
+         * therefore never copied at all, and a world that is half converted only pays for the half
+         * that changes.
+         * </p>
+         *
+         * @param migrationBackupDirectory the directory the originals are copied into, or null for
+         *                                 the default beside the world
+         * @return a new builder with this value
+         */
+        @Contract(value = "_ -> new", pure = true)
+        public Builder migrationBackup(@Nullable Path migrationBackupDirectory) {
+            return new Builder(this.openRegionLimit,
+                    this.compressionLevel,
+                    this.saveParallelism,
+                    this.dataVersion,
+                    this.minimumDataVersion,
+                    this.diagnostics,
+                    this.blockResolver,
+                    this.biomeResolver,
+                    this.exceptionHandler,
+                    this.versionPolicy,
+                    this.discoverVersionPolicy,
+                    this.unknownEntryPolicy,
+                    this.discoverUnknownEntryPolicy,
+                    this.unknownEntryPolicyConfigured,
+                    this.migrationMode,
+                    this.chunkMigrator,
+                    migrationBackupDirectory);
         }
 
         /**
@@ -1042,6 +1341,14 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
             }
 
             CompoundBinaryTag data = TAG_READER.read(new ByteArrayInputStream(raw.decompress()), BinaryTagIO.Compression.NONE);
+
+            // Before the guard, not after it. The guard refuses a chunk older than
+            // minimumDataVersion and one still in the pre-1.18 Level layout, and migrating is
+            // precisely what turns such a chunk into one it accepts. Running the guard first would
+            // reject every world this option exists to rescue, and the mode would only ever help
+            // worlds that never needed it.
+            data = migrate(data, chunkX, chunkZ);
+
             if (this.versionPolicy != null) {
                 checkVersion(data);
             }
@@ -1794,6 +2101,102 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * @param data the root compound of the chunk
      * @throws ChunkDataException if the policy refuses the chunk
      */
+    /**
+     * Translates a chunk that an older version wrote, if this loader was configured to and if this
+     * chunk needs it.
+     * <p>
+     * Four things are checked before any work happens, and each one returns the chunk untouched:
+     * migration is off, the chunk carries no version at all, the chunk is not older than the target,
+     * or the configured migrator cannot help with that version. Only what is left is translated, so
+     * a world that is already current costs one integer comparison per chunk and nothing else.
+     * </p>
+     *
+     * @param data   the root compound as read from the region file
+     * @param chunkX the absolute chunk x coordinate
+     * @param chunkZ the absolute chunk z coordinate
+     * @return the translated compound, or {@code data} when nothing applied
+     * @throws ChunkDataException    if the chunk could not be translated
+     * @throws IOException           if writing the translated chunk back failed
+     * @throws RegionFormatException if the region file written to is malformed
+     * @since 2.2.0
+     */
+    private CompoundBinaryTag migrate(CompoundBinaryTag data, int chunkX, int chunkZ)
+            throws ChunkDataException, IOException, RegionFormatException {
+        if (this.chunkMigrator == null) {
+            return data;
+        }
+
+        // A chunk without a version is not assumed to be old. DefaultChunkVersionPolicy lets such a
+        // chunk through on the grounds that some tool wrote it without stamping one, and guessing a
+        // version here in order to migrate it would translate data whose age nobody knows.
+        if (data.get(DATA_VERSION_KEY) == null) {
+            return data;
+        }
+
+        int sourceVersion = NbtReads.optionalInteger(data, DATA_VERSION_KEY, -1);
+
+        if (sourceVersion < 0 || sourceVersion >= this.dataVersion
+                || !this.chunkMigrator.canMigrate(sourceVersion, this.dataVersion)) {
+            return data;
+        }
+
+        CompoundBinaryTag migrated = this.chunkMigrator.migrate(data, this.dataVersion);
+        this.diagnostics.countChunkMigrated(sourceVersion);
+
+        if (this.migrationMode == ChunkMigrationMode.ON_DISK) {
+            backUpRegionFileOnce(chunkX, chunkZ);
+            ByteArrayOutputStream target = new ByteArrayOutputStream(64 * 1024);
+            TAG_WRITER.writeNamed(Map.entry("", migrated), target, BinaryTagIO.Compression.NONE);
+            writeToRegion(chunkX, chunkZ, ChunkCompression.ZLIB.compress(target.toByteArray(), this.compressionLevel));
+        }
+        return migrated;
+    }
+
+    /**
+     * Copies the original of the region file holding the given chunk into the backup directory,
+     * unless that file has already been copied.
+     * <p>
+     * The copy has to happen before the first write and cannot be repeated after it: once a single
+     * chunk of a region file has been rewritten, that file no longer holds the original of anything.
+     * The set of already-copied files is therefore updated only after the copy has completed, so a
+     * copy that fails is retried on the next chunk instead of being recorded as done.
+     * </p>
+     * <p>
+     * A file that is already in the backup directory from an earlier run is not overwritten. That
+     * run's copy is the older one, and overwriting it with a file this run has possibly already
+     * migrated would replace the last untouched original with a converted one.
+     * </p>
+     *
+     * @param chunkX the absolute chunk x coordinate
+     * @param chunkZ the absolute chunk z coordinate
+     * @throws IOException if the original could not be copied
+     * @since 2.2.0
+     */
+    private void backUpRegionFileOnce(int chunkX, int chunkZ) throws IOException {
+        Path source = this.regionDirectory.resolve(
+                "r." + Math.floorDiv(chunkX, RegionConstants.REGION_SIZE)
+                        + "." + Math.floorDiv(chunkZ, RegionConstants.REGION_SIZE) + ".mca");
+
+        if (this.backedUpRegionFiles.contains(source) || !Files.isRegularFile(source)) {
+            return;
+        }
+
+        Path backupDirectory = Objects.requireNonNull(this.migrationBackupDirectory, "migrationBackupDirectory");
+        Files.createDirectories(backupDirectory);
+        Path target = backupDirectory.resolve(source.getFileName());
+
+        if (!Files.exists(target)) {
+            // Into a temporary name first and then moved: a copy interrupted half way through would
+            // otherwise sit in the backup directory under the right name, looking like a complete
+            // original, and the next run would skip it because it exists.
+            Path partial = backupDirectory.resolve(source.getFileName() + ".partial");
+            Files.copy(source, partial, StandardCopyOption.REPLACE_EXISTING);
+            Files.move(partial, target, StandardCopyOption.ATOMIC_MOVE);
+            LOGGER.info("Copied {} to {} before migrating its chunks on disk", source, target);
+        }
+        this.backedUpRegionFiles.add(source);
+    }
+
     private void checkVersion(CompoundBinaryTag data) throws ChunkDataException {
         try {
             this.versionPolicy.check(data, this.minimumDataVersion);

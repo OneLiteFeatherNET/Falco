@@ -77,6 +77,8 @@ public final class AnvilDiagnostics {
     private final LongAdder chunksWithoutEntry;
     private final LongAdder partialChunks;
     private final LongAdder unsupportedChunks;
+    private final LongAdder chunksMigrated;
+    private final Map<String, LongAdder> migratedSourceVersions;
 
     /**
      * Creates a new diagnostics instance with empty counters.
@@ -96,6 +98,8 @@ public final class AnvilDiagnostics {
         this.chunksWithoutEntry = new LongAdder();
         this.partialChunks = new LongAdder();
         this.unsupportedChunks = new LongAdder();
+        this.chunksMigrated = new LongAdder();
+        this.migratedSourceVersions = new ConcurrentHashMap<>();
     }
 
     /**
@@ -265,6 +269,58 @@ public final class AnvilDiagnostics {
      */
     public void countChunkSaved() {
         this.chunksSaved.increment();
+    }
+
+    /**
+     * Counts a chunk which was translated from an older version to the one the server writes.
+     * <p>
+     * Counted per source version as well as in total, because the two answer different questions. A
+     * total says how much work migration is costing this run; the breakdown says which versions a
+     * world actually holds, which is what tells somebody whether a conversion is nearly finished or
+     * has barely begun. The same per-version cap as elsewhere in this class applies: a version
+     * beyond it is still counted in {@link #chunksMigrated()} and only loses its own entry.
+     * </p>
+     *
+     * @param sourceVersion the data version the chunk carried before it was translated
+     * @since 2.2.0
+     */
+    public void countChunkMigrated(int sourceVersion) {
+        this.chunksMigrated.increment();
+        String version = Integer.toString(sourceVersion);
+        LongAdder counter = this.migratedSourceVersions.get(version);
+
+        if (counter == null) {
+            if (this.migratedSourceVersions.size() >= MAX_TRACKED_NAMES) {
+                return;
+            }
+            LongAdder created = new LongAdder();
+            LongAdder previous = this.migratedSourceVersions.putIfAbsent(version, created);
+            (previous == null ? created : previous).increment();
+            return;
+        }
+        counter.increment();
+    }
+
+    /**
+     * Returns the amount of chunks which were translated from an older version.
+     *
+     * @return the amount of migrated chunks
+     * @since 2.2.0
+     */
+    public long chunksMigrated() {
+        return this.chunksMigrated.sum();
+    }
+
+    /**
+     * Returns how many chunks were migrated per stored source version.
+     *
+     * @return the amount of migrated chunks per source version
+     * @since 2.2.0
+     */
+    public @Unmodifiable Map<String, Long> migratedSourceVersions() {
+        Map<String, Long> snapshot = new java.util.HashMap<>();
+        this.migratedSourceVersions.forEach((version, counter) -> snapshot.put(version, counter.sum()));
+        return Map.copyOf(snapshot);
     }
 
     /**
