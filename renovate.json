@@ -1,12 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "github>OneLiteFeatherNET/renovate:default(team:falco-maintainers)",
+    "github>OneLiteFeatherNET/renovate:default(OneLiteFeatherNET/falco-maintainers)",
     "github>OneLiteFeatherNET/renovate:minestom"
-  ],
-  "description": [
-    "The argument to the :default preset becomes :reviewer(arg0). It carries the `team:` prefix and the bare slug, without the organisation: Renovate splits reviewers on that prefix and posts the remainder as a team reviewer, so `OneLiteFeatherNET/falco-maintainers` would be sent as a user name and rejected. The team holds admin on this repository and is the same owner .github/CODEOWNERS names.",
-    "The :minestom flavor only fixes version ordering for a pinned `net.minestom:minestom`. Falco resolves Minestom through mycelium-bom and pins no version of its own today, so the flavor is inert here and kept for the moment a version does get pinned."
   ],
   "customManagers": [
     {

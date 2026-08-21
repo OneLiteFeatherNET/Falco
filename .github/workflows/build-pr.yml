@@ -17,7 +17,7 @@ jobs:
     # dorny/paths-filter comparison, and that comparison has no base outside a pull request. A
     # manual run is one somebody asked for regardless of what changed, so it skips the filter
     # instead of depending on what the filter would answer without a base.
-    uses: OneLiteFeatherNET/workflows/.github/workflows/gradle-build-pr.yml@v2.4.0
+    uses: OneLiteFeatherNET/workflows/.github/workflows/gradle-build-pr.yml@v2.8.1
     with:
       java-version: "25"
       java-distribution: "temurin"
