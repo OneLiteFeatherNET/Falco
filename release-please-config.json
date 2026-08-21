@@ -3,14 +3,17 @@
   "release-type": "simple",
   "include-component-in-tag": false,
   "include-v-in-tag": true,
-  "bootstrap-sha": "HEAD",
+  "bootstrap-sha": "cbd74ccb7ecbc6871edb975cf319ed8d94f18155",
   "pull-request-header": "",
   "packages": {
     ".": {
       "package-name": "falco",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
-        { "type": "generic", "path": "build.gradle.kts" }
+        {
+          "type": "generic",
+          "path": "build.gradle.kts"
+        }
       ]
     }
   }
