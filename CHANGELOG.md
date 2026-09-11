@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.0.0](https://github.com/OneLiteFeatherNET/Falco/compare/v2.1.0...v3.0.0) (2026-09-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* the artefacts link against Minestom `2026.08.28-26.2` and no longer run on `26.1.2`. Falco's own signatures are unchanged -- japicmp reports no change -- but a server on 26.1.2 fails at the Minestom members this release compiles against.
+
+### Bug Fixes
+
+* **anvil:** read a chunk whose status carries no namespace ([#53](https://github.com/OneLiteFeatherNET/Falco/issues/53)) ([6a075db](https://github.com/OneLiteFeatherNET/Falco/commit/6a075dbb6bdd2ad65371a9cff20ef51d4eebf6d9))
+* move to Minestom 26.2 through a mycelium-bom a consumer can resolve ([#54](https://github.com/OneLiteFeatherNET/Falco/issues/54)) ([a2334f3](https://github.com/OneLiteFeatherNET/Falco/commit/a2334f398a062932ba54d9eb604e14e14fb3404f))
+
 ## [2.1.0](https://github.com/OneLiteFeatherNET/Falco/compare/v2.0.0...v2.1.0) (2026-08-05)
 
 
