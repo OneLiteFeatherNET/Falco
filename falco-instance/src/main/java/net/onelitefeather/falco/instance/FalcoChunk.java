@@ -940,9 +940,12 @@ public class FalcoChunk extends Chunk {
         }
         final var entities = instance.getEntityTracker().chunkEntities(chunkX, chunkZ, EntityTracker.Target.ENTITIES);
         final int[] entityIds = ArrayUtils.mapToIntArray(entities, Entity::getEntityId);
+        // The biome registry is passed in rather than read from a static: since 26.2 the snapshot
+        // record holds the registry it resolves biome ids against, so a snapshot answers with the
+        // registry of the instance it was taken from instead of the one of the running server.
         return new SnapshotImpl.Chunk(minSection, chunkX, chunkZ,
                 clonedSections, this.entries.clone(), entityIds, updater.reference(instance),
-                tagHandler().readableCopy());
+                instance.registries().biome(), tagHandler().readableCopy());
     }
 
     /**

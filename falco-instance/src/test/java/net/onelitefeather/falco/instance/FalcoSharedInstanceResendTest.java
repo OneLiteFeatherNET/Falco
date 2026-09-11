@@ -2,6 +2,8 @@ package net.onelitefeather.falco.instance;
 
 import net.minestom.server.coordinate.Pos;
 import net.minestom.server.entity.Player;
+import net.minestom.server.event.EventFilter;
+import net.minestom.server.event.player.PlayerChunkUnloadEvent;
 import net.minestom.server.instance.InstanceContainer;
 import net.minestom.server.network.packet.server.play.ChunkDataPacket;
 import net.minestom.server.network.packet.server.play.UnloadChunkPacket;
@@ -16,7 +18,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
@@ -40,11 +41,24 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  * direct US-4.01 statement in this file, not a decorative one.
  * </p>
  * <p>
- * {@code UpdateViewPositionPacket} and {@code UnloadChunkPacket} are asserted next to it because
- * they leave {@code Player#spawnPlayer} unconditionally under {@code updateChunks == true},
+ * {@code UpdateViewPositionPacket} and {@code PlayerChunkUnloadEvent} are asserted next to it
+ * because they leave {@code Player#spawnPlayer} unconditionally under {@code updateChunks == true},
  * independently of how chunk bodies are delivered. They keep the file honest if a future Cyano
  * stops overriding {@code sendChunk} — at which point the chunk counter would silently drop to zero
  * on both paths, and the control's {@code assertCount(25)} would say so instead of hiding it.
+ * </p>
+ * <h2>Why the unload is an event and not a packet</h2>
+ * <p>
+ * Up to Minestom 26.1.2 the old view left {@code spawnPlayer} as one {@code UnloadChunkPacket} per
+ * chunk, and this file asserted those packets. Since 26.2 the packet is withheld for a chunk that
+ * is also in the new view: the client of 26.2 drops a chunk it receives an unload and a data packet
+ * for within the same frame (MC-310041), and Minestom carries the workaround with a
+ * {@code TODO(26.3)} to revert it once the client is fixed. The control below transfers to the same
+ * position, so every one of its 25 chunks is in the new view and not a single packet is sent — the
+ * per-chunk unload is still there, as the event that fires beside the suppressed packet. Asserting
+ * the event keeps the marker measuring what it was written to measure across both behaviours, and
+ * {@code unloads.assertEmpty()} states the 26.2 suppression itself, so the revert in 26.3 fails
+ * here rather than passing unnoticed.
  * </p>
  *
  * @author TheMeinerLP
@@ -78,12 +92,17 @@ class FalcoSharedInstanceResendTest {
         final Collector<UpdateViewPositionPacket> views = connection.trackIncoming(UpdateViewPositionPacket.class);
         final Collector<UnloadChunkPacket> unloads = connection.trackIncoming(UnloadChunkPacket.class);
         final Collector<ChunkDataPacket> chunks = connection.trackIncoming(ChunkDataPacket.class);
+        final Collector<PlayerChunkUnloadEvent> unloadEvents =
+                env.trackEvent(PlayerChunkUnloadEvent.class, EventFilter.PLAYER, player);
 
         player.setInstance(shared, SPAWN).join();
 
         assertSame(shared, player.getInstance());
         views.assertEmpty();
         unloads.assertEmpty();
+        // The packet is suppressed by 26.2 whenever the chunk stays in view, so the event is what
+        // separates the fast path from the slow one: the fast path never enters the unload loop.
+        unloadEvents.assertEmpty();
         chunks.assertEmpty();
     }
 
@@ -99,14 +118,20 @@ class FalcoSharedInstanceResendTest {
         final Collector<UpdateViewPositionPacket> views = connection.trackIncoming(UpdateViewPositionPacket.class);
         final Collector<UnloadChunkPacket> unloads = connection.trackIncoming(UnloadChunkPacket.class);
         final Collector<ChunkDataPacket> chunks = connection.trackIncoming(ChunkDataPacket.class);
+        final Collector<PlayerChunkUnloadEvent> unloadEvents =
+                env.trackEvent(PlayerChunkUnloadEvent.class, EventFilter.PLAYER, player);
 
         player.setInstance(unrelated, SPAWN).join();
 
         assertSame(unrelated, player.getInstance());
         views.assertCount(1);
-        assertFalse(unloads.collect().isEmpty(),
-                "the slow path unloads the old view chunk by chunk; if this is empty the markers are wrong, "
-                        + "not the fast path");
+        // The slow path unloads the old view chunk by chunk: 25 events for the 5x5 view, the same
+        // number as the chunk bodies below. If this ever reads zero the markers are wrong, not the
+        // fast path.
+        unloadEvents.assertCount(25);
+        // The transfer keeps the position, so all 25 chunks of the old view are also in the new one
+        // and 26.2 sends no unload packet for any of them — see the class comment.
+        unloads.assertEmpty();
         // 25 = the 5x5 view of viewDistance(1). This is the resend the fast path avoids, and it is
         // the number that makes the empty chunk collector over there mean something.
         chunks.assertCount(25);

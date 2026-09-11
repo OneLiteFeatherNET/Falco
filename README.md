@@ -363,6 +363,14 @@ chunk from its own. The reasoning is in
 Measured, not asserted. Every timing below comes from a JMH benchmark in this repository and is
 quoted with the condition it was measured under.
 
+One condition is missing from all of them and is worth naming here rather than leaving implied: the
+Minestom version. The rows that quote a factor compare Falco against the loader Minestom ships, so
+the Minestom under test is part of the measurement, and no provenance line below records it — the
+run commit is not recorded either, so it cannot be recovered after the fact. Every figure below was
+taken before this repository moved to Minestom `2026.08.28-26.2`, and none has been re-run against
+it. Read the comparison rows as unverified on 26.2 until a baseline is taken there; the jol count is
+unaffected, being a count of objects on a heap rather than a comparison.
+
 One claim is not a timing and is marked as such where it appears: **a chunk allocates its sections
 when something writes into them**, which takes a fresh chunk from 192 objects and 6 848 bytes to 25
 and 840. That comes from jol rather than from JMH — it is a count of objects on a heap, it has no

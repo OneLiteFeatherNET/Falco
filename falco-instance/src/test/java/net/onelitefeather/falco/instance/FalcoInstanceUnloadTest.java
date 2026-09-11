@@ -120,7 +120,7 @@ class FalcoInstanceUnloadTest {
 
         manager.unregisterInstance(instance);
 
-        // Pinned against Minestom 2026.06.20-26.1.2: the manager only unloads chunks for an
+        // Pinned against Minestom 2026.08.28-26.2: the manager only unloads chunks for an
         // InstanceContainer, which is why FalcoInstance#unregister exists. If this ever starts to
         // fail, Minestom has learned to clean up foreign instances and the own path can shrink.
         assertFalse(instance.isRegistered());

@@ -19,11 +19,20 @@ That compiles the modules, runs the tests and builds the Javadoc. An incomplete 
 fails the build, so a green `./gradlew build` is also the documentation check.
 
 **A build from source needs OneLiteFeather Maven credentials.** Falco compiles against Minestom and
-the internal `mycelium-bom`, which are served from an authenticated endpoint, so `./gradlew build`
-fails with a 401 without them. This affects only work on Falco itself — the published artefacts are
-served without authentication and a build that consumes them needs no credentials. The names the
-credentials are read under are in
+the internal `mycelium-bom` through `https://repo.onelitefeather.dev/onelitefeather`, which answers
+`401` to an anonymous request, so `./gradlew build` fails without them. This affects only work on
+Falco itself. The names the credentials are read under are in
 [Installation](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation#building-from-source).
+
+**Consuming Falco needs no credentials from this release onwards, and did need them before it.** The
+jars were always served without authentication, but a POM is resolved as well as a jar, and up to
+2.1.0 every module's POM imported `net.onelitefeather:mycelium-bom:1.7.2` in its
+`dependencyManagement`. That version is on neither `https://repo.onelitefeather.dev/releases` — which
+carries 1.8.3 and up — nor Maven Central, so a consumer without credentials got
+`Could not find net.onelitefeather:mycelium-bom:1.7.2` and no Minestom version to constrain against.
+The bump to 1.8.5 is what closes that: measured against a clean Gradle home with only `mavenCentral()`
+and the public `releases` endpoint declared, the 1.8.5 import resolves and brings Minestom
+`2026.08.28-26.2` with it, where the same probe against 1.7.2 fails.
 
 Running a single test class, building the benchmark jar and starting the two demo servers are
 further commands, listed under
