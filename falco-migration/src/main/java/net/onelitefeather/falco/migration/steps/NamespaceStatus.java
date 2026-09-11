@@ -46,7 +46,7 @@ import java.util.Map;
  * see {@code NamespaceStatusTest.testAGenuineNineteenThirteenTerminalStatusBecomesMinecraftFull} for
  * the sourced fixture. The eight remaining, non-terminal 1.13 values are left namespaced but
  * otherwise unrenamed rather than guessed at: they describe an incomplete proto-chunk either way, and
- * {@code FalcoAnvilLoader} skips anything that is not exactly {@code minecraft:full} regardless of
+ * {@code FalcoAnvilLoader} skips anything whose status does not name {@code full} regardless of
  * which non-terminal name it carries, so a wrong (but still non-{@code full}) guess for one of them
  * would not silently corrupt a load the way the {@code full} case would have.
  * </p>
