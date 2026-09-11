@@ -126,7 +126,8 @@ class ForeignCouplingTest {
 
     /**
      * F3a — {@code Section} is a record whose {@code clone()} ({@code instance/Section.java:26-33}
-     * of Minestom {@code 2026.06.20-26.1.2}) calls {@code Light.sky()}/{@code Light.block()}
+     * of Minestom {@code 2026.08.28-26.2}, at the same lines and with the same body as in
+     * {@code 2026.06.20-26.1.2}) calls {@code Light.sky()}/{@code Light.block()}
      * directly and copies existing light objects only via {@code set(array())}. A foreign
      * {@code Light} implementation is therefore silently replaced by the built-in one on the next
      * chunk copy — light looks right locally and disappears later. The prototype that carried a

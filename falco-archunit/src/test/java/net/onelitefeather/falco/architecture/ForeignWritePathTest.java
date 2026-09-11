@@ -44,9 +44,11 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
  * has to be rewritten, and the decision not to override {@code setBlock} has to be taken again".
  *
  * <p>Verified against Minestom {@code 2026.06.20-26.1.2} with {@code javap} before the rules were
- * written: {@code UNSAFE_setBlock} is {@code private synchronized} at {@code InstanceContainer:149},
- * and the four call sites are in {@code setBlock} ({@code :135}), {@code placeBlock} ({@code :223}),
- * {@code breakBlock} ({@code :250}) and {@code executeNeighboursBlockPlacementRule} ({@code :756}).
+ * written, and read again against {@code 2026.08.28-26.2} when this repository moved to it: the
+ * shape is the same and only the line numbers moved. On 26.2 {@code UNSAFE_setBlock} is
+ * {@code private synchronized} at {@code InstanceContainer:161}, and the four call sites are in
+ * {@code setBlock} ({@code :147}), {@code placeBlock} ({@code :235}), {@code breakBlock}
+ * ({@code :262}) and {@code executeNeighboursBlockPlacementRule} ({@code :779}).
  * The rules assert exactly that, so all four were green on their first run and each had to be proved
  * to bite on its own: W1 by pointing {@link #UNSAFE_SET_BLOCK} at {@code setBlock}, which is neither
  * private nor synchronised; W2 by swapping {@code breakBlock} for {@code loadChunk} in

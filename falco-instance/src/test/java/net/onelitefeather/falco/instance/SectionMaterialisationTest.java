@@ -49,7 +49,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * <h2>Where the numbers come from</h2>
  * <p>
  * Every expectation is derived from the source of Minestom {@code 2026.06.20-26.1.2} before it is
- * run, not corrected afterwards until the bar turns green. The dimension is the overworld: twenty-four
+ * run, not corrected afterwards until the bar turns green, and every one of them survived the move
+ * to {@code 2026.08.28-26.2} unchanged. The dimension is the overworld: twenty-four
  * sections, world Y from {@code -64} to {@code 319}, so {@code Heightmap#minHeight} is {@code -65} and
  * a column scan that finds nothing walks to the floor.
  * </p>

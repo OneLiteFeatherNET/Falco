@@ -47,11 +47,11 @@ Then connect to **`localhost:25565`**. Stop the server with ctrl-c.
 
 | | |
 | --- | --- |
-| **Minecraft client** | **26.1.2** |
-| Protocol | 775 |
+| **Minecraft client** | **26.2** |
+| Protocol | 776 |
 | Authentication | **offline mode** — no Mojang login, any username is accepted |
 
-The version follows from the Minestom this repository builds against, `2026.06.20-26.1.2`: the part
+The version follows from the Minestom this repository builds against, `2026.08.28-26.2`: the part
 after the dash is the Minecraft version it speaks. A client on any other version is turned away
 during the handshake, which is by far the most likely reason a connection fails. The server prints
 both numbers on startup, so after a Minestom upgrade believe the log rather than this table.
