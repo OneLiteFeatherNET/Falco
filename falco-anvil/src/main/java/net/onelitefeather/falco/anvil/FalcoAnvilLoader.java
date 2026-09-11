@@ -105,7 +105,15 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * the {@link ChunkVersionPolicy} and stays there.
      */
     private static final String LEGACY_LEVEL_KEY = "Level";
-    private static final String FULL_STATUS = "minecraft:full";
+    /**
+     * The status a completely generated chunk carries, held as a {@link Key} because the stored
+     * value is a resource location rather than an opaque string. Minecraft namespaced the field in
+     * 1.20.2, so a world holds {@code full} or {@code minecraft:full} depending on when the chunk
+     * was last written, and both name the same status; comparing keys rather than strings is what
+     * makes the two forms one value. Written out as {@link Key#asString()}, which is the namespaced
+     * form the game itself writes today.
+     */
+    private static final Key FULL_STATUS = Key.key(Key.MINECRAFT_NAMESPACE, "full");
 
     private static final int BLOCK_ENTRIES = 16 * 16 * 16;
     private static final int BIOME_ENTRIES = 4 * 4 * 4;
@@ -2256,13 +2264,41 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * Checks whether the given status describes a fully generated chunk.
      * A chunk without a status counts as generated, because a world written by a tool which does
      * not store one would otherwise be unreadable in its entirety.
+     * <p>
+     * <b>The status is compared as a key, not as a string.</b> Minecraft namespaced the chunk
+     * {@code Status} field in 1.20.2; a chunk written before that stores {@code full}, one written
+     * since stores {@code minecraft:full}, and the two are the same resource location, because
+     * {@code minecraft} is the namespace an un-namespaced key carries. Comparing the stored text
+     * against the namespaced spelling alone made every chunk of an older world count as partial:
+     * {@link #loadChunk(Instance, int, int)} returned null for it and the server handed the client
+     * air, counted only under {@link AnvilDiagnostics#chunksSkippedAsPartial()} and never as an
+     * error. Parsing both forms into a {@link Key} is what makes them one value, and it holds for
+     * every status rather than for {@code full} alone: a bare {@code structure_starts} is still
+     * refused, exactly as {@code minecraft:structure_starts} is.
+     * </p>
+     * <p>
+     * <b>A status which is not a valid key at all refuses the chunk rather than throwing.</b>
+     * {@link Key#key(String)} throws on a value that is no resource location — an upper-case
+     * letter or a space is enough — and letting that escape would turn a single unreadable byte in
+     * one chunk into a failed load the caller has to handle, for a field whose only purpose here is
+     * to say whether the chunk is finished. A value this method cannot parse is not evidence that
+     * the chunk is complete, so it is treated as it reads: not {@code full}. The chunk is skipped
+     * and counted under the exact value that was stored, which is what a reader needs to find it in
+     * the region file.
+     * </p>
      *
      * @param status the stored status, or null if the chunk carries none
      * @return true if the chunk is fully generated, otherwise false
      */
     @Contract(pure = true)
     private static boolean isFullyGenerated(@Nullable String status) {
-        return status == null || FULL_STATUS.equals(status);
+        if (status == null) {
+            return true;
+        }
+        if (!Key.parseable(status)) {
+            return false;
+        }
+        return FULL_STATUS.equals(Key.key(status));
     }
 
     /**
@@ -2285,7 +2321,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
      * from it. The result reaches the caller as a chunk of air that reports itself loaded, and a save
      * writes that emptiness back over whatever the region file still held. The distinction does not
      * belong in {@code optionalList}, which cannot know what its caller considers required; it
-     * belongs here, where the contradiction is visible: a chunk that says {@code minecraft:full} and
+     * belongs here, where the contradiction is visible: a chunk whose status names {@code full} and
      * carries no block data at all is claiming something it has not got.
      * </p>
      * <p>
@@ -2534,7 +2570,7 @@ public final class FalcoAnvilLoader implements ChunkLoader, AutoCloseable {
                 .putInt("xPos", chunk.getChunkX())
                 .putInt("zPos", chunk.getChunkZ())
                 .putInt("yPos", chunk.getMinSection())
-                .putString(STATUS_KEY, FULL_STATUS)
+                .putString(STATUS_KEY, FULL_STATUS.asString())
                 .putLong("LastUpdate", 0L)
                 .put(SECTIONS_KEY, sections.build())
                 .put(BLOCK_ENTITIES_KEY, entities.build())

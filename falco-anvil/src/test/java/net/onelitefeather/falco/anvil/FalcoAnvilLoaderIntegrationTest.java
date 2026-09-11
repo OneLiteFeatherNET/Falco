@@ -681,6 +681,150 @@ class FalcoAnvilLoaderIntegrationTest {
     }
 
     @Test
+    void testAFullChunkWithoutANamespaceIsRead(Env env) throws Exception {
+        // Minecraft namespaced the chunk status in 1.20.2. Everything a world wrote before that
+        // carries a bare "full", and comparing the stored value against the single literal
+        // "minecraft:full" turned every such chunk into air the client was handed without a single
+        // error being counted. DataVersion 3337 is 1.20.1, a version well above the loader's floor:
+        // the chunk is perfectly readable, only its status is spelled the older way.
+        CompoundBinaryTag bare = CompoundBinaryTag.builder()
+                .putInt("DataVersion", 3337)
+                .putString("Status", "full")
+                .put("sections", ListBinaryTag.empty())
+                .build();
+        writeRawChunk(12, 12, bare);
+
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNotNull(loader.loadChunk(instance, 12, 12));
+            assertEquals(1, diagnostics.chunksLoaded());
+            assertEquals(0, diagnostics.chunksSkippedAsPartial());
+            assertEquals(0, diagnostics.errors());
+        }
+    }
+
+    @Test
+    void testAFullChunkWithTheNamespaceIsStillRead(Env env) throws Exception {
+        // The other half of the same decision. Widening the check must not cost the spelling every
+        // world written since 1.20.2 -- and the one this loader writes itself -- actually uses.
+        CompoundBinaryTag namespaced = CompoundBinaryTag.builder()
+                .putInt("DataVersion", 4440)
+                .putString("Status", "minecraft:full")
+                .put("sections", ListBinaryTag.empty())
+                .build();
+        writeRawChunk(13, 13, namespaced);
+
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNotNull(loader.loadChunk(instance, 13, 13));
+            assertEquals(1, diagnostics.chunksLoaded());
+            assertEquals(0, diagnostics.chunksSkippedAsPartial());
+        }
+    }
+
+    @Test
+    void testAPartialChunkWithoutANamespaceIsStillRefused(Env env) throws Exception {
+        // The risk in accepting the bare spelling is accepting it for every status rather than for
+        // "full" alone. A pre-1.20.2 world holds genuinely unfinished chunks under bare names too --
+        // "structure_starts" is the one the measured world held 3617 of -- and those still have to be
+        // skipped, in either spelling, and still have to be counted under the name they were stored
+        // with rather than under a normalised one a reader would not find in their region file.
+        writeRawChunk(14, 14, CompoundBinaryTag.builder()
+                .putInt("DataVersion", 3337)
+                .putString("Status", "structure_starts")
+                .build());
+        writeRawChunk(15, 15, CompoundBinaryTag.builder()
+                .putInt("DataVersion", 4440)
+                .putString("Status", "minecraft:structure_starts")
+                .build());
+
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNull(loader.loadChunk(instance, 14, 14));
+            assertNull(loader.loadChunk(instance, 15, 15));
+            assertEquals(2, diagnostics.chunksSkippedAsPartial());
+            assertEquals(
+                    Map.of("structure_starts", 1L, "minecraft:structure_starts", 1L),
+                    diagnostics.partialChunkStatuses()
+            );
+            assertEquals(0, diagnostics.chunksLoaded());
+            assertEquals(0, diagnostics.errors());
+        }
+    }
+
+    @Test
+    void testAChunkWithoutAStatusIsStillRead(Env env) throws Exception {
+        // A world written by a tool which stores no status at all stays readable in its entirety,
+        // which is the reason the null case exists. Parsing the status as a key must not turn the
+        // absence of one into a parse failure.
+        CompoundBinaryTag statusless = CompoundBinaryTag.builder()
+                .putInt("DataVersion", 3337)
+                .put("sections", ListBinaryTag.empty())
+                .build();
+        writeRawChunk(16, 16, statusless);
+
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNotNull(loader.loadChunk(instance, 16, 16));
+            assertEquals(1, diagnostics.chunksLoaded());
+            assertEquals(0, diagnostics.chunksSkippedAsPartial());
+        }
+    }
+
+    @Test
+    void testAStatusWhichIsNotAKeyIsSkippedRatherThanThrown(Env env) throws Exception {
+        // Reading the status as a key introduces a third answer the string comparison never had: the
+        // value is neither "full" nor a name of an unfinished stage, it is not a resource location at
+        // all. Key.key would throw on it, and an exception here would turn a single bad byte in one
+        // chunk into a failed load the caller has to handle. The chunk is refused instead, counted as
+        // partial under the exact value that was stored, which is what a reader needs to find it.
+        writeRawChunk(17, 17, CompoundBinaryTag.builder()
+                .putInt("DataVersion", 3337)
+                .putString("Status", "Not A Status")
+                .put("sections", ListBinaryTag.empty())
+                .build());
+
+        AnvilDiagnostics diagnostics = new AnvilDiagnostics();
+        try (FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+                .diagnostics(diagnostics)
+                .exceptionHandler(ignored -> {
+                })
+                .build(this.worldRoot, OVERWORLD)) {
+            Instance instance = env.createEmptyInstance(loader);
+
+            assertNull(loader.loadChunk(instance, 17, 17));
+            assertEquals(0, diagnostics.errors());
+            assertEquals(0, diagnostics.chunksLoaded());
+            assertEquals(1, diagnostics.chunksSkippedAsPartial());
+            assertEquals(Map.of("Not A Status", 1L), diagnostics.partialChunkStatuses());
+        }
+    }
+
+    @Test
     void testAFullChunkWithAnEmptySectionListIsAccepted(Env env) throws Exception {
         // Where the new check deliberately stops. An empty list is a statement — something wrote
         // "this chunk has no sections" — while an absent key is the absence of a statement, and only
