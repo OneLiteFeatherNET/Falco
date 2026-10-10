@@ -55,14 +55,14 @@
 ## Project record
 
 * [Project record](project-record/README.md)
-  * [Status — Anvil chunk loader and light engine](project-record/project-status.md)
-  * [Research notes](project-record/research/README.md)
-    * [Research: could `falco-instance` be faster, and how would anyone know?](project-record/research/instance-performance-research.md)
-    * [Research: exception hierarchy for the Anvil package](project-record/research/exception-hierarchy.md)
-    * [Research: a fluent construction API for the three modules](project-record/research/fluent-api.md)
-    * [Research: a multithreaded `InstanceContainer` replacement](project-record/research/instance-container.md)
-    * [Research: a faster, lower-memory light engine](project-record/research/light-engine.md)
-    * [Research: shared instances and batch integration for a foreign instance](project-record/research/shared-instances-and-batches.md)
+* [Status — Anvil chunk loader and light engine](project-record/project-status.md)
+* [Research notes](project-record/research/README.md)
+* [Research: could `falco-instance` be faster, and how would anyone know?](project-record/research/instance-performance-research.md)
+* [Research: exception hierarchy for the Anvil package](project-record/research/exception-hierarchy.md)
+* [Research: a fluent construction API for the three modules](project-record/research/fluent-api.md)
+* [Research: a multithreaded `InstanceContainer` replacement](project-record/research/instance-container.md)
+* [Research: a faster, lower-memory light engine](project-record/research/light-engine.md)
+* [Research: shared instances and batch integration for a foreign instance](project-record/research/shared-instances-and-batches.md)
 
 ## Contributing
 
