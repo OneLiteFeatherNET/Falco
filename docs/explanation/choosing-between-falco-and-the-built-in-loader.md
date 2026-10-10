@@ -15,6 +15,10 @@ nothing in Falco switches itself on. A server keeps its current loader until it 
 `ChunkLightScheduler` supplier. The two choices are independent of each other, so a server can take one
 and not the other.
 
+The loader choice is reversible. A provider that keeps a world root per map passes that root and the
+dimension key of the instance it is building. Any other `ChunkLoader` is supplied the same way, so
+switching back to the built-in loader changes which `ChunkLoader` is constructed and nothing else.
+
 ## Comparison with the built-in AnvilLoader
 
 **How the two sides are referenced.** Minestom references are a path relative to
