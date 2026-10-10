@@ -10,7 +10,10 @@
       "package-name": "falco",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
-        { "type": "generic", "path": "build.gradle.kts" }
+        { "type": "generic", "path": "build.gradle.kts" },
+        { "type": "generic", "path": "README.md" },
+        { "type": "generic", "path": "docs/how-to/add-falco-to-your-build.md" },
+        { "type": "generic", "path": "docs/reference/modules-and-coordinates.md" }
       ]
     }
   }
