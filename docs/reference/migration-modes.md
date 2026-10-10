@@ -36,6 +36,7 @@ no longer read them.
 | Granularity | per region file, immediately before that file is first written |
 | Mechanism | written under a `.partial` name, then moved atomically |
 | Existing backup | never overwritten |
+| Removal | none; Falco never deletes a backup, so it stays until it is removed by hand |
 
 A world whose chunks are all current is never copied at all.
 
