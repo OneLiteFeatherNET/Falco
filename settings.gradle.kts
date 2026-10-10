@@ -50,7 +50,7 @@ dependencyResolutionManagement {
             library("slf4j.api", "org.slf4j", "slf4j-api").versionRef("slf4j")
             library("slf4j.simple", "org.slf4j", "slf4j-simple").versionRef("slf4j")
             library("annotations", "org.jetbrains", "annotations").versionRef("annotations")
-            library("fastutil", "it.unimi.dsi", "fastutil").version("8.5.18")
+            library("fastutil", "it.unimi.dsi", "fastutil").version("8.5.19")
             library("flare.fastutil", "space.vectrix.flare", "flare-fastutil").versionRef("flare")
             library("minestom", "net.minestom", "minestom").withoutVersion()
             library("adventure.nbt", "net.kyori", "adventure-nbt").withoutVersion()
