@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.0.1](https://github.com/OneLiteFeatherNET/Falco/compare/v3.0.0...v3.0.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* avoid deprecated code ([bb75c59](https://github.com/OneLiteFeatherNET/Falco/commit/bb75c59893d14671755f9046714cc6b0e184cd70))
+* **deps:** adapt to removed Minestom APIs ([#98](https://github.com/OneLiteFeatherNET/Falco/issues/98)) ([3fc255a](https://github.com/OneLiteFeatherNET/Falco/commit/3fc255a5cc096bc9d380d39e45348976267d19a9))
+* **deps:** update dependency com.tngtech.archunit:archunit-junit5 to v1.5.0 ([#61](https://github.com/OneLiteFeatherNET/Falco/issues/61)) ([a7d8528](https://github.com/OneLiteFeatherNET/Falco/commit/a7d85285eb6aab3261f2ea788af9eee0307ebf88))
+* **deps:** update dependency com.tngtech.archunit:archunit-junit5 to v1.5.1 ([#73](https://github.com/OneLiteFeatherNET/Falco/issues/73)) ([d316f87](https://github.com/OneLiteFeatherNET/Falco/commit/d316f871b7ede402d16452f0dfef5994bb6f8168))
+* **deps:** update dependency it.unimi.dsi:fastutil to v8.5.19 ([4822a2e](https://github.com/OneLiteFeatherNET/Falco/commit/4822a2e69842be2edb189772c6894a2edc598724))
+* **deps:** update dependency it.unimi.dsi:fastutil to v8.5.19 ([#56](https://github.com/OneLiteFeatherNET/Falco/issues/56)) ([49143ab](https://github.com/OneLiteFeatherNET/Falco/commit/49143ab3094203b2e049e0047049ba7da7c39868))
+* **deps:** update dependency net.kyori:adventure-bom to v5.2.0 ([#62](https://github.com/OneLiteFeatherNET/Falco/issues/62)) ([a6059d2](https://github.com/OneLiteFeatherNET/Falco/commit/a6059d2934f591a777739dc4dcdd888bff717d31))
+* **deps:** update dependency net.onelitefeather:mycelium-bom to v1.8.6 ([#57](https://github.com/OneLiteFeatherNET/Falco/issues/57)) ([fb17b7f](https://github.com/OneLiteFeatherNET/Falco/commit/fb17b7f8d1c06c9423ba1476a0431d2f6367f52d))
+* **deps:** update dependency net.onelitefeather:mycelium-bom to v1.8.7 ([#70](https://github.com/OneLiteFeatherNET/Falco/issues/70)) ([e7a64dd](https://github.com/OneLiteFeatherNET/Falco/commit/e7a64ddfdd226f63a112d121b2da62c4036282f9))
+* **deps:** update dependency net.onelitefeather:mycelium-bom to v1.8.9 ([#97](https://github.com/OneLiteFeatherNET/Falco/issues/97)) ([7c623b0](https://github.com/OneLiteFeatherNET/Falco/commit/7c623b0bc883b402125fa9cd4884102419f5071e))
+* **deps:** update slf4j to v2.0.19 ([#58](https://github.com/OneLiteFeatherNET/Falco/issues/58)) ([2b8ba6d](https://github.com/OneLiteFeatherNET/Falco/commit/2b8ba6d022dca3eedbeaf2e2cd446b54e33bbc2f))
+* **deps:** update slf4j to v2.0.20 ([#82](https://github.com/OneLiteFeatherNET/Falco/issues/82)) ([a0e6061](https://github.com/OneLiteFeatherNET/Falco/commit/a0e6061bc82f1a501e84457032e4e0a4107bf6f2))
+
+
+### Performance Improvements
+
+* **anvil:** map palette entries without boxing ([#89](https://github.com/OneLiteFeatherNET/Falco/issues/89)) ([2d9fa27](https://github.com/OneLiteFeatherNET/Falco/commit/2d9fa27699f3834f082d81b3bf3a425858b5273e))
+
 ## [3.0.0](https://github.com/OneLiteFeatherNET/Falco/compare/v2.1.0...v3.0.0) (2026-09-11)
 
 
