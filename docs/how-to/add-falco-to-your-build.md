@@ -97,7 +97,7 @@ Import `falco-bom` in `<dependencyManagement>`, so that the modules it constrain
     <dependency>
       <groupId>net.onelitefeather</groupId>
       <artifactId>falco-bom</artifactId>
-      <version>3.0.0</version>
+      <version>3.0.1</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -125,12 +125,12 @@ its own:
   <dependency>
     <groupId>net.onelitefeather</groupId>
     <artifactId>falco-migration</artifactId>
-    <version>3.0.0</version>
+    <version>3.0.1</version>
   </dependency>
   <dependency>
     <groupId>net.minestom</groupId>
     <artifactId>minestom</artifactId>
-    <version>2026.09.12-26.2</version>
+    <version>2026.10.07-26.2</version>
   </dependency>
 </dependencies>
 ```
