@@ -27,8 +27,8 @@ No claim on this page may be quoted as a benchmark result.
 [`fc0aef5`](https://github.com/OneLiteFeatherNET/Falco/commit/fc0aef5), against Minestom
 `2026.06.20-26.1.2`. The structural claims were re-checked against that jar at `ca79507`; one line
 reference had drifted and is corrected in place. **The engine described here was never built as
-described** — what `falco-light` is, and what it measures, is on [How the light engine works](../how-the-light-engine-works.md) and
-[What the benchmarks establish](../what-the-benchmarks-establish.md).
+described** — what `falco-light` is, and what it measures, is on [How the light engine works](../../explanation/how-the-light-engine-works.md) and
+[What the benchmarks establish](../../explanation/what-the-benchmarks-establish.md).
 
 ## Feasibility: proven, not assumed
 
@@ -165,7 +165,7 @@ why the shipped comparison has evidence this page does not.
 
 **Nothing on this page is that evidence.** The published light-engine figures come from JMH classes
 with stated parameters, iteration counts and intervals, and they are on
-[What the benchmarks establish](../what-the-benchmarks-establish.md) and [Measured results](../../reference/measured-results.md). The 5.8× and 3.1× here are a
+[What the benchmarks establish](../../explanation/what-the-benchmarks-establish.md) and [Measured results](../../reference/measured-results.md). The 5.8× and 3.1× here are a
 prototype that was never merged, measured by a probe that was never committed. The two sets of
 numbers are not comparable and neither supports the other.
 
@@ -176,6 +176,6 @@ numbers are not comparable and neither supports the other.
   `instance/light/LightCompute.java`, `instance/Section.java:26-27`,
   `instance/LightingChunk.java:362`, `:419`. Re-checked at `ca79507`.
 - Starlight, `TECHNICAL_DETAILS.md` — the source that refuted the bucket-queue assumption.
-- What the shipped engine does and what it guarantees: [How the light engine works](../how-the-light-engine-works.md).
+- What the shipped engine does and what it guarantees: [How the light engine works](../../explanation/how-the-light-engine-works.md).
 - Why `falco-light` exists at all, with each claim labelled by how it was established:
-  [Why a custom light engine](../why-a-custom-light-engine.md).
+  [Why a custom light engine](../../explanation/why-a-custom-light-engine.md).

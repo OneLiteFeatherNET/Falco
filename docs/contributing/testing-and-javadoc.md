@@ -5,7 +5,7 @@ applies, and why the test heap is pinned. All of it is configured in the root
 [`build.gradle.kts`](https://github.com/OneLiteFeatherNET/Falco/blob/main/build.gradle.kts) and
 reaches every subproject except `falco-bom`, which has no sources to test or document (see [Build
 Setup](build-setup.md)). What the tests assert is not on this page; the per-module test counts and what
-they cover are in [Project Status](project-status.md).
+they cover are in [Project Status](../project-record/project-status.md).
 
 ## Reproducing a test run
 

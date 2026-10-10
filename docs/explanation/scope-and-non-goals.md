@@ -152,7 +152,7 @@ Stated plainly, because each of these is a reason to keep using another loader o
   the map while the tick thread walks it can yield garbage or spin. Inherited rather than introduced
   — `DynamicChunk` has the identical race — and Minestom's `Chunk#tick` contract says the method
   "doesn't necessary have to be thread-safe". Open, and listed as such in
-  [Project Status](../contributing/project-status.md#open).
+  [Project Status](../project-record/project-status.md#open).
 - **No throughput measurement exists.** Benchmark classes for the instance and the chunk are in
   `falco-benchmarks`, but none has been run as a baseline, so there is no timing to quote.
 
@@ -165,7 +165,7 @@ Stated plainly, because each of these is a reason to keep using another loader o
 - **Nothing below Minecraft 1.13.** `DataVersion` under `1519` predates the flattening and holds
   numeric block ids these types do not speak. Such a chunk is declined, not attempted.
 - **No entities, and no Bedrock.** The engine covers blocks, biomes and block entities. Bedrock is a
-  different storage format entirely and is out of scope; see [Project Status](../contributing/project-status.md).
+  different storage format entirely and is out of scope; see [Project Status](../project-record/project-status.md).
 - **No command line tool yet.** The engine and the loader option exist; a standalone converter does
   not.
 - **It cannot invent a rule it does not have.** Migration only fixes renames someone has written
@@ -174,4 +174,4 @@ Stated plainly, because each of these is a reason to keep using another loader o
 
 Related: [Explanation Choosing between Falco and the built-in loader](choosing-between-falco-and-the-built-in-loader.md) ·
 [Explanation Why falco-instance exists](why-falco-instance-exists.md) · [Explanation What a measurement here means](what-a-measurement-here-means.md) ·
-[Project Status](../contributing/project-status.md) for what is open rather than out of scope
+[Project Status](../project-record/project-status.md) for what is open rather than out of scope

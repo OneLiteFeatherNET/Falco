@@ -1,9 +1,9 @@
 # Falco
 
-[![API status: experimental](https://img.shields.io/badge/API-experimental-yellow)](docs/contributing/project-status.md)
+[![API status: experimental](https://img.shields.io/badge/API-experimental-yellow)](docs/project-record/project-status.md)
 [![Release](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo.onelitefeather.dev%2Freleases%2Fnet%2Fonelitefeather%2Ffalco-anvil%2Fmaven-metadata.xml&label=release&color=blue)](docs/how-to/add-falco-to-your-build.md)
 [![Java 25](https://img.shields.io/badge/Java-25-orange)](docs/how-to/build-falco-from-source.md)
-[![Documentation](https://img.shields.io/badge/docs-wiki-lightgrey)](docs/README.md)
+[![Documentation](https://img.shields.io/badge/docs-gitbook-lightgrey)](docs/README.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-lightgrey)](LICENSE)
 
 A high-performance Anvil chunk loader and light engine for
@@ -47,7 +47,7 @@ dependencies {
 
     // Minestom is compileOnly in Falco, so it does not arrive with these
     // artefacts. Falco declares no version for it, on purpose. You pick it.
-    // The version Falco compiles and measures against is recorded in the wiki:
+    // The version Falco compiles and measures against is recorded in the documentation:
     // https://github.com/OneLiteFeatherNET/Falco/blob/main/docs/contributing/README.md#environment
     implementation("net.minestom:minestom:<version>")
 }
@@ -187,7 +187,7 @@ Minestom's own events are unaffected: `InstanceChunkLoadEvent`, `InstanceChunkUn
 ## Everything the three modules offer
 
 The five steps above are one path through Falco. This is the rest of it, so that what exists is
-visible without reading three wiki pages first. Every snippet here is compiled by
+visible without reading three documentation pages first. Every snippet here is compiled by
 `DocumentationSnippets` in `falco-demo`.
 
 ### falco-anvil — reading and writing Anvil worlds
@@ -441,12 +441,12 @@ intervals overlap, no factor is printed. The charts and the methodology are in
 [Benchmarking](docs/explanation/what-the-benchmarks-establish.md), the full tables in
 [Measured Results](docs/reference/measured-results.md), and the
 optimisations that did **not** pay off in
-[Project Status](docs/contributing/project-status.md).
+[Project Status](docs/project-record/project-status.md).
 
 ## Documentation
 
 Everything past the quick start lives in the
-[wiki](docs/README.md):
+[documentation](docs/README.md):
 
 - [Installation](docs/how-to/add-falco-to-your-build.md) — all three modules,
   the BOM, Maven, snapshots, the rendered Javadoc, and building from source
@@ -459,11 +459,11 @@ Everything past the quick start lives in the
   methods, the parameter values and the run configuration behind each row
 - [Benchmarking](docs/explanation/what-the-benchmarks-establish.md) — what each published
   table does and does not establish, and how a third party can re-perform any of it
-- [Project Status](docs/contributing/project-status.md) — the decisions
+- [Project Status](docs/project-record/project-status.md) — the decisions
   that shape the design, what is in the branch, defects found and fixed, and what is open
 - [Rationale](docs/README.md) — why it is built this way:
   what each decision was weighed against, and where the argument is weaker than the figures suggest
-- [Research](docs/explanation/research/README.md) — the investigations run
+- [Research](docs/project-record/research/README.md) — the investigations run
   before writing any code, kept because each answers a question worth asking again
 - [Contributing](docs/contributing/README.md) — what a change is
   built, tested and released with: the toolchain and library versions, the Gradle commands, the

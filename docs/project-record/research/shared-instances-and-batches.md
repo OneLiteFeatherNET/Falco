@@ -413,6 +413,6 @@ and [`FalcoLightingChunk`](https://github.com/OneLiteFeatherNET/Falco/blob/main/
 
 Related pages: the coupling sites this sweep extended are introduced in [Research: Instance
 Container](instance-container.md); why `falco-instance` refuses what it refuses is in
-[Why falco-instance exists](../why-falco-instance-exists.md); the exclusivity between
+[Why falco-instance exists](../../explanation/why-falco-instance-exists.md); the exclusivity between
 `FalcoInstance` and `FalcoLightingChunk`, and a way out of it, are in [Instance
 Performance](instance-performance-research.md).

@@ -6,8 +6,8 @@ Every published artefact, its coordinate, the repository that serves it and its 
 > Source of truth: the `maven-publish` configuration and the version catalog in the
 > [Falco repository](https://github.com/OneLiteFeatherNET/Falco). Until the generator lands, the
 > version numbers below can go stale — Renovate keeps the snippets in the
-> [repository README](https://github.com/OneLiteFeatherNET/Falco#readme) current and cannot reach a
-> wiki, so **where this page and the README disagree, the README is right**. The authoritative list
+> [repository README](https://github.com/OneLiteFeatherNET/Falco#readme) current and cannot reach these
+> docs, so **where this page and the README disagree, the README is right**. The authoritative list
 > of published versions is [Releases](https://github.com/OneLiteFeatherNET/Falco/releases).
 
 ## Repositories

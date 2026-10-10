@@ -11,7 +11,7 @@ was built, and they still say "would" and "should" throughout. What was built fr
 places — question 13, the mutability of the anvil builder, and step 6 of the sequence — each marked
 in a quote box where it happens. Where the page and the code disagree, the code wins. For what can
 actually be called, see [Add Falco to your build](../../how-to/add-falco-to-your-build.md),
-[How the Anvil loader is built](../how-the-anvil-loader-is-built.md) and [How the light engine works](../how-the-light-engine-works.md).
+[How the Anvil loader is built](../../explanation/how-the-anvil-loader-is-built.md) and [How the light engine works](../../explanation/how-the-light-engine-works.md).
 
 **Revision 2.** The page argues throughout against a revision 1 that is not published here, and marks
 every place where revision 1 was wrong. All path:line references are relative to the repository root
@@ -1385,7 +1385,7 @@ this sketch and precedes it in the sequence (section 4.3).
 
 ## 4. The connecting facade
 
-### 4.1 Its own module, unpublished, or a wiki recipe?
+### 4.1 Its own module, unpublished, or a documentation recipe?
 
 Revision 1 claimed that a published `falco-api` of its own followed "necessarily from the module
 structure". It does not follow. The only thing that necessarily follows is that a type carrying three
@@ -1412,7 +1412,7 @@ public calls: `FalcoInstance.builder(...)` with its slots, `ChunkLightScheduler.
 `new FalcoAnvilLoader(...)`. None of it is package-private, none of it fixes a defect. The
 criterion is not met.
 
-**Decision: no `falco-api`.** The facade is a wiki recipe plus a runnable version in the unpublished
+**Decision: no `falco-api`.** The facade is a documentation recipe plus a runnable version in the unpublished
 `falco-demo`. Should it later turn out that the same recipe is copied word for word into three
 projects, that is the moment to re-examine the criterion — not before.
 
@@ -1814,7 +1814,7 @@ production code, the benefit would remain unevidenced, and the price would be in
 repository's first `@Deprecated` — plus warnings in 25 test calls of falco-light that gain nothing
 from a builder. The question is asked again once the builder has been in the field for a version.
 
-**2. When does the recipe from section 4.3 move into the wiki and `falco-demo`?**
+**2. When does the recipe from section 4.3 move into the documentation and `falco-demo`?**
 Section 4.1 decided that there is no published fourth module. What is open is the timing: the recipe
 only works after step 4 of the sequence (section 4.3), `ServerStack` gets its third entry only then,
 and until that point `README.md` keeps showing today's quick start.
@@ -1901,7 +1901,7 @@ advertised as **the** recommended entry point, it is not — and with a fluent A
 a binary contract (P6). That the concern exists is shown by `AnvilDiagnostics.java:188-195`:
 `reportPartialChunk()` was kept, "so callers written against the first version of this class keep
 compiling" — handwork instead of a tool.
-**Recommendation: introduce japicmp as soon as the recipe from section 4.3 stands in the wiki as the
+**Recommendation: introduce japicmp as soon as the recipe from section 4.3 stands in the documentation as the
 recommended way** (question 2), not before.
 
 **11. Does `final` fall on `AnvilDiagnostics`?** *(new)*

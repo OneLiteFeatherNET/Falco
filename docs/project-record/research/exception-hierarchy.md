@@ -233,6 +233,6 @@ constructor owner the way `nameMatching` does.
   above. Re-checked at `ca79507`.
 - Why a failed read throws rather than reporting the chunk as absent — the design constraint this
   hierarchy has to preserve — is argued in
-  [Why a second Anvil loader](../why-a-second-anvil-loader.md).
+  [Why a second Anvil loader](../../explanation/why-a-second-anvil-loader.md).
 - What the rest of these investigations are worth, and why their numbers are not benchmark numbers,
   is on [Research](README.md).

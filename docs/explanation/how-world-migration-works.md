@@ -195,7 +195,7 @@ and by no other. See [Contributing](../contributing/README.md) for why that step
   and [`WorldLayout`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-migration/src/main/java/net/onelitefeather/falco/migration/WorldLayout.java)
 - [How the Anvil loader is built](how-the-anvil-loader-is-built.md) — the loader this plugs into, its version floor and its
   other two policies
-- [Project Status](../contributing/project-status.md) — what is open, and what was investigated and not built
+- [Project Status](../project-record/project-status.md) — what is open, and what was investigated and not built
 
 Related: [Explanation The chunk version guard](the-chunk-version-guard.md) · [Explanation Scope and non-goals](scope-and-non-goals.md) ·
 [Reference Migration modes](../reference/migration-modes.md)

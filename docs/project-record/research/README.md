@@ -26,14 +26,14 @@ who ran the investigation or on what machine.
 no uncertainty. **None of them came from the JMH harness, and none can be re-run from this
 repository.** They are kept because deleting a result is worse than labelling it, and because the
 *direction* of most of them is independently supported by a structural argument in the same document.
-They are not evidence of the same kind as a benchmark table, and no page in this wiki should quote
+They are not evidence of the same kind as a benchmark table, and no page in this documentation should quote
 one as if it were.
 
-That fixes the ordering. The measured record is [What the benchmarks establish](../what-the-benchmarks-establish.md) and
-[Measured results](../../reference/measured-results.md). The reasoning that rests on it is [the wiki index](../../README.md),
+That fixes the ordering. The measured record is [What the benchmarks establish](../../explanation/what-the-benchmarks-establish.md) and
+[Measured results](../../reference/measured-results.md). The reasoning that rests on it is [the documentation index](../../README.md),
 where every claim is labelled by how it was established. These pages sit below both. Where a research
 document and a rationale page disagree, the rationale page wins: [Rationale: Instances and
-Chunks](../why-falco-instance-exists.md) discards the 19.8× figure from [Research: Instance
+Chunks](../../explanation/why-falco-instance-exists.md) discards the 19.8× figure from [Research: Instance
 Container](instance-container.md) as non-reproducible, and it is right to.
 
 ## The documents

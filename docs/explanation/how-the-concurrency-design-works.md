@@ -402,7 +402,7 @@ What they do not establish is stated in the same spirit [1]:
 
 ## Sources
 
-1. [Project Status](../contributing/project-status.md), the working record: established facts, the five races and their
+1. [Project Status](../project-record/project-status.md), the working record: established facts, the five races and their
    failure rates, the decision table, and the open items.
 2. [Measured results](../reference/measured-results.md), the measurements.
 3. [How the Anvil loader is built](how-the-anvil-loader-is-built.md), the loader in detail, including the twenty-row comparison

@@ -134,7 +134,7 @@ the design. This is the single most useful thing in this section, and it is the 
 ### The nuance that the earlier notes got slightly wrong
 
 There is a correction to make here, and it cuts against us rather than for us.
-[Project Status](../contributing/project-status.md) records
+[Project Status](../project-record/project-status.md) records
 the push-versus-pull property under *Claims about other light engines* as the reason there is nothing
 left to take from Starlight, which is correct. It is easy to read that entry as also implying an
 advantage over Minestom. It does not, and reading Minestom's source settles it.
@@ -409,7 +409,7 @@ and `storageVisible`, and its `WORKING_BYTES_POOL` is a thread-local recycler fo
 size [3].
 
 What does exist is a flat cache in `StarLightEngine`, indexed `x + (z * 5) + (y * 25)` over a 5×5
-region of chunks plus two spare sections vertically [4]. [Project Status](../contributing/project-status.md) describes
+region of chunks plus two spare sections vertically [4]. [Project Status](../project-record/project-status.md) describes
 these as "a flat `byte[]` for the column"; that is imprecise, and the correction belongs here. They are declared
 `protected final LevelChunkSection[] sectionCache;` and
 `protected final SWMRNibbleArray[] nibbleCache;` — arrays of section and nibble-array *references*,
@@ -594,12 +594,12 @@ over *when* light is computed that follows from computing it outside the chunk.
    content behind it was therefore not read for this document.
    9a. Archived and adapted rendering of the same series, which does resolve:
    <https://notverymoe.github.io/md-gamedev-gems/voxel/lighting/soa/index.html>
-10. *Status — Anvil chunk loader and light engine*, this repository, [Project Status](../contributing/project-status.md).
+10. *Status — Anvil chunk loader and light engine*, this repository, [Project Status](../project-record/project-status.md).
 11. *Measured results*, this repository, [Measured results](../reference/measured-results.md).
 12. *Light engine*, this repository, [How the light engine works](how-the-light-engine-works.md).
 13. *Benchmarks*, this repository, [What the benchmarks establish](what-the-benchmarks-establish.md).
 14. *Research: a faster, lower-memory light engine*, this repository,
-    [Research: Light Engine](research/light-engine.md).
+    [Research: Light Engine](../project-record/research/light-engine.md).
 15. Falco sources read directly for this document:
     `falco-light/src/main/java/net/onelitefeather/falco/light/LightPropagator.java`,
     `SectionOpacity.java`, `ChunkLightService.java`, and

@@ -10,7 +10,7 @@ about how fast the module is.
 >
 > The repository's position on `falco-instance` is, in the words of the
 > [README](https://github.com/OneLiteFeatherNET/Falco#readme): **"No speed gain is claimed and none
-> is measured"**. [Why falco-instance exists](../why-falco-instance-exists.md) says the same,
+> is measured"**. [Why falco-instance exists](../../explanation/why-falco-instance-exists.md) says the same,
 > and **this document does not change it.** When it was written there was no instance benchmark in
 > the repository at all. Since 2026-08-03 there is: `falco-benchmarks/build.gradle.kts` declares
 > `jmhImplementation(project(":falco-instance"))` beside the anvil and light lines, and four JMH
@@ -39,7 +39,7 @@ processes all player-driven block writes on one thread; the work item the analys
 write lives in a type that cannot be replaced from outside Minestom; and one proposal the analyses
 ranked as cheap and low-risk would silently break the module's core guarantee. Two correctness
 findings that hold regardless of performance. Five documentation defects, all in Falco's own text —
-four in Javadoc, one in the wiki.
+four in Javadoc, one in the documentation.
 
 **Open.** Everything else, and that is most of the page. See [Open
 questions](#open-questions) for the list the investigation itself refuses to answer.
@@ -199,7 +199,7 @@ Without this section the rest is opinion. Four building blocks, in this order.
 - `falco-benchmarks/build.gradle.kts` needs `jmhImplementation(project(":falco-instance"))`. It is
   absent today; the benchmark module knows `falco-anvil` and `falco-light` only.
 - `benchmark/support/MemoryChunkLoader` — a heap-backed `ChunkLoader`, so a load benchmark measures the
-  instance and not the page cache ([What the benchmarks establish](../what-the-benchmarks-establish.md) describes this trap for the region
+  instance and not the page cache ([What the benchmarks establish](../../explanation/what-the-benchmarks-establish.md) describes this trap for the region
   file benchmark). Model: the `BarrierLoader` in `FalcoInstanceLoadRaceTest`.
 - `benchmark/support/InstanceFixtures` — builds `FalcoInstance` **and** `InstanceContainer` with the
   *same* `ChunkSupplier` (`FalcoChunk::new`) and the same loader. Otherwise two chunk types are
@@ -217,7 +217,7 @@ apply here.
 `ConcurrentHashMap<Long,Chunk>` against `Long2ObjectSyncMap<Chunk>`, in isolation, no server. Cheapest
 first. `@Param loadedChunks = {64, 256, 1024, 4096}` (sync map promotion is O(n)), thread count via
 `-t`, `@BenchmarkMode({AverageTime, SampleTime})`, always with `-prof gc`. This settles the boxing
-question that [Why falco-instance exists](../why-falco-instance-exists.md) leaves open. It
+question that [Why falco-instance exists](../../explanation/why-falco-instance-exists.md) leaves open. It
 measures `chunks` only — for `loadingChunks` the question is already decided in the negative, see
 above.
 
@@ -250,7 +250,7 @@ four and at eight threads Minestom's interval half-width exceeds its mean (`11 0
 `530 905 ± 1 928 261` µs/op), so those rows carry no factor at any precision and are evidence of lost
 *predictability*, not of a ratio. An instance series has to be read the same way from the start. The
 rows, their intervals and the rule that disqualifies them are in
-[What a measurement here means](../what-a-measurement-here-means.md).
+[What a measurement here means](../../explanation/what-a-measurement-here-means.md).
 
 ### M4 — percentiles instead of means
 
@@ -296,7 +296,7 @@ waiting for another thread that needs one: self-deadlock under saturating fan-ou
 acquired after the `join()`.**
 
 The contradiction this resolves is stated in the repository itself: [Project
-Status](../../contributing/project-status.md) records that file I/O does not unmount a virtual thread from its carrier
+Status](../project-status.md) records that file I/O does not unmount a virtual thread from its carrier
 (JEP 444), so unbounded virtual threads over file work do not scale and must be bounded —
 and `FalcoInstance.java:566` is the only place in the repository that does not follow that advice.
 
@@ -377,7 +377,7 @@ premise again. Two of the four source analyses went wrong on exactly these lines
 |---|---|
 | `FalcoInstance.java:150-155` | "copy-on-write map" — it is a `sync.Map` port with a lock-free, unboxed read path. The stated reason for choosing `ConcurrentHashMap` does not hold. |
 | `FalcoInstance.java:441-442` | promises freedom from the two-chunk lock shape but delivers it only for neighbour updates; rule and handler run under the lock. |
-| [Why falco-instance exists](../why-falco-instance-exists.md), *What this module deliberately does not attempt* | "`generateChunk` always throws" — stale; at `ca79507` `setGenerator` stores the generator, `generator()` returns it and `generateChunk` runs it (`:840-858`, `:875-895`, `:922-953`), and it is tested. The README says the same thing in one place and the opposite in another. |
+| [Why falco-instance exists](../../explanation/why-falco-instance-exists.md), *What this module deliberately does not attempt* | "`generateChunk` always throws" — stale; at `ca79507` `setGenerator` stores the generator, `generator()` returns it and `generateChunk` runs it (`:840-858`, `:875-895`, `:922-953`), and it is tested. The README says the same thing in one place and the opposite in another. |
 | `FalcoChunk.java:126` | copies `tickableMap`, which `MS:instance/DynamicChunk.java:236-241` does not — a silent correction of a Minestom defect, documented nowhere. |
 | `FalcoInstance.java:174` | should record that `loadingChunks` is *not* interchangeable with a map whose `compute` is CAS-based. |
 
@@ -412,13 +412,13 @@ solution the first light pass discards the work immediately (`FalcoLightingChunk
 
 `#requireFalcoChunk` (`:690-695`) demands the *class* `FalcoChunk`; `FalcoLightingChunk.java:80` is
 `extends DynamicChunk implements LightUpdateAware`. The combination fails on the first chunk load.
-[Project Status](../../contributing/project-status.md) records this under *Two things this project ships that cannot be
+[Project Status](../project-status.md) records this under *Two things this project ships that cannot be
 used together* and offers only "a chunk that is both", which means a module dependency
 `falco-light → falco-instance` and gives up the documented independence of the modules.
 
 **The way out none of the source analyses found:** `Chunk#onLoad()` and `Chunk#unload()` are `protected`
 (`MS:instance/Chunk.java:273`, `:308`, re-checked at `ca79507`) — *any subclass in any package may
-call them on `this`*. [Project Status](../../contributing/project-status.md) calls these two hooks package-private, which is
+call them on `this`*. [Project Status](../project-status.md) calls these two hooks package-private, which is
 the premise that made the exclusivity look unavoidable; they are not, and correcting that is what
 opens this route.
 `FalcoLightingChunk` already overrides `onLoad` (`:145`). So it suffices to publish an interface in
@@ -457,7 +457,7 @@ discards the packet.
 *Depends on:* B3 mandatory, B2 sensibly together.
 
 ***The highest risk in this catalogue, and the repository already names it.***
-[How the concurrency design works](../how-the-concurrency-design-works.md) records as an open issue that two threads lighting
+[How the concurrency design works](../../explanation/how-the-concurrency-design-works.md) records as an open issue that two threads lighting
 overlapping 3×3 neighbourhoods can commit a result from an already-stale reading, "which shows up as a
 seam rather than as an error". Lighting an unpublished chunk while its neighbours load in parallel
 sharpens exactly that case.
@@ -503,7 +503,7 @@ Ideas that sound plausible but do not hold here.
 2. **Rebuilding the chunk map before measuring it.** Three of four analyses ranked `Long` boxing first
    or second. `MS:utils/chunk/ChunkCache.java:31-36` bypasses the lookup entirely under locality, and
    escape analysis may eliminate the boxing. [Rationale: Instances and
-   Chunks](../why-falco-instance-exists.md) discards the only number ever quoted for this — the 19.8×
+   Chunks](../../explanation/why-falco-instance-exists.md) discards the only number ever quoted for this — the 19.8×
    from [Research: Instance Container](instance-container.md) — as non-reproducible. → M1
    first.
 3. **Hoping for more parallelism in the tick.** Ticking does not happen in the instance, and the tick
@@ -550,7 +550,7 @@ Not examined: `falco-light` beyond `FalcoLightingChunk` and the scheduler's sema
 `falco-anvil` beyond its semaphore and `supportsParallel*` lines; the `falco-instance` test classes
 (taken from the source analyses). The benchmark and status documentation was read only by targeted
 grep — at the time of the investigation those still lived in the repository as `docs/benchmarks.md`
-and `STATUS.md`; they are now [What the benchmarks establish](../what-the-benchmarks-establish.md) and [Project Status](../../contributing/project-status.md).
+and `STATUS.md`; they are now [What the benchmarks establish](../../explanation/what-the-benchmarks-establish.md) and [Project Status](../project-status.md).
 
 ## Suggested order
 
@@ -581,8 +581,8 @@ makes: **no speed gain is claimed and none is measured.**
 - `space.vectrix.flare:flare-fastutil:2.0.1`, `Long2ObjectSyncMapImpl.java:251`, `:487-495`,
   `:576-585` — the CAS `compute` that makes the `loadingChunks` swap unsafe.
 - What the module is and what it refuses to do: [Rationale: Instances and
-  Chunks](../why-falco-instance-exists.md). Why the instance was built at all, and the dispatcher
+  Chunks](../../explanation/why-falco-instance-exists.md). Why the instance was built at all, and the dispatcher
   finding this page starts from: [Research: Instance Container](instance-container.md).
 - What a Falco benchmark has to carry before its number means anything:
-  [What a measurement here means](../what-a-measurement-here-means.md). How to run the existing suite:
-  [What the benchmarks establish](../what-the-benchmarks-establish.md).
+  [What a measurement here means](../../explanation/what-a-measurement-here-means.md). How to run the existing suite:
+  [What the benchmarks establish](../../explanation/what-the-benchmarks-establish.md).

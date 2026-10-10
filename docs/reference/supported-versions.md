@@ -12,7 +12,7 @@ The versions Falco is built against, the versions it accepts, and the floors it 
 | | Value | Note |
 | --- | --- | --- |
 | Java | 25 | required to build Falco and to run it |
-| Minestom | `2026.06.20-26.1.2` | the version every claim in this wiki was checked against; `compileOnly`, so a consumer picks its own |
+| Minestom | `2026.06.20-26.1.2` | the version every claim in this documentation was checked against; `compileOnly`, so a consumer picks its own |
 
 ## Chunk data version floor
 

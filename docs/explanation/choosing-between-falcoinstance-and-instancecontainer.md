@@ -40,8 +40,8 @@ heightmap descent rather than the write — are in [Reference Measured results](
   places a foreign instance behaves differently, and what it refuses to attempt
 - [Counted](../reference/measured-results.md#counted) — the object and byte figures quoted above, with what they do
   not say
-- [Research: Instance Container](research/instance-container.md) — the investigation that preceded it
-- [Project Status](../contributing/project-status.md#instance) — the working record, including what is still open
+- [Research: Instance Container](../project-record/research/instance-container.md) — the investigation that preceded it
+- [Project Status](../project-record/project-status.md#instance) — the working record, including what is still open
 
 Related: [Explanation Why falco-instance exists](why-falco-instance-exists.md) · [Explanation Scope and non-goals](scope-and-non-goals.md) ·
 [How-to Use FalcoInstance instead of InstanceContainer](../how-to/use-falcoinstance-instead-of-instancecontainer.md)

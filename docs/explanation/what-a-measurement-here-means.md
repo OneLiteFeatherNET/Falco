@@ -97,7 +97,7 @@ is what makes a row checkable rather than a matter of trust.
 | 10 | the `-i 10` runs of the light comparison and `IncrementalVsFullBenchmark` | 9 | 4.78 |
 
 Given two reported values `a ± Δa` and `b ± Δb` with `a < b`, three tests decide what may be written,
-and they are applied in this order to every comparison on every page of this wiki.
+and they are applied in this order to every comparison on every page of this documentation.
 
 **Is the row usable at all?** If either half-width is at least half its own mean, no factor may be
 quoted, not hedged and not in parentheses. At `Δb/b ≥ 0.5` the lower end of that interval is within a
@@ -549,7 +549,7 @@ single commit in Falco. JMH `1.37`, the plugin `0.7.3` and Adventure `5.1.1` are
 `@Fork(2)`: `BitPackerBenchmark`, `PaletteDataBenchmark`, `ChunkCompressionBenchmark`,
 `LightNibblesBenchmark`, `SectionOpacityBenchmark`, `LightPropagatorBenchmark` and
 `ChunkLightPropagatorBenchmark`. The other nine run at `@Fork(1)` — and they include every comparison
-benchmark, both decision benchmarks and `ScalingBenchmark`. **Every published table in this wiki comes
+benchmark, both decision benchmarks and `ScalingBenchmark`. **Every published table in this documentation comes
 from a `@Fork(1)` class**, so the single-fork limitation applies to all of them in full, while the
 seven classes that do sample a second JVM launch are exactly the seven that produced no published
 table. That is backwards from where the risk is. Run-to-run variance between JVM launches is a
@@ -594,7 +594,7 @@ disagree by more than either interval admits. The ratio is not a property of the
 alone; it is a property of the two algorithms **on a given cache hierarchy and memory system**, and
 it moves when that changes.
 
-Two consequences follow, and the second is the useful one. Nothing in this wiki may be read as
+Two consequences follow, and the second is the useful one. Nothing in this documentation may be read as
 holding on hardware other than what its provenance line names — a factor is no more portable than an
 absolute figure, only more stable when the machine is held fixed. And an interval alone cannot warn
 anybody of this: the CI figures are *narrower* than the published ones (Minestom's half-width there
@@ -875,7 +875,7 @@ of these is hard. None has been done.
    `net.minestom.server.instance.light.BlockLight#buildInternalQueue` and
    `net.minestom.server.instance.light.LightCompute#compute`. Established by reading the sources.
    <https://github.com/Minestom/Minestom>
-8. **[How the light engine works](how-the-light-engine-works.md)**, this wiki. The six-scenario comparison against the built-in
+8. **[How the light engine works](how-the-light-engine-works.md)**, this documentation. The six-scenario comparison against the built-in
    light engine, the stage breakdown, and the mixed-brightness table.
 9. **`JMHSample_08_DeadCode`**, OpenJDK JMH samples. Why the result of a measured method must be
    returned or consumed.
@@ -897,7 +897,7 @@ of these is hard. None has been done.
     prevalent methodologies, shows they can be misleading, and argues for statistically rigorous
     analysis over multiple VM invocations.
     DOI [10.1145/1297027.1297033](https://doi.org/10.1145/1297027.1297033)
-14. **[How the Anvil loader is built](how-the-anvil-loader-is-built.md)**, this wiki. A second, independent run of the
+14. **[How the Anvil loader is built](how-the-anvil-loader-is-built.md)**, this documentation. A second, independent run of the
     region-file comparison, the two-fork ten-iteration control run at four threads, and the note that
     the magnitude of Minestom's collapse under contention is not understood.
 15. **`JMHSample_35_Profilers`**, OpenJDK JMH samples. On `-prof gc` and the normalised allocation

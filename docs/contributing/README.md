@@ -200,5 +200,5 @@ default owner later cannot silently widen who approves a release.
   them, and what a result of the suite can and cannot mean, is [What the benchmarks establish](../explanation/what-the-benchmarks-establish.md); the two
   demo servers the last two commands start are [Benchmarks and Demo](benchmarks-and-demo.md).
 - The state of the project the conventions above were arrived at in — the structural facts, the
-  decisions, the defects and the open items — is [Project Status](project-status.md), and the tables it
+  decisions, the defects and the open items — is [Project Status](../project-record/project-status.md), and the tables it
   used to carry are [Measured results](../reference/measured-results.md).

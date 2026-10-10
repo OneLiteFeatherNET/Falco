@@ -7,7 +7,7 @@ caller can catch.
 > Source of truth: the exception types in
 > [`net.onelitefeather.falco.anvil`](https://github.com/OneLiteFeatherNET/Falco/tree/main/falco-anvil/src/main/java/net/onelitefeather/falco/anvil).
 > `RegionFormatException.Reason` declares five constants and `ChunkDataException.Reason` six; only
-> the two named below are recorded in this wiki. Read the enums for the full set until the generator
+> the two named below are recorded in this documentation. Read the enums for the full set until the generator
 > lands.
 
 ## Types

@@ -87,7 +87,7 @@ only. A source in a diagonal chunk reaches the middle chunk through the chunk be
 neighbourhood carries that — an area of a single chunk never reads it. For one chunk this is
 therefore the more accurate of the two calls; for several connected chunks the area is the cheaper
 one, because it reads every chunk once instead of once per neighbourhood. That an area misses its own
-diagonals is a gap of its own, and it is recorded in [Project Status](../contributing/project-status.md) rather than
+diagonals is a gap of its own, and it is recorded in [Project Status](../project-record/project-status.md) rather than
 glossed over here.
 
 

@@ -6,7 +6,7 @@ rests on are [Measured results](../reference/measured-results.md), where every t
 method it came from, its parameters and the configuration of the run that produced it, so that a row
 can be traced to its source without guessing. It deliberately explains nothing — how the loader and
 the engine work is [How the Anvil loader is built](../explanation/how-the-anvil-loader-is-built.md) and [How the light engine works](../explanation/how-the-light-engine-works.md), and how
-the project is built and released is [Contributing](README.md) — and it is written for someone
+the project is built and released is [Contributing](../contributing/README.md) — and it is written for someone
 auditing the claims rather than for someone using the library.
 
 **Where a measured table appears on more than one page, the copy under
@@ -32,7 +32,7 @@ a `FalcoAnvilLoader`, a `FalcoInstance`, or reach the light engine either by cal
 Both parts were developed inside [Aves](https://github.com/OneLiteFeatherNET/Aves), OneLiteFeather's
 utility library, and moved here once it was clear they are server infrastructure rather than
 utilities. The history of that development stayed behind; what was learned along the way is written
-down in this document and in [Research](../explanation/research/README.md).
+down in this document and in [Research](research/README.md).
 
 ## How to read this page
 
@@ -64,7 +64,7 @@ predominantly one kind, and where a section mixes them the individual sentence s
 
 Two parts of this record have pages of their own. [Measured results](../reference/measured-results.md) carries the
 measurement environment and every published table with its provenance line, the environment first
-and the optimisations the tables produced last. [Contributing](README.md) carries the versions
+and the optimisations the tables produced last. [Contributing](../contributing/README.md) carries the versions
 the build declares, the everyday Gradle commands, the conventions the build enforces, what a push to
 `main` publishes, and what a pull request is checked against.
 
@@ -154,14 +154,14 @@ Verified against the sources or by running probe code. Knowing these prevents re
   with a check on exactly that and return with a warning about an unloaded chunk, so a batch against
   such a chunk silently does nothing. This is why `FalcoLightingChunk` extends `DynamicChunk` rather
   than `LightingChunk`: rebuilding that behaviour would be a defect, not a feature. Measured with a
-  probe in [Research: Shared Instances and Batches](../explanation/research/shared-instances-and-batches.md).
+  probe in [Research: Shared Instances and Batches](research/shared-instances-and-batches.md).
 
 **Claims about other light engines**
 
 Established by reading the sources of those engines, not by measuring anything. None of them is a
 performance claim about Falco, and none of them may be quoted as one. Each was taken for a promising
 lead first and only stopped being one after it was checked; the checks themselves, with the source
-references behind each, are in [Research: Light Engine](../explanation/research/light-engine.md).
+references behind each, are in [Research: Light Engine](research/light-engine.md).
 
 - **The main advantage attributed to Starlight is already here.** Falco's BFS pushes a level onto the
   neighbours of a cell instead of pulling each cell from all six of its own neighbours, which is the
@@ -250,7 +250,7 @@ the number's source is named in the cell and the table it comes from is under
 | --- | --- | --- |
 | Format coverage | Core compression plus external `.mcc`, **no** LZ4, no corruption recovery | Covers real worlds without an extra dependency; Minestom fails hard on oversized chunks, which this does not |
 | Integration | Opt-in via `ChunkLoaderFactory` | No breaking change; existing providers behave exactly as before |
-| Own palette | **Not built** — codec-internal representation only | Structural: `Palette` is `sealed … permits PaletteImpl`. The supporting figure — palette decoding at 4.5 % of the load path, against NBT parse 62 % and inflate 28 % — is from the earlier investigation recorded in [Research: Light Engine](../explanation/research/light-engine.md), not from this benchmark suite, and carries no interval |
+| Own palette | **Not built** — codec-internal representation only | Structural: `Palette` is `sealed … permits PaletteImpl`. The supporting figure — palette decoding at 4.5 % of the load path, against NBT parse 62 % and inflate 28 % — is from the earlier investigation recorded in [Research: Light Engine](research/light-engine.md), not from this benchmark suite, and carries no interval |
 | Own `InstanceContainer` | **Not built.** An own `Instance` was, in `falco-instance` | Subclassing the container is closed — its lifecycle hooks are `protected` members of Minestom's package. Extending `Instance` makes the barrier visible once, at the chunk. No speed is claimed either way: the tick parallelism lives in the global `ThreadDispatcher` |
 | Light `Light` implementation | **Not built** — results handed over via `Light#set` | Avoids the `@ApiStatus.Internal` calculation methods and the `Section.clone()` trap |
 | Read failure | Throws, never returns `null` | `null` means "absent", so the server regenerates and overwrites real data on the next save |
@@ -318,7 +318,7 @@ exception types and implements its `ChunkMigrator`. That is why it sits outside 
 `PUBLISHED` set, which asserts that the modules in it do not know each other, and has its own
 `MigrationBoundaryTest` instead. **The other rules of `ModuleBoundaryTest` therefore do not reach it**
 — a gap that has not been closed and is worth knowing when reading
-[Architecture Rules](architecture-rules.md).
+[Architecture Rules](../contributing/architecture-rules.md).
 
 Each module's `src/test/java` mirrors its own package; `*ConcurrencyTest` are the stress tests, and
 `LightEngineEquivalenceTest` pins the byte identity with Minestom. `falco-light` depends on
@@ -346,7 +346,7 @@ of them and can be read on its own.
 Two sets of charts exist and they are not equivalent.
 
 **The four committed charts** are generated by
-[`docs/charts/generate.mjs`](../charts/generate.mjs)
+[`docs/charts/generate.mjs`](https://github.com/OneLiteFeatherNET/Falco/blob/main/docs/charts/generate.mjs)
 and are rendered on [What the benchmarks establish](../explanation/what-the-benchmarks-establish.md). The generator is the authority for what each bar
 holds: the values are literals in that file, so a reader can compare a bar against the table it
 claims to draw without running anything. The tables they draw are `loader-contention` (from
@@ -653,7 +653,7 @@ noticed that they had been.
 - **`unregister` left a zombie chunk behind.** It walked the chunk map only, and a chunk that is
   still being loaded is not in that map yet. The load finished afterwards and published its chunk
   into an instance nothing reaches any more — the permanent zombie
-  [Research: Instance Container](../explanation/research/instance-container.md) describes. Every
+  [Research: Instance Container](research/instance-container.md) describes. Every
   running load is now claimed first, which makes it discard its result, and only then are the chunks
   that are already there unloaded. `FalcoInstanceLoadRaceTest` forces the interleaving instead of
   hoping for it and checks the state of the instance afterwards; a test that only checked no
@@ -760,7 +760,7 @@ individual results: none of them was closed by building what the entry proposed.
   waiting on a decision rather than on work — whether the checked root extends `IOException`. It does
   not: that would have kept every existing `catch (IOException)` catching the new types, including the
   block in `saveChunk` that swallows a failure and leaves the chunk unwritten.
-  [Research: Exception Hierarchy](../explanation/research/exception-hierarchy.md) records where the implementation
+  [Research: Exception Hierarchy](research/exception-hierarchy.md) records where the implementation
   departed from the design, including a package the language does not allow.
 - *`calculateWithNeighbours` can commit a stale read*
   ([#23](https://github.com/OneLiteFeatherNET/Falco/pull/23)) ended on "nothing in the API says so
@@ -919,7 +919,7 @@ block is `AIR`.
 
 This is a different defect from the one #45 fixed, and the two are worth keeping apart. #45 is about
 a world in an *old* format; this is a truncated or damaged chunk in the *current* one. It is
-pre-existing, #45 does not worsen it, and nothing in the code, the README or the wiki claims it is
+pre-existing, #45 does not worsen it, and nothing in the code, the README or the documentation claims it is
 closed. What makes it consequential anyway is the failure mode both share: the caller is handed a
 chunk that looks generated, and a save can then write that emptiness back.
 
@@ -998,7 +998,7 @@ misleading half of the report standing.
 - **No instance benchmark has ever been run as a baseline.** `falco-benchmarks` has gained JMH
   classes for the instance and the chunk, but the full run takes over two hours and refuses to start
   above a load average of 1.5, and no idle machine has been available. Until it has run, no timing
-  figure about the instance work belongs in this wiki, and none is in it.
+  figure about the instance work belongs in this documentation, and none is in it.
 - Border exchange between chunks settles one ring deep; a fully converged result over a large area
   needs the exchange repeated. Both parts that were outright wrong are fixed: writing the ring back,
   and the ring not reaching the diagonal chunks of the area (#24). What remains is the depth of the
@@ -1095,7 +1095,7 @@ neither. "Neither" appears once and is written as such rather than dressed up as
 
 Three "replace this part of Minestom" questions were researched before any code was written. The
 answers differed sharply and none was obvious in advance. These three are questions, not documents:
-[Research](../explanation/research/README.md) catalogues **five** documents, of which two came later and are not part of this
+[Research](research/README.md) catalogues **five** documents, of which two came later and are not part of this
 round, and the palette answer below has no document of its own — it is a compiler result, recorded
 here and nowhere else.
 
@@ -1103,7 +1103,7 @@ here and nowhere else.
 | --- | --- | --- |
 | **Palette** | Structural, verified with `javac` and at runtime | Impossible. `sealed interface Palette permits PaletteImpl` is a hard compiler error, and `Section` is a record holding that exact type. |
 | **`InstanceContainer`** | Structural for the "possible" half, measured for the "pointless" half | Possible but pointless **as asked**. It compiles and runs, but four `instanceof InstanceContainer` sites silently take another path for a foreign type, and the tick parallelism the request targeted lives in the global `ThreadDispatcher`, not in the container. `falco-instance` was built later for a different reason and **still claims none of the speed the original question was about**. What it has since gained is a memory result rather than a throughput one: a chunk that allocates sections on demand retains 25 objects and 840 bytes against 192 and 6 848 — see [Instance](#instance) above and [Counted](../reference/measured-results.md#counted). The verdict on the original question is unchanged, because that question was about time. |
-| **Light engine** | Measured, but by a standalone probe rather than by this suite — the load-path breakdown in [Research: Light Engine](../explanation/research/light-engine.md) put the two workloads that a faster engine touches at 2.2 ms per relit chunk and 0.586 ms per block placement, against 0 % for loading a pre-lit world. That probe recorded no machine, no run configuration and no uncertainty, and cannot be re-run from this repository; [Research](../explanation/research/README.md) says so of every number in those documents. What the figures established is which workload to look at, not how much was there to win | Possible and worth it — this is what was built. |
+| **Light engine** | Measured, but by a standalone probe rather than by this suite — the load-path breakdown in [Research: Light Engine](research/light-engine.md) put the two workloads that a faster engine touches at 2.2 ms per relit chunk and 0.586 ms per block placement, against 0 % for loading a pre-lit world. That probe recorded no machine, no run configuration and no uncertainty, and cannot be re-run from this repository; [Research](research/README.md) says so of every number in those documents. What the figures established is which workload to look at, not how much was there to win | Possible and worth it — this is what was built. |
 
 The recurring lesson: **sealed-ness decides whether it is possible, and the profile decides whether
 it is worth it.** Both have to be checked before designing anything, and neither can be guessed.
@@ -1123,7 +1123,7 @@ again.
 | --- | --- | --- |
 | **Starlight, wholesale** | Structural, by reading `SWMRNibbleArray` and the vanilla storage it replaces | Nothing left to take. The push-instead-of-pull BFS is already here, and the remainder of Starlight's gain is specific to how vanilla stores light. |
 | **Bit-slicing light levels across voxels** | Neither. **Nothing was measured and nothing structural rules it out** | No precedent in any engine, so it would be an original design with an unproven benefit and no reference implementation to compare against. This is a decision not to spend the effort, not a finding. |
-| **Parallelising the BFS of a single chunk** | Measured, from the round of investigation that produced the 50–150 µs figure — a probe figure with no recorded machine or configuration, like every number in [Research](../explanation/research/README.md). It does not have to carry on its own: the order of magnitude is confirmed by every published row of [Against the engine Minestom ships with](../reference/measured-results.md#against-the-engine-minestom-ships-with), whose twelve *Falco after* and *Minestom* cells put one section's whole light path between 39.3 and 206.6 µs/op, every one of them with a half-width under 5 % of its own mean | Not worth it. Handing a unit of work that size to another thread costs more than it saves. Minestom parallelises across chunks, which is the right granularity. |
+| **Parallelising the BFS of a single chunk** | Measured, from the round of investigation that produced the 50–150 µs figure — a probe figure with no recorded machine or configuration, like every number in [Research](research/README.md). It does not have to carry on its own: the order of magnitude is confirmed by every published row of [Against the engine Minestom ships with](../reference/measured-results.md#against-the-engine-minestom-ships-with), whose twelve *Falco after* and *Minestom* cells put one section's whole light path between 39.3 and 206.6 µs/op, every one of them with a half-width under 5 % of its own mean | Not worth it. Handing a unit of work that size to another thread costs more than it saves. Minestom parallelises across chunks, which is the right granularity. |
 | **Vector API** | Structural, and about packaging rather than performance | Ruled out regardless of what it might buy: without `--add-modules jdk.incubator.vector` `javac` refuses, with it the runtime prints an unsuppressable warning, and a JAR manifest has no attribute to carry the flag — so every consumer would have to set it. **No performance measurement was taken, and none would change the answer.** |
 | **A bucket queue (Dial)** | Measured in the standalone rebuild only — **no JMH measurement of a bucket queue exists** | No longer undecided for lack of an instrument. The rebuild puts it at 5–7 % *slower* with sources of equal brightness and 32–36 % faster with mixed brightness; both are rebuild figures, so directions rather than factors. Since `0e8fbb5` the JMH suite produces the mixed case as well: in [With sources of mixed brightness](../reference/measured-results.md#with-sources-of-mixed-brightness) the two rows with solid blocks keep a supported lead of about 1.7×, while both open-sky rows fall to overlapping intervals, which is where a bucket queue would be expected to help. The prerequisite is met; the change itself is still not made. |
 
@@ -1134,12 +1134,12 @@ again.
 | Page | Contents |
 | --- | --- |
 | [Measured results](../reference/measured-results.md) | The measurement environment, and every published table with the provenance line that states its conditions |
-| [Contributing](README.md) | The declared versions, the Gradle commands, the conventions the build enforces, and what a push to `main` publishes |
+| [Contributing](../contributing/README.md) | The declared versions, the Gradle commands, the conventions the build enforces, and what a push to `main` publishes |
 | [How the Anvil loader is built](../explanation/how-the-anvil-loader-is-built.md) | Usage, architecture, 20-row comparison with the built-in loader, limits |
 | [How the light engine works](../explanation/how-the-light-engine-works.md) | Usage, design, where resources are saved, limits |
 | [What the benchmarks establish](../explanation/what-the-benchmarks-establish.md) | How to run the benchmarks and what each measures |
 | [What a measurement here means](../explanation/what-a-measurement-here-means.md) | What the `±` means, what one fork does and does not cover, and why the numbers on this page are believable at the precision they are stated |
-| [Research](../explanation/research/README.md) | The research documents, how each was produced, and how much weight its findings carry — the structural ones do, the probe numbers do not |
+| [Research](research/README.md) | The research documents, how each was produced, and how much weight its findings carry — the structural ones do, the probe numbers do not |
 
 ## References
 
@@ -1157,7 +1157,7 @@ Sources for the claims on this page, all readable without running anything.
   and the check the benchmark performs before each trial, are cited under
   [References](../reference/measured-results.md#references).
 - Chart data —
-  [`docs/charts/generate.mjs`](../charts/generate.mjs),
+  [`docs/charts/generate.mjs`](https://github.com/OneLiteFeatherNET/Falco/blob/main/docs/charts/generate.mjs),
   where every bar is a literal that can be compared against the table it claims to draw.
 - The citation convention this page follows for Minestom and for Falco is stated under
   [References](../reference/measured-results.md#references), and the reason the two differ is in

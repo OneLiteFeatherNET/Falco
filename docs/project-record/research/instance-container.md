@@ -28,7 +28,7 @@ not supported by anything a reader can re-run.
 [`fc0aef5`](https://github.com/OneLiteFeatherNET/Falco/commit/fc0aef5), against Minestom
 `2026.06.20-26.1.2`. The structural claims were re-checked against that jar at `ca79507`. **Nothing
 in this document was implemented as written** — what `falco-instance` became is described in
-[Why falco-instance exists](../why-falco-instance-exists.md), and the module claims no speed
+[Why falco-instance exists](../../explanation/why-falco-instance-exists.md), and the module claims no speed
 advantage.
 
 ## What is possible
@@ -121,8 +121,8 @@ reproducible from this repository**:
 
 Read the first two as "the wait is unbounded in the pathological case", which is what the structure
 of the code establishes on its own, and not as factors. The third is explicitly discarded by
-[Why falco-instance exists](../why-falco-instance-exists.md): it came from a probe outside this
-repository, no instance timing has ever been produced here, and no argument in the wiki relies on it.
+[Why falco-instance exists](../../explanation/why-falco-instance-exists.md): it came from a probe outside this
+repository, no instance timing has ever been produced here, and no argument in the documentation relies on it.
 Whether either structure wins for chunk streaming is unmeasured — [Instance
 Performance](instance-performance-research.md) specifies the benchmark that would settle it. Instance
 benchmark classes exist since 2026-08-03; none has been run as a baseline, so the sentence still
@@ -164,7 +164,7 @@ halfway leaves nothing behind (`FalcoInstance.java:840-858`, `:875-895`, `:922`f
 
 What the module does **not** do is claim a speed advantage — the reason is the dispatcher finding
 above, and it is stated in that form in the README and in
-[Why falco-instance exists](../why-falco-instance-exists.md). Where a gain could exist at all,
+[Why falco-instance exists](../../explanation/why-falco-instance-exists.md). Where a gain could exist at all,
 and what would have to be measured before anyone said so, is catalogued in [Instance
 Performance](instance-performance-research.md), which is a hypothesis and labelled as one.
 

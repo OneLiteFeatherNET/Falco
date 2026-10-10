@@ -68,7 +68,7 @@ and [Explanation Scope and non-goals](explanation/scope-and-non-goals.md) are th
 - [Reference Measured results](reference/measured-results.md) — **every published table, with the run behind each one**
 - [Reference Benchmark catalogue](reference/benchmark-catalogue.md) — every benchmark class and its parameters
 
-**[Reference Measured results](reference/measured-results.md) owns every figure quoted anywhere in this wiki.** Where a table
+**[Reference Measured results](reference/measured-results.md) owns every figure quoted anywhere in this documentation.** Where a table
 disagrees with anything printed outside it, the table wins.
 
 ## Background
@@ -105,10 +105,10 @@ disagrees with anything printed outside it, the table wins.
 Not documentation of the software — the record of building it. Kept because each answers a question
 that will be asked again.
 
-- [Project Status](contributing/project-status.md) — what is in the branch, the defects found and fixed, what is still open, and
+- [Project Status](project-record/project-status.md) — what is in the branch, the defects found and fixed, what is still open, and
   what was investigated and deliberately not built
-- [Research](explanation/research/README.md) — the index of the investigations
-- [Documentation conventions](contributing/documentation-conventions.md) — how this wiki is organised and which page owns which fact
+- [Research](project-record/research/README.md) — the index of the investigations
+- [Documentation conventions](contributing/documentation-conventions.md) — how this documentation is organised and which page owns which fact
 
 ## Working on Falco
 

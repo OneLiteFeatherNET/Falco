@@ -8,12 +8,12 @@ of these runs is [What the benchmarks establish](../explanation/what-the-benchma
 rather than for someone using the library.
 
 **Where a measured table appears on more than one page, the copy below is the one that is right**,
-and a correction is made here first and propagated outwards. Not every table in the wiki is here:
+and a correction is made here first and propagated outwards. Not every table in the documentation is here:
 [How the Anvil loader is built](../explanation/how-the-anvil-loader-is-built.md) publishes an independent second run of the loader table
 that appears nowhere else, and the two-fork four-thread control beside it — the only published run
 whose `±` covers more than one JVM launch. A page carrying a run of its own says so where the table
 stands. The rest of the working record — the structural facts, the decisions these runs fed, the
-defects found and fixed, and what is still open — is [Project Status](../contributing/project-status.md).
+defects found and fixed, and what is still open — is [Project Status](../project-record/project-status.md).
 
 > **Read this before quoting a number.** Every *timing* here comes from *one* machine, on *one*
 > JVM, under *one* load, and none of it is an absolute statement about either implementation. What
@@ -523,7 +523,7 @@ A position is queued more than once when sources of different brightness reach i
 the case a bucket queue is for; the standalone rebuild put a bucket queue 32–36 % faster on that
 case, which is a direction rather than a factor. The benchmark can now see
 it, which is what the decision under
-[Investigated and deliberately not built](../contributing/project-status.md#investigated-and-deliberately-not-built)
+[Investigated and deliberately not built](../project-record/project-status.md#investigated-and-deliberately-not-built)
 was waiting for.
 
 <!-- Resolved 2026-08-02. This paragraph used to read "Mixed brightness costs Falco about 33 %
@@ -704,7 +704,7 @@ the bounds column is the honest form of the factor.
 > factors in the third column understate what the incremental path now buys. What was measured after
 > the change was measured on shared runners of two different CPU models, so it replaces none of the
 > absolute numbers here; it is recorded, with its control, under
-> [Project Status](../contributing/project-status.md#resolved-in-34-the-opacity-tables-are-rebuilt-on-every-pass).
+> [Project Status](../project-record/project-status.md#resolved-in-34-the-opacity-tables-are-rebuilt-on-every-pass).
 
 **The third row is not a measurement, and one of its two assumptions has since become false.** It is
 the arithmetic sum of the two rows above it, because a dimension with sky light pays for both kinds
@@ -941,7 +941,7 @@ benchmark's own `@Setup` builds, at commit `a09c71f`. Deterministic output, so n
 never one measurement.** The time factor runs from unresolvable at one distinct state to 2.96× at
 1024, and the size cost from 0.08 % to 40.66 % across the same sweep — they move together, so the
 cheap-looking size and the flattering factor never occur at the same parameter value. Of the three
-factors this wiki has carried, 2.4× is inside the bounds for `distinctStates = 256` and 3.1× inside
+factors this documentation has carried, 2.4× is inside the bounds for `distinctStates = 256` and 3.1× inside
 those for 1024; both were most likely real readings that lost their parameter. **1.83× is inside no
 row's bounds** and has been dropped rather than reassigned.
 
@@ -1094,7 +1094,7 @@ What holds is the shape the block was written to establish, and it holds more st
 numbers claimed: detecting a uniform section up front is cheaper than walking 4 096 blocks by between
 one and two orders of magnitude, depending on what a state lookup costs. The two figures above stay
 where they are, still marked as design-time measurements without provenance, because replacing them
-with numbers from a different machine would be the substitution this wiki refuses elsewhere.
+with numbers from a different machine would be the substitution this documentation refuses elsewhere.
 
 </details>
 
@@ -1108,7 +1108,7 @@ Sources for the numbers above, all readable without running anything.
   Where a table above was produced with a command-line override, its provenance line says so; the
   annotation is what the class declares and the override is what the run used.
 - What the `±` after a JMH mean covers, and what a single fork leaves out of it, is stated once for
-  the whole wiki in [What a measurement here means](../explanation/what-a-measurement-here-means.md), which every provenance line
+  the whole documentation in [What a measurement here means](../explanation/what-a-measurement-here-means.md), which every provenance line
   above links to rather than restating.
 - The command lines that re-perform these tables are in [What the benchmarks establish](../explanation/what-the-benchmarks-establish.md) under
   *Reproducing a published table*, together with what a result of this suite cannot mean.

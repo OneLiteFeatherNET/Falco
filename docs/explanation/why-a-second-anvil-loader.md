@@ -463,7 +463,7 @@ plains.
 `BiomePaletteResolver#toId` substitutes plains and reports the name once. So the chunk survives, and
 the surrounding world survives — but **the unknown block does not survive the round trip.** It is air
 on load and it is air on the next save. The same is true of the biome, which becomes plains. This is
-listed in [Project Status](../contributing/project-status.md) under known deviations from vanilla with exactly that
+listed in [Project Status](../project-record/project-status.md) under known deviations from vanilla with exactly that
 framing: "better than discarding the chunk, but not what a data fixer does" [4].
 
 The difference from Minestom is therefore one block state against one chunk, plus a log line and a
@@ -519,7 +519,7 @@ public type of the package is `@ApiStatus.Experimental` [6].
    chunk-level tag set (`DataVersion`, `xPos`, `zPos`, `yPos`, `Status`, `sections`,
    `block_entities`, `Heightmaps`, `structures`, `block_ticks`, `fluid_ticks`) and for the
    `palette` / `data` layout of a section.
-4. **[Project Status](../contributing/project-status.md)** — the working record: the decision table, the defects found
+4. **[Project Status](../project-record/project-status.md)** — the working record: the decision table, the defects found
    and fixed, and the claims that were investigated and refuted.
 5. **[Measured results](../reference/measured-results.md)** — benchmark results with their conditions.
 6. **[How the Anvil loader is built](how-the-anvil-loader-is-built.md)** — the loader in detail: the twenty-row comparison

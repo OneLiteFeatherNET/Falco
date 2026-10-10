@@ -5,7 +5,7 @@ all three modules are experimental: every public type carries `@ApiStatus.Experi
 signatures and behaviour may still change in a minor release. This file is the entry point and
 nothing more — what the build is made of, which conventions it enforces and what a push to `main`
 publishes is [Contributing](docs/contributing/README.md) in the
-wiki.
+documentation.
 
 ## Building
 
@@ -68,8 +68,8 @@ locally.
 
 ## Documentation
 
-Long-form prose lives in the wiki; the repository holds code, the chart binaries under
-`docs/charts`, the build files and pointers into the wiki. A change to any documentation is bound by
+Long-form prose lives in the documentation; the repository holds code, the chart binaries under
+`docs/charts`, the build files and pointers into the documentation. A change to any documentation is bound by
 the Falco documentation standard, which is checked into neither repository. Its rules, in short: no
 measured number is invented, re-rounded or extrapolated; every measured figure carries its
 conditions and its uncertainty, and every table of measured values carries a provenance line naming

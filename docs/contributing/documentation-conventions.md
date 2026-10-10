@@ -1,8 +1,8 @@
 # Documentation conventions
 
-How this wiki is organised, what an explanation page may claim, and which page owns which fact.
+How this documentation is organised, what an explanation page may claim, and which page owns which fact.
 
-The wiki follows [Diátaxis](https://diataxis.fr): a page is a **tutorial** (learning by doing), a
+The documentation follows [Diátaxis](https://diataxis.fr): a page is a **tutorial** (learning by doing), a
 **how-to** (a task you already know you want), a **reference** (a value you look up), or an
 **explanation** (why it is built this way). No page serves two of those at once — where prose would
 have to switch mode, it links instead. `Project Status` and the `Research` pages sit outside the
@@ -112,5 +112,5 @@ the one-fork clause — because that is the only place a provenance line does an
 The measured tables themselves live in [Measured results](../reference/measured-results.md), which owns every one of
 them, and in [What the benchmarks establish](../explanation/what-the-benchmarks-establish.md), which also says how to re-run them; the working record of
 what was measured, what was investigated and refuted, and what is still open is
-[Project Status](project-status.md). Each of the five pages lists its own sources at the bottom; this
+[Project Status](../project-record/project-status.md). Each of the five pages lists its own sources at the bottom; this
 page has none of its own because it makes no claim of its own.

@@ -23,7 +23,7 @@ timer. **No timing figure appears here**, and the section that explains why is
 is not treated as one — the sync-map factor quoted from the prior investigation, which came from a
 standalone probe outside this repository and is disowned in the sentence that carries it.
 
-The prior investigation is [Research: Instance Container](research/instance-container.md)
+The prior investigation is [Research: Instance Container](../project-record/research/instance-container.md)
 and it is binding here: everything below either follows from it or corrects it against the code as
 it now stands. Minestom references are to version `2026.06.20-26.1.2`, the version this repository
 compiles against [1]. That version is not pinned here directly: `settings.gradle.kts` declares
@@ -62,7 +62,7 @@ it is unregistered — plus the chunk subclass that problem drags along. It has 
 path (`e45d695`) and a fix for a load-versus-unload race, both described below; it has not grown a
 performance claim, and the section that says so is the one to read before depending on it.
 
-Note that [Project Status](../contributing/project-status.md) still records this under *Investigated and deliberately not
+Note that [Project Status](../project-record/project-status.md) still records this under *Investigated and deliberately not
 built* ("Own `InstanceContainer`: **Not built**"). That row was written before `cee5f94` added the
 module and describes the container replacement that was rejected, not the `Instance` subclass that
 was built. The verdict it records — *possible but pointless as asked* — is still the reason the thing
@@ -556,10 +556,10 @@ proves nothing about that.
    is a port of Go's `sync.Map`, which its own Javadoc cites as
    https://golang.org/src/sync/map.go.
 3. **Research: a multithreaded `InstanceContainer` replacement**,
-   [Research: Instance Container](research/instance-container.md) in this repository —
+   [Research: Instance Container](../project-record/research/instance-container.md) in this repository —
    the prior investigation, including the `ForeignInstance` probe transcript and the sync-map figure
    that is explicitly not relied on here.
-4. **Status — Anvil chunk loader and light engine**, [Project Status](../contributing/project-status.md) in this
+4. **Status — Anvil chunk loader and light engine**, [Project Status](../project-record/project-status.md) in this
    repository — the working record, including the *What can and cannot be replaced* section and the
    *Investigated and deliberately not built* verdict on `InstanceContainer`.
 5. **`falco-instance` sources and tests**, under
