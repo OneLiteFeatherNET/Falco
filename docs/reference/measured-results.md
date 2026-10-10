@@ -95,9 +95,9 @@ load on a machine that was not idle is also a live candidate explanation for the
 here, which are all in
 [the loader contention table](#the-region-file-against-the-one-minestom-ships-with).
 
-**One heap gap worth naming.** Every benchmark class pins `-Xms` equal to `-Xmx` in `jvmArgsAppend`
-except `AreaVsPerChunkBenchmark` and `IncrementalVsFullBenchmark`, which set no heap flags at all.
-Those two are also the two that build a world of real Minestom chunks, so they have the largest live
+**One heap gap worth naming.** Every benchmark class with a `@Fork` annotation pins `-Xms` equal to `-Xmx` in `jvmArgsAppend`
+except `AreaVsPerChunkBenchmark` and `IncrementalVsFullBenchmark`, which set no heap flags at all, and
+`ChunkLookupBenchmark`, which has no `@Fork` annotation. The first two are also the ones that build a world of real Minestom chunks, so they have the largest live
 set and the most garbage-collector sensitivity in the suite. Their numbers rest on a default,
 unrecorded heap configuration.
 

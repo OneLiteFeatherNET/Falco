@@ -21,17 +21,18 @@ snapshot endpoints are both public.
 
    ```kotlin
    dependencies {
-       implementation(platform("net.onelitefeather:falco-bom:2.1.0"))
+       implementation(platform("net.onelitefeather:falco-bom:3.0.0"))
 
        implementation("net.onelitefeather:falco-anvil")
        implementation("net.onelitefeather:falco-light")
        implementation("net.onelitefeather:falco-instance")
-       implementation("net.onelitefeather:falco-migration")
+       implementation("net.onelitefeather:falco-migration:3.0.0") // not in the BOM, so it takes its version here
    }
    ```
 
-   Take only the modules you need. The platform constrains a version for each; it does not pull in
-   one you did not declare.
+   Take only the modules you need. The platform constrains a version for `falco-anvil`, `falco-light`
+   and `falco-instance`; it does not pull in one you did not declare, and it does not cover
+   `falco-migration`.
 
 3. Declare Minestom yourself. Falco does not bring it:
 
@@ -47,10 +48,10 @@ Version each module individually instead of step 2:
 
 ```kotlin
 dependencies {
-    implementation("net.onelitefeather:falco-anvil:2.1.0")
-    implementation("net.onelitefeather:falco-light:2.1.0")
-    implementation("net.onelitefeather:falco-instance:2.1.0")
-    implementation("net.onelitefeather:falco-migration:2.1.0")
+    implementation("net.onelitefeather:falco-anvil:3.0.0")
+    implementation("net.onelitefeather:falco-light:3.0.0")
+    implementation("net.onelitefeather:falco-instance:3.0.0")
+    implementation("net.onelitefeather:falco-migration:3.0.0")
 }
 ```
 

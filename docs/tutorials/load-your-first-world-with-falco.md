@@ -17,11 +17,11 @@ This takes about fifteen minutes.
    }
 
    dependencies {
-       implementation(platform("net.onelitefeather:falco-bom:2.1.0"))
+       implementation(platform("net.onelitefeather:falco-bom:3.0.0"))
        implementation("net.onelitefeather:falco-anvil")
        implementation("net.onelitefeather:falco-light")
 
-       implementation("net.minestom:minestom:2026.06.20-26.1.2")
+       implementation("net.minestom:minestom:2026.09.12-26.2")
    }
    ```
 

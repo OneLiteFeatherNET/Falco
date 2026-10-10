@@ -34,7 +34,7 @@ in the same package.
 The run is reproducible in the sense that matters for a build: the JDK is not whichever one launched
 Gradle. The root build pins a Java 25 toolchain and `options.release = 25` (see [Build
 Setup](build-setup.md)), and `.github/workflows/build-pr.yml` requests Temurin 25 from the shared
-`gradle-build-pr.yml@v2.4.0` workflow with `run-tests: true`, so a pull request runs the same
+`gradle-build-pr.yml` workflow, at the version pinned in [`.github/workflows/build-pr.yml`](https://github.com/OneLiteFeatherNET/Falco/blob/main/.github/workflows/build-pr.yml), with `run-tests: true`, so a pull request runs the same
 compiler and the same test JVM version a local `./gradlew check` does.
 
 Every test JVM is started with one system property:

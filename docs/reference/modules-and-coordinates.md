@@ -6,8 +6,9 @@ Every published artefact, its coordinate, the repository that serves it and its 
 > Source of truth: the `maven-publish` configuration and the version catalog in the
 > [Falco repository](https://github.com/OneLiteFeatherNET/Falco). Until the generator lands, the
 > version numbers below can go stale — Renovate keeps the snippets in the
-> [repository README](https://github.com/OneLiteFeatherNET/Falco#readme) current and cannot reach these
-> docs, so **where this page and the README disagree, the README is right**. The authoritative list
+> [repository README](https://github.com/OneLiteFeatherNET/Falco#readme) current (its custom manager in
+> [`renovate.json`](https://github.com/OneLiteFeatherNET/Falco/blob/main/renovate.json) matches only `README.md`)
+> and does not update these pages, so **where this page and the README disagree, the README is right**. The authoritative list
 > of published versions is [Releases](https://github.com/OneLiteFeatherNET/Falco/releases).
 
 ## Repositories
@@ -27,7 +28,7 @@ Consuming Falco needs no credentials. Only building Falco itself does — see
 | | |
 | --- | --- |
 | Kind | `java-library` |
-| Current version | `2.1.0` |
+| Current version | `3.0.0` |
 | Since | `0.1.0` |
 | Javadoc | [latest release](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-anvil/latest) |
 
@@ -38,7 +39,7 @@ An Anvil region-file chunk loader for Minestom.
 | | |
 | --- | --- |
 | Kind | `java-library` |
-| Current version | `2.1.0` |
+| Current version | `3.0.0` |
 | Since | `0.1.0` |
 | Javadoc | [latest release](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-light/latest) |
 
@@ -49,7 +50,7 @@ A block- and sky-light engine for Minestom.
 | | |
 | --- | --- |
 | Kind | `java-library` |
-| Current version | `2.1.0` |
+| Current version | `3.0.0` |
 | Since | `0.1.0` |
 | Javadoc | [latest release](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-instance/latest) |
 
@@ -61,7 +62,7 @@ sections on demand.
 | | |
 | --- | --- |
 | Kind | `java-library` |
-| Current version | `2.1.0` |
+| Current version | `3.0.0` |
 | Since | `2.0.0` |
 | Javadoc | not yet rendered at a stable address |
 
@@ -73,12 +74,15 @@ Lifts a world older than the running server to it. Needed only when loading such
 | | |
 | --- | --- |
 | Kind | `java-platform` |
-| Current version | `2.1.0` |
+| Current version | `3.0.0` |
 | Since | `1.0.0` |
 | Javadoc | none — the artefact carries no classes |
 
-Carries one version constraint for each of the four modules above, so a build states the version
-once. A platform constrains versions; it does not pull in a module that was not declared.
+Carries one version constraint for each of the three modules `falco-anvil`, `falco-light` and
+`falco-instance` ([`falco-bom/build.gradle.kts`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-bom/build.gradle.kts)),
+so a build states the version once for those. `falco-migration` is published but is not in the BOM,
+so its version is stated on its own dependency line. A platform constrains versions; it does not pull
+in a module that was not declared.
 
 `falco-bom` was added after `0.3.0` was cut, so releases before `1.0.0` do not serve it.
 
@@ -102,7 +106,9 @@ snapshot endpoint serves `1.0.1-SNAPSHOT`. That version keeps moving as commits 
 
 ## Dependencies Falco does not bring
 
-Minestom, fastutil and adventure-nbt are `compileOnly` in every module and do not arrive with these
-artefacts. A consumer declares its own Minestom version; Falco declares none.
+Minestom is `compileOnly` in `falco-anvil`, `falco-light` and `falco-instance`; `falco-migration` and
+`falco-bom` declare no Minestom dependency at all. fastutil and flare-fastutil are `compileOnly` in
+`falco-instance` only. None of these arrive with the artefacts. A consumer declares its own Minestom
+version; Falco declares none.
 
 Related: [How-to Add Falco to your build](../how-to/add-falco-to-your-build.md) · [Explanation Why a second Anvil loader](../explanation/why-a-second-anvil-loader.md)

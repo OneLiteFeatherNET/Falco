@@ -11,7 +11,7 @@ Everything below is checkable in four files:
 [`build.gradle.kts`](https://github.com/OneLiteFeatherNET/Falco/blob/main/build.gradle.kts),
 [`settings.gradle.kts`](https://github.com/OneLiteFeatherNET/Falco/blob/main/settings.gradle.kts),
 [`gradle.properties`](https://github.com/OneLiteFeatherNET/Falco/blob/main/gradle.properties) and
-the seven module scripts. Gradle itself is pinned by the wrapper at `9.6.1`, in
+the eight module scripts. Gradle itself is pinned by the wrapper at `9.8.1`, in
 [`gradle/wrapper/gradle-wrapper.properties`](https://github.com/OneLiteFeatherNET/Falco/blob/main/gradle/wrapper/gradle-wrapper.properties),
 so `./gradlew` is the only supported way to run any of it.
 
@@ -43,7 +43,7 @@ the architecture rules over the other modules — see [Architecture Rules](archi
 
 `falco-benchmarks/build.gradle.kts` holds the only `plugins { }` block in the repository, a single
 `alias(libs.plugins.jmh)`. Every other plugin in the table is applied imperatively from the root, so
-the seven module scripts contain dependencies, a `description`, and — in `falco-benchmarks` and
+the eight module scripts contain dependencies, a `description`, and — in `falco-benchmarks` and
 `falco-demo` — task wiring, and nothing else.
 
 `falco-archunit` gets `java-library` and `jacoco` from the root like every non-BOM module, and both
@@ -128,7 +128,7 @@ This assignment sits outside the `java-library` configuration block precisely so
 
 ## No repositories are declared per-project
 
-None of the seven module build files declares a `repositories { }` block. Repositories come
+None of the eight module build files declares a `repositories { }` block. Repositories come
 exclusively from `dependencyResolutionManagement` in `settings.gradle.kts`, and that file does not
 set `repositoriesMode`, so Gradle's default `RepositoriesMode.PREFER_PROJECT` applies: the moment a
 module declared its own block, that block would win and the settings-level declaration would be

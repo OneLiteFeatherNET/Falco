@@ -6,9 +6,9 @@ caller can catch.
 > **This page is a generation target, currently written by hand, and it is incomplete.**
 > Source of truth: the exception types in
 > [`net.onelitefeather.falco.anvil`](https://github.com/OneLiteFeatherNET/Falco/tree/main/falco-anvil/src/main/java/net/onelitefeather/falco/anvil).
-> `RegionFormatException.Reason` declares five constants and `ChunkDataException.Reason` six; only
-> the two named below are recorded in this documentation. Read the enums for the full set until the generator
-> lands.
+> `RegionFormatException.Reason` declares five constants and `ChunkDataException.Reason` seven. The
+> seven `ChunkDataException.Reason` constants are recorded below; the five `RegionFormatException.Reason`
+> constants are not. Read the enums for the full set until the generator lands.
 
 ## Types
 
@@ -51,7 +51,7 @@ sectors, unsupported compression scheme.
 | --- | --- |
 | Kind | checked, final |
 | Extends | `AnvilFormatException` |
-| Reasons | six constants on `ChunkDataException.Reason` |
+| Reasons | seven constants on `ChunkDataException.Reason` |
 | Source | [`ChunkDataException`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-anvil/src/main/java/net/onelitefeather/falco/anvil/ChunkDataException.java) |
 
 Broken chunk NBT: missing key, wrong type, empty palette, palette index out of range.
@@ -84,6 +84,11 @@ format is defined.
 | --- | --- | --- |
 | `UNSUPPORTED_CHUNK_VERSION` | `ChunkDataException.Reason` | The chunk is below the version floor, or carries the pre-`21w43a` `Level` layout. |
 | `MISSING_OR_MISTYPED_KEY` | `ChunkDataException.Reason` | A key the caller requires is absent or holds the wrong tag type — including a chunk claiming `Status: minecraft:full` while carrying neither `sections` nor `Level`. |
+| `EMPTY_PALETTE` | `ChunkDataException.Reason` | A palette container holds no entry, so no block state can be resolved from it. |
+| `PALETTE_DATA_NOT_LONG_ARRAY` | `ChunkDataException.Reason` | The packed data of a palette container is not the long array the format requires. |
+| `PACKED_LENGTH_MISMATCH` | `ChunkDataException.Reason` | The packed data holds a number of longs that fits no bit count for the entry count. |
+| `PALETTE_INDEX_OUT_OF_RANGE` | `ChunkDataException.Reason` | A packed index addresses an entry the palette does not hold. |
+| `UNEXPECTED_LIST_ELEMENT_TYPE` | `ChunkDataException.Reason` | A list holds elements of a type other than the one the key requires. |
 
 ## What each entry point does on failure
 

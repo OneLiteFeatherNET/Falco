@@ -12,7 +12,7 @@ The versions Falco is built against, the versions it accepts, and the floors it 
 | | Value | Note |
 | --- | --- | --- |
 | Java | 25 | required to build Falco and to run it |
-| Minestom | `2026.06.20-26.1.2` | the version every claim in this documentation was checked against; `compileOnly`, so a consumer picks its own |
+| Minestom | `2026.09.12-26.2` | resolved through `net.onelitefeather:mycelium-bom` `1.8.7` (`settings.gradle.kts`, `mycelium-bom` `version("bom", "1.8.7")`); `compileOnly`, so a consumer picks its own |
 
 ## Chunk data version floor
 
@@ -26,7 +26,7 @@ The versions Falco is built against, the versions it accepts, and the floors it 
 | Enforced by | `ChunkVersionPolicy`, by default `DefaultChunkVersionPolicy` |
 
 `21w43a` is where a chunk's data moved out of the `Level` compound onto the root compound, under the
-key `sections` ([`FalcoAnvilLoader.SECTIONS_KEY`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-anvil/src/main/java/net/onelitefeather/falco/anvil/FalcoAnvilLoader.java)).
+key `sections` (`FalcoAnvilLoader.SECTIONS_KEY`, a `private` constant, so it is not linkable).
 
 ### What the guard does with each case
 
