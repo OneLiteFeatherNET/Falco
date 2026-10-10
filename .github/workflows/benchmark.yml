@@ -123,7 +123,7 @@ jobs:
           ONELITEFEATHER_MAVEN_PASSWORD: ${{ secrets.ONELITEFEATHER_MAVEN_PASSWORD }}
         run: ./gradlew :falco-benchmarks:jmhJar --no-daemon
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: jmh-jar
           path: falco-benchmarks/build/libs/*-jmh.jar
@@ -299,7 +299,7 @@ jobs:
           } > "provenance-$SHARD.md"
           cat "provenance-$SHARD.md" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: jmh-${{ github.run_number }}-${{ matrix.shard.id }}
