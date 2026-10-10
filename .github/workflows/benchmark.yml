@@ -80,7 +80,7 @@ jobs:
     outputs:
       shards: ${{ steps.plan.outputs.shards }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-java@v5
         with:
