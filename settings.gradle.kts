@@ -1,4 +1,3 @@
-// Build rationale documented in the wiki: https://github.com/OneLiteFeatherNET/Falco/wiki
 rootProject.name = "falco"
 
 include("falco-anvil")

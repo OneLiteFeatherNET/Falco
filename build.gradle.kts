@@ -1,5 +1,3 @@
-// Build rationale documented in the wiki: https://github.com/OneLiteFeatherNET/Falco/wiki
-
 plugins {
     alias(libs.plugins.japicmp) apply false
 }
