@@ -560,7 +560,7 @@ public final class MinestomChunks {
             for (int y = minY; y < maxY; y++) {
                 for (int z = 0; z < Chunk.CHUNK_SIZE_Z; z++) {
                     for (int x = 0; x < Chunk.CHUNK_SIZE_X; x++) {
-                        if (!typeAt(chunk, x, y, z).isAir()) {
+                        if (!typeAt(chunk, x, y, z).air()) {
                             return;
                         }
                     }
@@ -590,7 +590,7 @@ public final class MinestomChunks {
             for (int y = minY; y < maxY; y++) {
                 for (int z = 0; z < Chunk.CHUNK_SIZE_Z; z++) {
                     for (int x = 0; x < Chunk.CHUNK_SIZE_X; x++) {
-                        if (!typeAt(chunk, x, y, z).isAir()) {
+                        if (!typeAt(chunk, x, y, z).air()) {
                             found++;
                         }
                     }
@@ -1062,6 +1062,6 @@ public final class MinestomChunks {
      * @return true if the block is neither air nor a block entity
      */
     private static boolean usable(Block block) {
-        return !block.isAir() && !block.registry().isBlockEntity();
+        return !block.air() && block.blockEntityType() == null;
     }
 }

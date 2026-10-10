@@ -50,7 +50,7 @@ public final class MinestomBlockLightSource implements BlockLightSource {
     @Override
     public int emission(int stateId) {
         Block block = resolve(stateId);
-        return block == null ? 0 : block.registry().lightEmission();
+        return block == null ? 0 : block.lightEmission();
     }
 
     /**
@@ -63,7 +63,7 @@ public final class MinestomBlockLightSource implements BlockLightSource {
         if (block == null) {
             return false;
         }
-        return block.registry().occlusionShape().isFaceFull(toServerFace(face));
+        return block.occlusionShape().isFaceFull(toServerFace(face));
     }
 
     /**

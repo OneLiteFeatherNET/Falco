@@ -225,7 +225,7 @@ public final class BlockWriter {
         if (chunk == null || !chunk.isLoaded() || chunk.isReadOnly()) return false;
 
         final Block block = this.owner.getBlock(blockPosition);
-        if (block.isAir()) {
+        if (block.air()) {
             // The client believes there is a block here; hand it the chunk it actually has.
             chunk.sendChunk(player);
             return false;
@@ -305,7 +305,7 @@ public final class BlockWriter {
         if (doBlockUpdates) updateNeighbours(blockPosition, updateDistance);
 
         chunk.sendPacketToViewers(new BlockChangePacket(blockPosition, placed.stateId()));
-        final BlockEntityType blockEntityType = placed.registry().blockEntityType();
+        final BlockEntityType blockEntityType = placed.blockEntityType();
         if (blockEntityType != null) {
             final CompoundBinaryTag data = BlockUtils.extractClientNbt(placed);
             chunk.sendPacketToViewers(new BlockEntityDataPacket(blockPosition, blockEntityType, data));
@@ -349,7 +349,7 @@ public final class BlockWriter {
             final int neighbourZ = blockPosition.blockZ() + direction.normalZ();
             if (neighbourY < dimension.minY() || neighbourY >= dimension.maxY()) continue;
             final Block neighbour = cache.getBlock(neighbourX, neighbourY, neighbourZ, Condition.NONE);
-            if (neighbour == null || neighbour.isAir()) continue;
+            if (neighbour == null || neighbour.air()) continue;
             final BlockPlacementRule rule = MinecraftServer.getBlockManager().getBlockPlacementRule(neighbour);
             if (rule == null || updateDistance >= rule.maxUpdateDistance()) continue;
 

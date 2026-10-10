@@ -212,7 +212,7 @@ public final class DemoServer {
         DimensionType dimension = instance.getCachedDimensionType();
 
         for (int y = dimension.minY() + dimension.height() - 1; y >= dimension.minY(); y--) {
-            if (!instance.getBlock(x, y, z).isAir()) {
+            if (!instance.getBlock(x, y, z).air()) {
                 return new Pos(x + 0.5, y + SPAWN_CLEARANCE, z + 0.5);
             }
         }

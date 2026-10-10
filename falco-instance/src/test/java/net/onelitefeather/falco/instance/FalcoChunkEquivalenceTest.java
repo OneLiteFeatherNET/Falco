@@ -97,7 +97,7 @@ class FalcoChunkEquivalenceTest {
 
                         assertEquals(expected, actual,
                                 "block at " + x + "/" + y + "/" + z + " with " + distinctStates + " states");
-                        if (!expected.isAir()) {
+                        if (!expected.air()) {
                             nonAir++;
                         }
                     }

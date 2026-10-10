@@ -227,10 +227,11 @@ class ForeignCouplingTest {
      * point of the rule rather than a concession. The package holds two unrelated things: the
      * dynamic registry, which needs a booted server ({@code DynamicRegistry}, {@code RegistryKey},
      * {@code Registries}, {@code Holder}, {@code TagKey}), and {@code RegistryData}, the static
-     * data tables a block carries. {@code MinestomBlockLightSource} reaches the latter through
-     * {@code block.registry().occlusionShape()} ({@code :64}) and {@code lightEmission()}
-     * ({@code :51}) — exactly the work F5a grants it by name. Over the whole package this rule
-     * would revoke that grant, and the two rules would contradict each other.
+     * data tables a block carries. {@code MinestomBlockLightSource} reads the latter through
+     * {@code block.occlusionShape()} ({@code :66}) and {@code block.lightEmission()} ({@code :53}),
+     * which Minestom answers from {@code RegistryData} — exactly the work F5a grants it by name.
+     * Over the whole package this rule would revoke that grant, and the two rules would contradict
+     * each other.
      *
      * <p>Phrased as a complement rather than an allow list, so a new type in the package is covered
      * by default rather than on somebody remembering to add it.
