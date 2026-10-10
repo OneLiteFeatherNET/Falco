@@ -2,7 +2,7 @@
 
 Put your own world in here and find out, on your own machine, whether the Falco stack does better
 than the one Minestom ships with. Nothing in this module is published; it exists so the claims in
-[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status) can be checked
+[Project Status](https://github.com/OneLiteFeatherNET/Falco/blob/main/docs/project-record/project-status.md) can be checked
 rather than believed.
 
 There are two ways to check, and they answer different questions:
@@ -17,7 +17,7 @@ server gives you an impression you cannot quote. Neither replaces the other.
 
 ## Put the world here
 
-Copy your world folder into [`world/`](world). The result should look like `world/my-world/`.
+Copy your world folder into [`world/`](https://github.com/OneLiteFeatherNET/Falco/tree/main/falco-demo/world). The result should look like `world/my-world/`.
 
 Copy the **world root** — the folder that holds `level.dat` and either a `region/` directory or a
 `dimensions/` directory. Not the `region/` directory itself: both loaders resolve
@@ -122,8 +122,8 @@ counted; timing those would report the speed of a header lookup as the speed of 
 
 - **It is not a benchmark and cannot be quoted.** One session, one machine, one route flown by hand,
   no repetition, no isolation, no statistical model. Anything you intend to publish belongs in the
-  JMH benchmarks of [`falco-benchmarks`](../falco-benchmarks) — see
-  [Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) — with the machine, the
+  JMH benchmarks of [`falco-benchmarks`](https://github.com/OneLiteFeatherNET/Falco/tree/main/falco-benchmarks) — see
+  [What a measurement here means](https://github.com/OneLiteFeatherNET/Falco/blob/main/docs/explanation/what-a-measurement-here-means.md) — with the machine, the
   jvm and the JMH configuration next to the number.
 - **Your route is a variable.** Two flights over the same world load different chunks in a different
   order. Two impressions that differ by a little are not a result.
@@ -219,8 +219,8 @@ then lists the warm-up rounds, then the measured ones, then the summary:
 ## What this does not tell you
 
 - **It is not a benchmark.** No forks, no statistical model, no isolation. For anything you intend to
-  quote, use the JMH benchmarks in [`falco-benchmarks`](../falco-benchmarks) — see
-  [Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) — and report the
+  quote, use the JMH benchmarks in [`falco-benchmarks`](https://github.com/OneLiteFeatherNET/Falco/tree/main/falco-benchmarks) — see
+  [What a measurement here means](https://github.com/OneLiteFeatherNET/Falco/blob/main/docs/explanation/what-a-measurement-here-means.md) — and report the
   machine, the jvm and the JMH configuration alongside the number, as that document requires.
 - **A number without its thread count means nothing here.** The Falco loader wins on lock
   granularity, which by definition cannot show itself without contention. Single threaded it is if

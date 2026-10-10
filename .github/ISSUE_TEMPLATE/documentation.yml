@@ -18,12 +18,12 @@ body:
       label: "Which document?"
       options:
         - "README.md"
-        - "Wiki: Project Status"
-        - "Wiki: Anvil Chunk Loader"
-        - "Wiki: Light Engine"
-        - "Wiki: Benchmarking"
-        - "Wiki: Rationale"
-        - "Wiki: Research"
+        - "Docs: Project status"
+        - "Docs: Anvil Chunk Loader"
+        - "Docs: Light Engine"
+        - "Docs: Benchmarking"
+        - "Docs: Rationale"
+        - "Docs: Research"
         - "Javadoc"
         - "Something else"
     validations:

@@ -1,9 +1,9 @@
 # Falco
 
-[![API status: experimental](https://img.shields.io/badge/API-experimental-yellow)](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status)
-[![Release](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo.onelitefeather.dev%2Freleases%2Fnet%2Fonelitefeather%2Ffalco-anvil%2Fmaven-metadata.xml&label=release&color=blue)](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation)
-[![Java 25](https://img.shields.io/badge/Java-25-orange)](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation#building-from-source)
-[![Documentation](https://img.shields.io/badge/docs-wiki-lightgrey)](https://github.com/OneLiteFeatherNET/Falco/wiki)
+[![API status: experimental](https://img.shields.io/badge/API-experimental-yellow)](docs/project-record/project-status.md)
+[![Release](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo.onelitefeather.dev%2Freleases%2Fnet%2Fonelitefeather%2Ffalco-anvil%2Fmaven-metadata.xml&label=release&color=blue)](docs/how-to/add-falco-to-your-build.md)
+[![Java 25](https://img.shields.io/badge/Java-25-orange)](docs/how-to/build-falco-from-source.md)
+[![Documentation](https://img.shields.io/badge/docs-gitbook-lightgrey)](docs/README.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-lightgrey)](LICENSE)
 
 A high-performance Anvil chunk loader and light engine for
@@ -17,9 +17,9 @@ nothing to do with speed — and it claims none.
 
 | Module | What it is |
 | --- | --- |
-| [`falco-anvil`](https://github.com/OneLiteFeatherNET/Falco/wiki/Anvil-Chunk-Loader) | A `ChunkLoader` for the Anvil region format. Genuinely parallel: reading, decompression and NBT parsing do not share one lock. A read failure throws instead of reporting the chunk as absent, so the server cannot overwrite real data with a freshly generated chunk. It refuses worlds older than snapshot 21w43a instead of reading them as air; a world at or above that floor is read with the current schema regardless of how old its DataVersion actually is, with no DataFixer involved. |
-| [`falco-light`](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine) | A block and sky light engine. Thread-safe per call and tied to no chunk implementation, so it works with chunk types Minestom's own engine ignores. Call it yourself, or let a chunk keep its own light up to date. |
-| [`falco-instance`](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Instances-And-Chunks) | An `Instance` and its `Chunk`. **No speed gain is claimed and none is measured** — ticking lives in the server's global `ThreadDispatcher`, not in the instance. What it buys is an unload path of its own, where `InstanceManager.unregisterInstance` leaks every chunk a foreign instance ever loaded. It cannot back a `SharedInstance`; shared worlds are served by `FalcoSharedInstance` on a plain container instead. |
+| [`falco-anvil`](docs/explanation/how-the-anvil-loader-is-built.md) | A `ChunkLoader` for the Anvil region format. Genuinely parallel: reading, decompression and NBT parsing do not share one lock. A read failure throws instead of reporting the chunk as absent, so the server cannot overwrite real data with a freshly generated chunk. It refuses worlds older than snapshot 21w43a instead of reading them as air; a world at or above that floor is read with the current schema regardless of how old its DataVersion actually is, with no DataFixer involved. |
+| [`falco-light`](docs/explanation/how-the-light-engine-works.md) | A block and sky light engine. Thread-safe per call and tied to no chunk implementation, so it works with chunk types Minestom's own engine ignores. Call it yourself, or let a chunk keep its own light up to date. |
+| [`falco-instance`](docs/explanation/why-falco-instance-exists.md) | An `Instance` and its `Chunk`. **No speed gain is claimed and none is measured** — ticking lives in the server's global `ThreadDispatcher`, not in the instance. What it buys is an unload path of its own, where `InstanceManager.unregisterInstance` leaks every chunk a foreign instance ever loaded. It cannot back a `SharedInstance`; shared worlds are served by `FalcoSharedInstance` on a plain container instead. |
 
 All three modules are **experimental**. Every public type carries `@ApiStatus.Experimental`;
 signatures and behaviour may still change in a minor release.
@@ -47,8 +47,8 @@ dependencies {
 
     // Minestom is compileOnly in Falco, so it does not arrive with these
     // artefacts. Falco declares no version for it, on purpose. You pick it.
-    // The version Falco compiles and measures against is recorded in the wiki:
-    // https://github.com/OneLiteFeatherNET/Falco/wiki/Contributing#environment
+    // The version Falco compiles and measures against is recorded in the documentation:
+    // https://github.com/OneLiteFeatherNET/Falco/blob/main/docs/contributing/README.md#environment
     implementation("net.minestom:minestom:<version>")
 }
 ```
@@ -56,7 +56,7 @@ dependencies {
 Take only the modules you need — a platform constrains a version for each, it does not pull one in.
 Steps 2 to 4 below use the first two; step 5 uses all three. Individual coordinates, Maven and
 snapshots are in
-[Installation](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation).
+[Installation](docs/how-to/add-falco-to-your-build.md).
 
 ### 2. Write the server
 
@@ -132,7 +132,7 @@ One honest note about the lighting in both steps. If the region files already ca
 recomputes what is already stored, because loading applies the stored arrays and clears the update
 flag — for a pre-lit world the engine is doing work nobody asked for. It earns its keep on worlds
 without stored light and after blocks change at runtime. Which case is which is spelled out in
-[Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine).
+[Light Engine](docs/explanation/when-light-computation-actually-runs.md).
 
 ### 5. All three modules together
 
@@ -178,7 +178,7 @@ Two things to know before building on it. `getSections()` materialises all 24 se
 caller may write into what it gets — use `chunk.storage().views()` to only look. And a chunk supplier
 producing anything but a `FalcoChunk` is refused, because such a chunk would be accepted everywhere
 except the unload path. Lifecycle listeners, the storage accessors and the rest are in
-[Instances and Chunks](https://github.com/OneLiteFeatherNET/Falco/wiki/Instances-And-Chunks).
+[Instances and Chunks](docs/how-to/use-falcoinstance-instead-of-instancecontainer.md).
 
 Minestom's own events are unaffected: `InstanceChunkLoadEvent`, `InstanceChunkUnloadEvent` and
 `PlayerBlockBreakEvent` are dispatched here exactly as they are by a container, so listeners on the
@@ -187,7 +187,7 @@ Minestom's own events are unaffected: `InstanceChunkLoadEvent`, `InstanceChunkUn
 ## Everything the three modules offer
 
 The five steps above are one path through Falco. This is the rest of it, so that what exists is
-visible without reading three wiki pages first. Every snippet here is compiled by
+visible without reading three documentation pages first. Every snippet here is compiled by
 `DocumentationSnippets` in `falco-demo`.
 
 ### falco-anvil — reading and writing Anvil worlds
@@ -356,7 +356,7 @@ that needs the write path uses `FalcoInstance` and gives up sharing.
 The per-view generator and chunk supplier are a repair and not a capability: they stop one view from
 reconfiguring another, and nothing inside Minestom reads them, because the container creates every
 chunk from its own. The reasoning is in
-[Rationale: Instances and Chunks](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Instances-And-Chunks).
+[Rationale: Instances and Chunks](docs/explanation/why-falco-instance-exists.md).
 
 ## What "high-performance" means here
 
@@ -397,9 +397,9 @@ value stands here. JMH 1.37, one 16-core machine recorded as not idle, run commi
 recorded, no `results.json` committed. The conservative bounds on this row are 1.45× to 2.30×
 faster, the wider of the two relative half-widths being 20 %, which holds the factor to one decimal.
 One fork — the `±` covers variance between iterations of one JVM, not between JVM launches, defined
-once in [Rationale: Measurement](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement#the-interval-after-a-number).
+once in [Rationale: Measurement](docs/explanation/what-a-measurement-here-means.md#the-interval-after-a-number).
 The full four-row read and write table is owned by
-[Measured Results](https://github.com/OneLiteFeatherNET/Falco/wiki/Measured-Results#the-region-file-against-the-one-minestom-ships-with).</sub>
+[Measured Results](docs/reference/measured-results.md#the-region-file-against-the-one-minestom-ships-with).</sub>
 
 The two-thread figure did not reproduce, and that belongs next to it: an independent run of the same
 configuration put Minestom at 103 437 ± 856 306 µs/op there, which carries no factor at all. What
@@ -414,9 +414,9 @@ recorded, no `results.json` committed. Minestom's half-width is 8.3 times its ow
 carries no factor at any precision; Falco reproduced at 1 174 ± 71 µs/op against the 1 181 ± 31 of
 the first run. One fork — the `±` covers variance between iterations of one JVM, not between JVM
 launches, defined once in
-[Rationale: Measurement](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement#the-interval-after-a-number).
+[Rationale: Measurement](docs/explanation/what-a-measurement-here-means.md#the-interval-after-a-number).
 All four rows of this run are in
-[Anvil Chunk Loader](https://github.com/OneLiteFeatherNET/Falco/wiki/Anvil-Chunk-Loader#measured-concurrent-readers-of-one-region-file).</sub>
+[Anvil Chunk Loader](docs/explanation/how-the-anvil-loader-is-built.md#measured-concurrent-readers-of-one-region-file).</sub>
 
 **The light engine is 1.11× to 1.71× faster** over six scenarios, every pair of intervals disjoint,
 with byte-identical output asserted on every build.
@@ -431,44 +431,44 @@ wider relative half-width of each pair is under 5 %, which is what admits two de
 conservative bounds are 1.07× to 1.16× faster on the narrowest row and 1.63× to 1.80× faster on the
 widest. One fork — the `±` covers variance between iterations of one JVM, not between JVM launches,
 defined once in
-[Rationale: Measurement](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement#the-interval-after-a-number).
+[Rationale: Measurement](docs/explanation/what-a-measurement-here-means.md#the-interval-after-a-number).
 The six rows and their bounds are owned by
-[Measured Results](https://github.com/OneLiteFeatherNET/Falco/wiki/Measured-Results#against-the-engine-minestom-ships-with).</sub>
+[Measured Results](docs/reference/measured-results.md#against-the-engine-minestom-ships-with).</sub>
 
 The figure after a `±` is [the half-width of a confidence interval over the measurement iterations of
-one JVM launch](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale-Measurement); where two
+one JVM launch](docs/explanation/what-a-measurement-here-means.md); where two
 intervals overlap, no factor is printed. The charts and the methodology are in
-[Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking), the full tables in
-[Measured Results](https://github.com/OneLiteFeatherNET/Falco/wiki/Measured-Results), and the
+[Benchmarking](docs/explanation/what-the-benchmarks-establish.md), the full tables in
+[Measured Results](docs/reference/measured-results.md), and the
 optimisations that did **not** pay off in
-[Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status).
+[Project Status](docs/project-record/project-status.md).
 
 ## Documentation
 
 Everything past the quick start lives in the
-[wiki](https://github.com/OneLiteFeatherNET/Falco/wiki):
+[documentation](docs/README.md):
 
-- [Installation](https://github.com/OneLiteFeatherNET/Falco/wiki/Installation) — all three modules,
+- [Installation](docs/how-to/add-falco-to-your-build.md) — all three modules,
   the BOM, Maven, snapshots, the rendered Javadoc, and building from source
-- [Anvil Chunk Loader](https://github.com/OneLiteFeatherNET/Falco/wiki/Anvil-Chunk-Loader) — what the
+- [Anvil Chunk Loader](docs/explanation/how-the-anvil-loader-is-built.md) — what the
   loader does, how to use it standalone, and what it deliberately does not do
-- [Light Engine](https://github.com/OneLiteFeatherNET/Falco/wiki/Light-Engine) — the engine, calling
+- [Light Engine](docs/explanation/how-the-light-engine-works.md) — the engine, calling
   it by hand versus letting a chunk maintain its own light, its guarantees and its limits
-- [Measured Results](https://github.com/OneLiteFeatherNET/Falco/wiki/Measured-Results) — the
+- [Measured Results](docs/reference/measured-results.md) — the
   measurement environment and every published table with its provenance: the benchmark class and
   methods, the parameter values and the run configuration behind each row
-- [Benchmarking](https://github.com/OneLiteFeatherNET/Falco/wiki/Benchmarking) — what each published
+- [Benchmarking](docs/explanation/what-the-benchmarks-establish.md) — what each published
   table does and does not establish, and how a third party can re-perform any of it
-- [Project Status](https://github.com/OneLiteFeatherNET/Falco/wiki/Project-Status) — the decisions
+- [Project Status](docs/project-record/project-status.md) — the decisions
   that shape the design, what is in the branch, defects found and fixed, and what is open
-- [Rationale](https://github.com/OneLiteFeatherNET/Falco/wiki/Rationale) — why it is built this way:
+- [Rationale](docs/README.md) — why it is built this way:
   what each decision was weighed against, and where the argument is weaker than the figures suggest
-- [Research](https://github.com/OneLiteFeatherNET/Falco/wiki/Research) — the investigations run
+- [Research](docs/project-record/research/README.md) — the investigations run
   before writing any code, kept because each answers a question worth asking again
-- [Contributing](https://github.com/OneLiteFeatherNET/Falco/wiki/Contributing) — what a change is
+- [Contributing](docs/contributing/README.md) — what a change is
   built, tested and released with: the toolchain and library versions, the Gradle commands, the
   conventions the build enforces, what a push to `main` publishes, and what review looks for
-- [Build Setup](https://github.com/OneLiteFeatherNET/Falco/wiki/Build-Setup) — how the Gradle build
+- [Build Setup](docs/contributing/build-setup.md) — how the Gradle build
   is put together, and where the rest of it is documented: dependency management, publishing,
   versioning and releases, tests and Javadoc, the benchmark and demo modules, the architecture rules
 
