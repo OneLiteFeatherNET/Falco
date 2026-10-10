@@ -39,7 +39,7 @@ repositories {
 
 dependencies {
     // One version for all three, so they cannot drift into a combination nobody tested.
-    implementation(platform("net.onelitefeather:falco-bom:2.1.0"))
+    implementation(platform("net.onelitefeather:falco-bom:3.0.0"))
 
     implementation("net.onelitefeather:falco-anvil")     // reading and writing Anvil worlds
     implementation("net.onelitefeather:falco-light")     // block and sky light
