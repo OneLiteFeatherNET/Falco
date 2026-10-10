@@ -53,7 +53,7 @@ What is shared, and how is it guarded?
 _Delete this section if the change makes no claim about performance._
 
 Numbers without their methodology are not accepted; see
-[Benchmarking](../docs/explanation/what-the-benchmarks-establish.md).
+[Benchmarking](https://docs.onelitefeather.net/falco/explanation/what-the-benchmarks-establish).
 
 - [ ] The figures below come from JMH with the configured forks and iterations, not a smoke run
 - [ ] I have quoted the error margins alongside the means, and named the machine, the JVM and the
