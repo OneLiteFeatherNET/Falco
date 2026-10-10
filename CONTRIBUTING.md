@@ -4,7 +4,7 @@ Falco is an Anvil chunk loader, a light engine and an `Instance` implementation 
 all three modules are experimental: every public type carries `@ApiStatus.Experimental`, and
 signatures and behaviour may still change in a minor release. This file is the entry point and
 nothing more — what the build is made of, which conventions it enforces and what a push to `main`
-publishes is [Contributing](docs/contributing/README.md) in the
+publishes is [Contributing](https://docs.onelitefeather.net/falco/contributing) in the
 documentation.
 
 ## Building
@@ -22,7 +22,7 @@ fails the build, so a green `./gradlew build` is also the documentation check.
 the internal `mycelium-bom` through `https://repo.onelitefeather.dev/onelitefeather`, which answers
 `401` to an anonymous request, so `./gradlew build` fails without them. This affects only work on
 Falco itself. The names the credentials are read under are in
-[Installation](docs/how-to/build-falco-from-source.md).
+[Installation](https://docs.onelitefeather.net/falco/how-to/build-falco-from-source).
 
 **Consuming Falco needs no credentials from this release onwards, and did need them before it.** The
 jars were always served without authentication, but a POM is resolved as well as a jar, and up to
@@ -36,7 +36,7 @@ and the public `releases` endpoint declared, the 1.8.5 import resolves and bring
 
 Running a single test class, building the benchmark jar and starting the two demo servers are
 further commands, listed under
-[Working on this](docs/contributing/README.md#working-on-this).
+[Working on this](https://docs.onelitefeather.net/falco/contributing#working-on-this).
 
 ## Commits
 
@@ -62,7 +62,7 @@ Opening one fills `.github/pull_request_template.md`, whose checklist is the sho
 what review looks for: the pull-request title is the Conventional Commit, a test was written first
 and watched fail, the concurrency section is filled in or deleted, the measurements section is
 filled in or deleted. What each of those four asks for, and why, is
-[Opening a pull request](docs/contributing/README.md#opening-a-pull-request).
+[Opening a pull request](https://docs.onelitefeather.net/falco/contributing#opening-a-pull-request).
 `.github/workflows/build-pr.yml` then runs the same build on the branch that `./gradlew build` runs
 locally.
 

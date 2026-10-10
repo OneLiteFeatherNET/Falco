@@ -96,6 +96,41 @@ The three-argument constructor sets how many region files stay open. The default
 FalcoAnvilLoader loader = new FalcoAnvilLoader(worldRoot, dimension, 256);
 ```
 
+## Tune the builder
+
+The two-argument constructor is enough for most servers. The builder is there when the defaults do not
+fit:
+
+```java
+FalcoAnvilLoader loader = FalcoAnvilLoader.builder()
+        .openRegionLimit(64)          // region files kept open at once
+        .compressionLevel(2)          // 1..9, the trade between write time and file size
+        .saveParallelism(4)           // threads a saveChunks call may use
+        .dataVersion(4189)            // what a written chunk claims to be
+        .diagnostics(new AnvilDiagnostics())
+        .exceptionHandler(throwable -> log.warn("chunk load failed", throwable))
+        .build(Path.of("worlds", "lobby"), DimensionType.OVERWORLD.key());
+```
+
+`diagnostics()` matters on a live server. A world written by another version, or by a mod, can contain
+blocks and biomes this loader does not know. The loader substitutes them and counts the substitutions
+rather than failing:
+
+```java
+AnvilDiagnostics diagnostics = loader.diagnostics();
+diagnostics.reportUnknownBlock("mod:strange_block");   // true the first time, false after
+```
+
+## See what the loader resolved
+
+Three accessors tell you what the loader is doing right now:
+
+- `regionDirectory()` gives the directory it resolved.
+- `legacyLayout()` is true when it fell back to the pre-26.1 layout.
+- `openRegionCount()` is how many region files are open at this moment.
+
+`close()` flushes every open region file. `ownsLoader(true)` on a `FalcoInstance` calls it for you.
+
 ## Check it worked
 
 The loader writes an opening log line naming the resolved region directory and the policies it

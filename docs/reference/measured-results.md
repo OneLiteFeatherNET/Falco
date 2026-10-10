@@ -20,6 +20,13 @@ defects found and fixed, and what is still open — is [Project Status](../proje
 > the `±` covers is defined once in [What a measurement here means](../explanation/what-a-measurement-here-means.md); how to re-run
 > any of it is in [What the benchmarks establish](../explanation/what-the-benchmarks-establish.md).
 >
+> **The Minestom version is part of every timing, and it is not recorded for any of them.** The rows
+> that quote a factor compare Falco with the loader and engine Minestom ships, so the Minestom under test
+> is part of the measurement. The run commit is not recorded either, so it cannot be recovered later.
+> Every figure on this page was taken before this repository moved to Minestom `2026.08.28-26.2`, and none
+> has been re-run against it. Read the comparison rows as unverified on 26.2 until a baseline is taken
+> there. The object counts in [Counted](#counted) are not affected, because they count objects on a heap.
+>
 > [Counted](#counted) is the exception and is separated for it: object and byte counts are
 > deterministic, carry no `±`, and are unaffected by what else the machine was doing. They are the
 > only figures on this page that survive being taken on a busy machine.
