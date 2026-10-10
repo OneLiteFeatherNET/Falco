@@ -119,8 +119,8 @@ the file will outlive the conversation that produced it.
 for: CPU model and core count, the JMH thread count, the JVM vendor and version, the operating
 system, the Falco commit, the exact configuration, and whether the machine was idle. The last one
 is the only field the script cannot fill in, and it is left as an open question at the end of the
-file. Answer it before quoting anything from the run. The figures currently on the wiki's Project
-Status page were taken on a machine that was not idle and say so, which is the only reason they are
+file. Answer it before quoting anything from the run. The figures currently on the [Project
+Status](../contributing/project-status.md) page were taken on a machine that was not idle and say so, which is the only reason they are
 still usable.
 
 ## The tests of this module do not run on macOS
