@@ -19,6 +19,8 @@ snapshot endpoints are both public.
 
 2. Import `falco-bom` as a platform and declare the modules you need without versions:
 
+   <!-- x-release-please-start-version -->
+
    ```kotlin
    dependencies {
        implementation(platform("net.onelitefeather:falco-bom:3.0.1"))
@@ -29,6 +31,8 @@ snapshot endpoints are both public.
        implementation("net.onelitefeather:falco-migration:3.0.1") // not in the BOM, so it takes its version here
    }
    ```
+
+   <!-- x-release-please-end -->
 
    Take only the modules you need. The platform constrains a version for `falco-anvil`, `falco-light`
    and `falco-instance`; it does not pull in one you did not declare, and it does not cover
@@ -46,6 +50,7 @@ snapshot endpoints are both public.
 
 Version each module individually instead of step 2:
 
+<!-- x-release-please-start-version -->
 ```kotlin
 dependencies {
     implementation("net.onelitefeather:falco-anvil:3.0.1")
@@ -54,6 +59,7 @@ dependencies {
     implementation("net.onelitefeather:falco-migration:3.0.1")
 }
 ```
+<!-- x-release-please-end -->
 
 Use this only if your build cannot import a platform. Versioning the modules by hand lets them drift
 into a combination that was never built or tested together.

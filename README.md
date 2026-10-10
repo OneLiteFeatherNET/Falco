@@ -31,6 +31,7 @@ From nothing to a server that serves a stored world, in five steps. Step 4 needs
 
 ### 1. Declare the dependency
 
+<!-- x-release-please-start-version -->
 ```kotlin
 repositories {
     mavenCentral()
@@ -39,7 +40,7 @@ repositories {
 
 dependencies {
     // One version for all three, so they cannot drift into a combination nobody tested.
-    implementation(platform("net.onelitefeather:falco-bom:3.0.0"))
+    implementation(platform("net.onelitefeather:falco-bom:3.0.1"))
 
     implementation("net.onelitefeather:falco-anvil")     // reading and writing Anvil worlds
     implementation("net.onelitefeather:falco-light")     // block and sky light
@@ -52,6 +53,7 @@ dependencies {
     implementation("net.minestom:minestom:<version>")
 }
 ```
+<!-- x-release-please-end -->
 
 Take only the modules you need — a platform constrains a version for each, it does not pull one in.
 Steps 2 to 4 below use the first two; step 5 uses all three. Individual coordinates, Maven and
