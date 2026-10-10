@@ -17,7 +17,7 @@ cannot mean is [Explanation What the benchmarks establish](../explanation/what-t
    How many methods and configurations that is, and how long it takes, is in
    [Reference Benchmark catalogue](../reference/benchmark-catalogue.md#size-of-the-full-run).
 
-## Or run it from CI
+## Or from CI, when the run record matters more than the machine
 
 2. Use the **Benchmark** workflow when the run record matters more than the machine. It runs the same jar on
    demand and uploads the results with the exact command line. Choose the `custom` profile for one table or
