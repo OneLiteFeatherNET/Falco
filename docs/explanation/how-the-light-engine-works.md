@@ -12,8 +12,8 @@ workload at all is [Explanation When light computation actually runs](when-light
 ## Design
 
 Eight types compute the light, each with one responsibility. Only the two on the right know Minestom
-exists. A further five, listed [further down](../how-to/keep-chunk-light-up-to-date-automatically.md), decide *when* it
-is computed and never how.
+exists. A further five, listed in [Reference API surface and stability](../reference/api-surface-and-stability.md#light-engine-types),
+decide *when* it is computed and never how.
 
 ```
                       ┌─ engine, no Minestom ─────────────┐   ┌─ adapter ──────────────┐
@@ -190,6 +190,166 @@ only the transfer of the result takes the write lock
 ([`ChunkLightService#applyLight`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-light/src/main/java/net/onelitefeather/falco/light/ChunkLightService.java),
 which brackets its loop with `chunk.lockWriteLock()` and `chunk.unlockWriteLock()`).
 
+
+## Light across chunk borders
+
+### Sky light
+
+Sky light enters from above and falls straight down **without losing a level** until something stops
+it — which is why an open field is fully lit at every height while a cave is dark. Only after the
+fall is interrupted does it spread like any other light, losing one level per block.
+
+### Why a chunk alone is not enough
+
+Lighting a chunk on its own ends its light at the border, which shows up as a straight dark line
+every sixteen blocks. `ChunkLightService#calculateWithNeighbours` exchanges the border levels with every
+already loaded neighbour in both directions, and **writes only the chunk in the middle**. Neighbours that
+are not loaded are skipped rather than forced to load.
+
+One round of that exchange is not enough. A source in the corner of a chunk sends light through two
+borders, and the light that entered a neighbour has to leave it again on another side to arrive in
+the chunk diagonally behind it. The exchange therefore repeats over the whole area — the chunk and
+the eight positions around it — until no chunk of it raises a level any more:
+
+| Property | How it is reached |
+| --- | --- |
+| Terminates | An injection only ever raises a level, and a level is capped at fifteen, so the repetition walks towards a fixed point. |
+| Same result every time | The area is a fixed-size array walked in a fixed order, not a map. Since every step only raises levels, the fixed point does not depend on the order either. |
+| Reads a chunk once | The opacity tables of every participating chunk are built once, before the first round, and reused by all of them. |
+| Cannot loop forever | The amount of rounds is capped at sixteen, which is one more than the highest level that can exist. Hitting the cap is reported through `LOGGER.warn` instead of being accepted silently. |
+
+A radius of one chunk is enough because a level of fifteen cannot survive sixteen blocks of travel,
+so nothing the middle chunk emits can reach a second ring.
+
+**The eight chunks around the middle are read and never written, and that is not a shortcut.** They
+only exchanged light inside the 3×3, so whatever they legitimately receive from outside it is missing
+from their result; writing that back would replace their correct light with a darker one. The middle
+chunk does not have the problem, and provably so: a source outside the 3×3 is at least seventeen
+blocks away from it and no path can be shorter than the direct distance, so not even a level of
+fifteen survives the trip. Writing one chunk instead of nine is therefore cheaper *and* correct. The
+method used to write all nine, which is the defect this replaces.
+
+**What this method still has over a one-chunk area.** The 3×3 includes the four **diagonal** chunks;
+the ring of a [`ChunkLightArea`](../reference/api-surface-and-stability.md#light-engine-types) is built from face neighbours
+only. A source in a diagonal chunk reaches the middle chunk through the chunk between them, and the
+neighbourhood carries that — an area of a single chunk never reads it. For one chunk this is
+therefore the more accurate of the two calls; for several connected chunks the area is the cheaper
+one, because it reads every chunk once instead of once per neighbourhood. That an area misses its own
+diagonals is a gap of its own, and it is recorded in [Project Status](../project-record/project-status.md) rather than
+glossed over here.
+
+## Incremental updates and what they keep
+
+### A change marks the 3×3, not just the chunk it happened in
+
+A lamp on the eastern edge of a chunk belongs in the light of the chunk east of it, and that chunk would
+otherwise never be told. The ring around an area is the mirror image of the same rule: it is read so the
+edge of the area is right, and never written, because a ring chunk has not seen what lies on its own far
+side.
+
+### A changed block costs a changed block, not nine chunks
+
+`setBlock` reports the *position* that changed, not merely that its chunk is dirty. The area keeps the
+light of every chunk it has computed and replays the reported positions on it, so a placed torch costs one
+incremental update rather than nine full chunk searches. The eight neighbours are still marked, because
+light crosses borders, but nothing of theirs is discarded: their own blocks did not move, and what arrives
+across the border is derived again by every pass anyway. A change that cannot be placed — a chunk that was
+generated, loaded, or written past `setBlock` — is reported as being of unknown extent, and that chunk is
+searched again. What this is worth is measured by `IncrementalVsFullBenchmark`; the measured figures and the
+reading of their intervals are in
+[Measured results](../reference/measured-results.md#a-replayed-block-change-against-lighting-the-chunks-again)
+and [What a measurement here means](what-a-measurement-here-means.md).
+
+### What is kept
+
+Incremental light updates keep the light of a chunk *alone*, before any border exchange, and that is what
+makes the hard direction tractable. Taking light back is the case an incremental engine gets wrong, because
+a retraction has to run until light from somewhere else legitimately takes over — and a retraction that had
+to leave the chunk to find that point would need the neighbours retracted with it. It never has to here: the
+kept light contains nothing from any neighbour, so every level in it originates inside the chunk and the
+retraction is complete at the border by construction. The light that crosses borders is not stored at all;
+it is derived again on every pass, from a *copy* of the kept light, and an exchange only ever raises levels
+and so cannot carry a stale glow forward.
+
+The kept light is bounded: at most 128 chunks by default (`ChunkLightArea.DEFAULT_MAX_CACHED_CHUNKS`), least
+recently used first. Dropping an entry costs a full propagation and nothing else. The result is the same bytes
+a full recalculation produces, and a chunk that cannot be followed incrementally is simply propagated again.
+
+### When the scheduler computes
+
+**Areas are formed once per tick and capped.** `Chunk#tick(long)` runs per chunk, but a pass has to
+see every change of the tick before it groups anything, so the scheduler runs its pass for the first
+chunk reporting a timestamp it has not seen. Connected dirty chunks are lit together, and the group
+is closed at `maxAreaSize` chunks, 16 by default, with the remainder starting the next area. The cap
+is there because every chunk of an area and of its ring is read and turned into opacity tables inside
+one tick. The seam between two parts settles on the following tick, because each part reads the other
+as its ring. The constants and what is not measured about them are in
+[Scope and non-goals](scope-and-non-goals.md#the-light-engine).
+
+**Nothing ever blocks on a computation.** A chunk hands out whatever its sections hold right now,
+which is the previous result while a new one is in flight. A chunk whose area is still running stays
+marked but is not submitted again, and a chunk that changed while its area ran has its result
+discarded and stays dirty rather than being written from block states that are already gone.
+
+### Batches
+
+`AbsoluteBlockBatch#apply` ends by calling `sendLighting()` on every touched chunk that is a `LightingChunk`
+and skips every other type, so a `FalcoLightingChunk` would never be resent by it. It does not have to be: a
+batch writes through `setBlock`, which marks the chunk here, so the next tick lights the whole touched region
+and sends it. The result arrives one tick later than Minestom's would, and it arrives for the ring around the
+batch as well, which Minestom's path does not manage.
+
+### Retracting light
+
+Adding brightness is straightforward — it only spreads. **Removing** it is the hard case and the
+reason this class exists: when a light source disappears, the brightness it had spread is still
+stored in every block around it, and spreading again would keep that glow forever. The update
+therefore runs two passes. The first retracts every level that originated from the changed position
+and collects the still valid levels it meets at the edge of the retracted area; the second spreads
+those back in.
+
+Which way an update goes, drawn out:
+
+```mermaid
+flowchart TB
+    C["a block changed at x, y, z"] --> K{"is the position<br/>brighter or darker than before?"}
+    K -->|brighter| S["one pass: spread outwards.<br/>Levels only ever rise, so nothing<br/>has to be taken back"]
+    K -->|darker| R1["pass 1: retract.<br/>Walk outwards and clear every level<br/>that came from this position"]
+    R1 --> R2["at the edge of the cleared area,<br/>collect the levels that came<br/>from somewhere else"]
+    R2 --> R3["pass 2: spread those collected<br/>levels back in"]
+    S --> D["result is identical to<br/>a full recalculation"]
+    R3 --> D
+```
+
+The second pass is not a correction of the first. The light of every *other* source in the
+neighbourhood is legitimate and was cleared along with the rest simply because it stood in the way;
+collecting it at the edge and letting it back in is what puts it back. Skipping the retraction
+instead and only spreading again would leave the removed source's glow in place for good.
+
+`ChunkLightStateTest#testTheIncrementalResultMatchesAFullRecalculation` asserts that the incremental
+result is identical to a full recalculation, block for block.
+
+### Sky light updates
+
+Sky light has an origin no block holds: it falls in from above. An update can therefore not tell
+from the levels alone which positions lost their origin and which gained one, and a state that holds
+sky light keeps a heightmap for that reason — the highest position that stops the sky, per column.
+
+A block change moves exactly one column of that heightmap, and the difference between the old and
+the new height names the positions whose origin changed:
+
+| Change | Effect on the column |
+| --- | --- |
+| A block is placed above the current height | Everything between the old and the new height falls out of the open sky and gives its level back. What is left is refilled from the sides, which is why a single pillar leaves a level of fourteen below it rather than darkness. |
+| The highest blocking block is removed | The column opens down to the next block below, and every position in between receives the full level again and spreads it. |
+| The change is below the height | The height stays where it is. The changed position is retracted and refilled from its neighbours, exactly as a block light update works. |
+
+Only the changed column is walked again, so an update no longer re-seeds all two hundred and fifty
+six columns of the chunk.
+
+`SkyLightUpdateTest` asserts the result against a full recalculation block for block, for both
+directions, for a change that is not in the highest blocking position, and for a seeded sequence of
+random changes that verifies the equality after every single one of them.
 
 ## Sources
 
