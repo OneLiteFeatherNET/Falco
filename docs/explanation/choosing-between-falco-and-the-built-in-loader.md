@@ -7,6 +7,14 @@ carry a decision. Not every row below is a reason to switch.
 All references point at the sources of the Falco repository and at Minestom
 `2026.06.20-26.1.2`.
 
+## Both switches are opt-in
+
+Falco replaces Minestom's chunk loader and hands light computation to a scheduler, and both are opt-in:
+nothing in Falco switches itself on. A server keeps its current loader until it constructs a
+`FalcoAnvilLoader` and sets it on an instance, and it keeps its current light engine until it sets a
+`ChunkLightScheduler` supplier. The two choices are independent of each other, so a server can take one
+and not the other.
+
 ## Comparison with the built-in AnvilLoader
 
 **How the two sides are referenced.** Minestom references are a path relative to
