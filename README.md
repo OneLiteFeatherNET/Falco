@@ -17,8 +17,9 @@ fails loudly on a bad read instead of quietly generating over real data.
 - [FalcoInstance](https://docs.onelitefeather.net/falco/explanation/why-falco-instance-exists) — unregistering it unloads every chunk it loaded.
 - [Shared worlds](https://docs.onelitefeather.net/falco/how-to/use-falcoinstance-instead-of-instancecontainer) — `FalcoSharedInstance` on a plain container.
 - [Version guard](https://docs.onelitefeather.net/falco/explanation/the-chunk-version-guard) — refuses worlds older than snapshot 21w43a instead of reading them as air.
+- [World migration](https://docs.onelitefeather.net/falco/explanation/how-world-migration-works) — `falco-migration` moves older worlds forward. It has no release yet.
 
-All three modules are **experimental**. See
+All published modules are **experimental**. See
 [API surface and stability](https://docs.onelitefeather.net/falco/reference/api-surface-and-stability).
 
 ## Quick start
