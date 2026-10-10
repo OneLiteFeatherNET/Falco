@@ -32,7 +32,7 @@ dependencyResolutionManagement {
     versionCatalogs {
         create("libs") {
             version("bom", "1.8.7")
-            version("slf4j", "2.0.19")
+            version("slf4j", "2.0.20")
             version("annotations", "26.1.0")
             version("jmh", "1.37")
             version("jmhPlugin", "0.7.3")
