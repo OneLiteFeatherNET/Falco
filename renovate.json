@@ -6,7 +6,101 @@
   ],
   "description": [
     "The argument to the :default preset becomes :reviewer(arg0). It carries the `team:` prefix and the bare slug, without the organisation: Renovate splits reviewers on that prefix and posts the remainder as a team reviewer, so `OneLiteFeatherNET/falco-maintainers` would be sent as a user name and rejected. The team holds admin on this repository and is the same owner .github/CODEOWNERS names.",
-    "The :minestom flavor only fixes version ordering for a pinned `net.minestom:minestom`. Falco resolves Minestom through mycelium-bom and pins no version of its own today, so the flavor is inert here and kept for the moment a version does get pinned."
+    "The :minestom flavor only fixes version ordering for a pinned `net.minestom:minestom`. Falco resolves Minestom through mycelium-bom and pins no version of its own today, so the flavor is inert here and kept for the moment a version does get pinned.",
+    "The last packageRule of the :default preset, \"Security fixes bypass the schedule, the cooldown period and any grouping\", puts `isVulnerabilityAlert: true` where a matcher belongs. That key is an option, not a matcher, so the rule applies to every maven, github-tags and gradle-version update: each one is handled as a vulnerability fix (`vulnerabilityFixStrategy=lowest` proposes only the next version, hence step-by-step PRs), loses its group and its cooldown period, ignores `schedule:officeHours` and gets the `security` label. The packageRules below, which Renovate applies after the preset's, take that back: the first one resets the options the preset rule overwrote, the following ones repeat the preset rules that set a group, a cooldown period or a schedule, in their original order. Real vulnerability alerts keep their exemptions through the top-level `vulnerabilityAlerts` block. All of this can go once the preset gives that rule a real matcher. The `security` label cannot be taken back from here, because `addLabels` only ever accumulates."
+  ],
+  "vulnerabilityAlerts": {
+    "groupName": null,
+    "minimumReleaseAge": null,
+    "schedule": [
+      "at any time"
+    ],
+    "addLabels": [
+      "security"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "Undo the preset rule that treats every update as a vulnerability fix: same match as that rule, restores the office-hours schedule and the default cooldown period",
+      "matchDatasources": [
+        "maven",
+        "github-tags",
+        "gradle-version"
+      ],
+      "isVulnerabilityAlert": false,
+      "schedule": [
+        "* 8-17 * * 1-5"
+      ],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Restore preset rule: internal artifacts, group and cooldown period",
+      "matchDatasources": [
+        "maven"
+      ],
+      "matchPackageNames": [
+        "net.onelitefeather:**",
+        "net.theevilreaper:**"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "groupName": "OneLiteFeather dependencies",
+      "minimumReleaseAge": "1 day"
+    },
+    {
+      "description": "Restore preset rule: own reusable workflows, group and cooldown period",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepNames": [
+        "OneLiteFeatherNET/workflows"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "groupName": "OneLiteFeather workflows",
+      "minimumReleaseAge": "1 day"
+    },
+    {
+      "description": "Restore preset rule: remaining GitHub Actions, group",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Restore preset rule: major updates, longer cooldown period",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Restore preset rule: Gradle wrapper minor and major, longer cooldown period",
+      "matchManagers": [
+        "gradle-wrapper"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Restore preset rule: patches, group, schedule and cooldown period",
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "groupName": "patch updates",
+      "schedule": [
+        "at any time"
+      ],
+      "minimumReleaseAge": "1 day"
+    }
   ],
   "customManagers": [
     {
