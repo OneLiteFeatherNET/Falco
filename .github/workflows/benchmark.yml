@@ -82,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -205,7 +205,7 @@ jobs:
         shard: ${{ fromJSON(needs.prepare.outputs.shards) }}
 
     steps:
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: 'temurin'
