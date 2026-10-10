@@ -12,7 +12,7 @@ The versions Falco is built against, the versions it accepts, and the floors it 
 | | Value | Note |
 | --- | --- | --- |
 | Java | 25 | required to build Falco and to run it |
-| Minestom | `2026.09.12-26.2` | resolved through `net.onelitefeather:mycelium-bom` `1.8.7` (`settings.gradle.kts`, `mycelium-bom` `version("bom", "1.8.7")`); `compileOnly`, so a consumer picks its own |
+| Minestom | `2026.10.07-26.2` | resolved through `net.onelitefeather:mycelium-bom` `1.8.9` (`settings.gradle.kts`, `mycelium-bom` `version("bom", "1.8.9")`); `compileOnly`, so a consumer picks its own |
 
 ## Chunk data version floor
 

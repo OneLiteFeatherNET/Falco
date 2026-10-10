@@ -50,10 +50,10 @@ limit in its own provenance line rather than in a page footer, because a disclai
 something only where the number is.
 
 **Claims about somebody else's code carry a revision.** Minestom is read from the sources jar of
-`net.minestom:minestom:2026.09.12-26.2`, which is the version this repository compiles against —
+`net.minestom:minestom:2026.10.07-26.2`, which is the version this repository compiles against —
 `settings.gradle.kts` declares `minestom` `withoutVersion()` and takes the version from
-`net.onelitefeather:mycelium-bom:1.8.7`, whose `dependencyManagement` pins exactly
-`2026.09.12-26.2`. That is a resolved version and not a pinned one: republishing the BOM changes
+`net.onelitefeather:mycelium-bom:1.8.9`, whose `dependencyManagement` pins exactly
+`2026.10.07-26.2`. That is a resolved version and not a pinned one: republishing the BOM changes
 the Minestom side of every comparison without any commit here. Each such claim names the file, the
 line and the member, so it can be checked in a minute and so it reads as analysis of a specific
 revision rather than as a verdict on another project. The same rule governs Starlight and Phosphor

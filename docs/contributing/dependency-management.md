@@ -68,7 +68,7 @@ itself. Where a version is stated below it is the one the catalog declares today
   which is `compileOnly` and therefore never reaches a runtime classpath (see below). The benchmarks
   module runs its code for real and needs Adventure at runtime, so it imports the Adventure platform
   directly. The value is meant to match what Minestom pulls in. It matched `net.minestom:minestom:2026.06.20-26.1.2`,
-  which declares `net.kyori:adventure-nbt` at `5.1.1`; whether `2026.09.12-26.2` declares the same
+  which declares `net.kyori:adventure-nbt` at `5.1.1`; whether the version resolved today declares the same
   version was not re-checked for this page. Nothing in the build asserts that the two agree, so a
   Minestom upgrade that moves Adventure has to be followed here by hand.
 - **`slf4j.simple`.** Only `falco-demo` needs an SLF4J binding, and it takes it as `runtimeOnly`. The
@@ -80,13 +80,13 @@ itself. Where a version is stated below it is the one the catalog declares today
   compiles against fastutil types, and `falco-light`'s equivalence test and the comparison benchmarks
   call Minestom methods that take a fastutil collection, so the dependency has to be named
   explicitly — and naming it means pinning it. The value is meant to match the version Minestom
-  declares: `8.5.18` was the match for `2026.06.20-26.1.2`, and `2026.09.12-26.2` was not re-checked.
+  declares: `8.5.18` was the match for `2026.06.20-26.1.2`, and the version resolved today was not re-checked.
 
 Six entries are declared with `withoutVersion()` — `minestom`, `adventure.nbt`, `cyano` and the
 three JUnit coordinates. Their versions come from a platform at use site: the mycelium BOM for
 Minestom, Cyano and JUnit, and Minestom's own dependency graph for `adventure-nbt`. The consequence
 worth knowing is that **no Minestom version string appears anywhere in this repository**: it is
-whatever `net.onelitefeather:mycelium-bom:1.8.7` manages, which today is `2026.09.12-26.2`. What
+whatever `net.onelitefeather:mycelium-bom:1.8.9` manages, which today is `2026.10.07-26.2`. What
 that costs is traceability — an upgrade to the mycelium BOM moves Minestom, and therefore moves the
 Minestom side of every comparison this project publishes, through a diff that mentions only a BOM
 version. Anyone reproducing a measured result therefore needs the Minestom version stated alongside

@@ -143,7 +143,7 @@ code change to recover.
 | [`me.champeau.jmh`](https://github.com/melix/jmh-gradle-plugin) | `0.7.3` | Latest release. Gives the benchmarks their own source set so JMH never lands on the main or test classpath of a published library. |
 | `org.openjdk.jmh:jmh-core` | `1.37` | Latest release. **Not managed by `mycelium-bom`** — the BOM covers adventure, minestom, cyano, junit and mockito only — so both versions are pinned explicitly in `settings.gradle.kts`. |
 | `net.kyori:adventure-bom` | `5.2.0` | The main source set gets adventure through `compileOnly(minestom)`, which never reaches a runtime classpath. The benchmarks run their code for real and need adventure at runtime, so they import the platform directly. **Keep this in sync with the version Minestom resolves to** — check with `./gradlew dependencyInsight --configuration compileClasspath --dependency adventure-nbt`. |
-| `net.minestom:minestom` | not pinned here | Declared `withoutVersion()` and resolved through `mycelium-bom` `1.8.7`, which resolves `2026.09.12-26.2`. The published comparisons were measured against `2026.06.20-26.1.2`, not against that version; a republication of the BOM moves the Minestom side without any commit in this repository. |
+| `net.minestom:minestom` | not pinned here | Declared `withoutVersion()` and resolved through `mycelium-bom` `1.8.9`, which resolves `2026.10.07-26.2`. The published comparisons were measured against `2026.06.20-26.1.2`, not against that version; a republication of the BOM moves the Minestom side without any commit in this repository. |
 
 The plugin generates the harness classes with its bytecode generator. No `jmhAnnotationProcessor` is
 declared on purpose: with both present, the two generators emit the same classes and the jar ends up

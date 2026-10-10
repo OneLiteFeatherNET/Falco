@@ -21,12 +21,12 @@ snapshot endpoints are both public.
 
    ```kotlin
    dependencies {
-       implementation(platform("net.onelitefeather:falco-bom:3.0.0"))
+       implementation(platform("net.onelitefeather:falco-bom:3.0.1"))
 
        implementation("net.onelitefeather:falco-anvil")
        implementation("net.onelitefeather:falco-light")
        implementation("net.onelitefeather:falco-instance")
-       implementation("net.onelitefeather:falco-migration:3.0.0") // not in the BOM, so it takes its version here
+       implementation("net.onelitefeather:falco-migration:3.0.1") // not in the BOM, so it takes its version here
    }
    ```
 
@@ -48,10 +48,10 @@ Version each module individually instead of step 2:
 
 ```kotlin
 dependencies {
-    implementation("net.onelitefeather:falco-anvil:3.0.0")
-    implementation("net.onelitefeather:falco-light:3.0.0")
-    implementation("net.onelitefeather:falco-instance:3.0.0")
-    implementation("net.onelitefeather:falco-migration:3.0.0")
+    implementation("net.onelitefeather:falco-anvil:3.0.1")
+    implementation("net.onelitefeather:falco-light:3.0.1")
+    implementation("net.onelitefeather:falco-instance:3.0.1")
+    implementation("net.onelitefeather:falco-migration:3.0.1")
 }
 ```
 

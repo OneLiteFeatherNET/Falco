@@ -36,10 +36,10 @@ a republication of the BOM without a single commit in this repository.
 | | | Pinned here |
 | --- | --- | --- |
 | Java | 25 (toolchain and `release`), no `--enable-preview` anywhere | yes, in the root `build.gradle.kts` |
-| Minestom | `2026.09.12-26.2`, `compileOnly` | **no** — `library("minestom", …).withoutVersion()`, resolved through `net.onelitefeather:mycelium-bom` `1.8.7` |
+| Minestom | `2026.10.07-26.2`, `compileOnly` | **no** — `library("minestom", …).withoutVersion()`, resolved through `net.onelitefeather:mycelium-bom` `1.8.9` |
 | Adventure | `5.2.0`, `adventure-nbt` used directly — Minestom speaks `CompoundBinaryTag` natively, so there is no conversion layer | yes, `adventure-bom` `5.2.0` |
 | Annotations | `org.jetbrains:annotations:26.1.0` | yes |
-| Tests | JUnit 6.1.3, Cyano `0.7.6` (`MicrotusExtension`) for anything needing a server | **no** — both `withoutVersion()`, resolved through `mycelium-bom` `1.8.7` |
+| Tests | JUnit 6.1.3, Cyano `0.7.6` (`MicrotusExtension`) for anything needing a server | **no** — both `withoutVersion()`, resolved through `mycelium-bom` `1.8.9` |
 | Benchmarks | JMH 1.37 via `me.champeau.jmh` 0.7.3, in the separate `falco-benchmarks` module | yes, both |
 | `fastutil` | `8.5.19` | yes |
 | Architecture | ArchUnit 1.5.1, in the separate `falco-archunit` module | yes |
@@ -53,8 +53,8 @@ for `falco-anvil`, `falco-light` and `falco-instance`, and `falco-benchmarks`, `
 
 **The Minestom version is the one that would invalidate a comparison silently.** Every head-to-head
 table under [Measured](../reference/measured-results.md#measured) measures the Minestom of the day the run happened,
-and that version is decided by `mycelium-bom` `1.8.7`, not by anything in this repository.
-`2026.09.12-26.2` is what it resolves to today; a third party reproducing a number has to check that
+and that version is decided by `mycelium-bom` `1.8.9`, not by anything in this repository.
+`2026.10.07-26.2` is what it resolves to today; a third party reproducing a number has to check that
 theirs resolves to the same thing before comparing.
 
 `adventure-nbt`, `jetbrains-annotations` and `fastutil` are declared explicitly rather than taken
