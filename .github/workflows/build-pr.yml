@@ -2,6 +2,9 @@ name: Build PR
 
 on:
   pull_request:
+  push:
+    branches:
+      - "renovate/**"
   workflow_dispatch:
 
 permissions:
@@ -13,14 +16,16 @@ jobs:
   build:
     # Reuse the OneLiteFeather org build workflow (Java 25, OS matrix, tests, coverage).
     #
-    # force-build on a manual run: the reusable workflow decides whether to build from a
-    # dorny/paths-filter comparison, and that comparison has no base outside a pull request. A
-    # manual run is one somebody asked for regardless of what changed, so it skips the filter
-    # instead of depending on what the filter would answer without a base.
+    # force-build outside a pull request: the reusable workflow decides whether to build from a
+    # dorny/paths-filter comparison, and that comparison has no base there. A manual run is one
+    # somebody asked for regardless of what changed. A push to a renovate/** branch is what
+    # Renovate waits on before it merges the branch itself, so it must always produce the check
+    # runs on the branch head; both skip the filter instead of depending on what it would answer
+    # without a base.
     uses: OneLiteFeatherNET/workflows/.github/workflows/gradle-build-pr.yml@v2.9.0
     with:
       java-version: "25"
       java-distribution: "temurin"
       run-tests: true
-      force-build: ${{ github.event_name == 'workflow_dispatch' }}
+      force-build: ${{ github.event_name != 'pull_request' }}
     secrets: inherit
