@@ -112,6 +112,32 @@ A benchmark that stopped compiling after a refactoring elsewhere in the codebase
 build like any other source set would. Nothing in the build depends on the `jmh` task itself, so
 `./gradlew build` never runs a benchmark and a published artefact never contains one.
 
+## The CI benchmark workflow
+
+The **Benchmark** workflow
+([`.github/workflows/benchmark.yml`](https://github.com/OneLiteFeatherNET/Falco/blob/main/.github/workflows/benchmark.yml))
+runs the same jar on demand and uploads four things: `results.json`, the readable output, **the exact
+command line as executed**, and a filled-in provenance line. Two profiles:
+
+| | What it does |
+| --- | --- |
+| `custom` | one JMH filter in one job — for re-running a single table |
+| `full` | the whole suite across sixteen shards, about half an hour where a sequential run is five |
+
+Its purpose is provenance, not precision. Many of the gaps listed in
+[Reference Measured results](../reference/measured-results.md) are of the form *no run record was kept* rather
+than *the number is wrong*, and those close with a run that documents itself even from a machine that measures
+worse. Leave `forks` empty to keep each class annotation, which is what re-running a published table needs.
+
+The workflow enforces one rule rather than advising it: **a shard is a whole class.** Shards run on separate
+runners, so splitting a comparison class would put `falcoRead` and `minestomRead` on different CPUs and the
+resulting ratio would measure the hardware. That happened once, at 2.13× against the 1.13× one machine gives.
+
+A shared runner is not the machine the published tables came from, and the difference is not only in absolute
+terms: the same light comparison measures 1.35× there against 1.13× here. CI figures therefore belong in their
+own table with their own provenance line, never merged into one measured elsewhere; the reasoning is in
+[Explanation What a measurement here means](../explanation/what-a-measurement-here-means.md#the-limits-stated-without-softening).
+
 ## `falco-demo`
 
 `falco-demo` is a runnable comparison of the Falco and the Minestom chunk loader on the user's own
