@@ -38,7 +38,7 @@ dependencyResolutionManagement {
             version("jmhPlugin", "0.7.3")
             version("japicmpPlugin", "0.4.6")
             version("adventureBom", "5.1.1")
-            version("archunit", "1.5.0")
+            version("archunit", "1.5.1")
             version("jol", "0.17")
             version("flare", "2.0.1")
 
