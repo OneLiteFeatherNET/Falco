@@ -227,6 +227,61 @@ class PaletteDataTest {
     }
 
     @Test
+    void testEncodingOrdersThePaletteByFirstAppearance() {
+        // The palette order decides the bytes of the region file. A save of unchanged blocks must
+        // write the same file, so the order is pinned rather than left to a hash table.
+        int[] values = new int[BLOCK_ENTRIES];
+        Arrays.fill(values, 900);
+        values[0] = 4000;
+        values[1] = 4000;
+        values[2] = 12;
+        values[3] = 900;
+        values[4] = 25_000;
+
+        PaletteData data = PaletteData.encode(values, BLOCK_MIN_BITS);
+
+        assertArrayEquals(new int[]{4000, 12, 900, 25_000}, data.palette());
+    }
+
+    @Test
+    void testEncodingKeepsValuesWhichNeedNoSpecialMeaning() throws Exception {
+        // No int is reserved to mark a free slot, so zero, negative values and the extremes are
+        // ordinary values like any other.
+        int[] values = new int[BLOCK_ENTRIES];
+        int[] distinct = {0, -1, Integer.MIN_VALUE, Integer.MAX_VALUE, 7};
+
+        for (int i = 0; i < values.length; i++) {
+            values[i] = distinct[i % distinct.length];
+        }
+
+        PaletteData data = PaletteData.encode(values, BLOCK_MIN_BITS);
+
+        assertArrayEquals(distinct, data.palette());
+        assertArrayEquals(values, data.unpack());
+    }
+
+    @Test
+    void testEncodingEveryEntryDistinctOutgrowsTheInitialTable() throws Exception {
+        // 4096 distinct values grow the table several times; each growth has to keep the indices
+        // it already handed out.
+        int[] values = new int[BLOCK_ENTRIES];
+
+        for (int i = 0; i < values.length; i++) {
+            values[i] = (i * 7919) ^ 0x5A5A;
+        }
+
+        PaletteData data = PaletteData.encode(values, BLOCK_MIN_BITS);
+
+        assertArrayEquals(values, data.palette());
+        assertArrayEquals(values, data.unpack());
+    }
+
+    @Test
+    void testEncodingNoEntriesIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> PaletteData.encode(new int[0], BLOCK_MIN_BITS));
+    }
+
+    @Test
     void testEncodingAnEmptySectionIsUniform() {
         PaletteData data = PaletteData.encode(new int[BLOCK_ENTRIES], BLOCK_MIN_BITS);
 

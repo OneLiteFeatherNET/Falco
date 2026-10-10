@@ -6,8 +6,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * The {@link PaletteData} record holds the palette of a section together with the packed indices
@@ -123,18 +121,8 @@ public record PaletteData(int[] palette, long @Nullable [] packed, int bitsPerEn
             return single(uniform, values.length);
         }
 
-        Map<Integer, Integer> indices = new HashMap<>();
         int[] mapped = new int[values.length];
-
-        for (int i = 0; i < values.length; i++) {
-            mapped[i] = indices.computeIfAbsent(values[i], _ -> indices.size());
-        }
-
-        int[] palette = new int[indices.size()];
-
-        for (Map.Entry<Integer, Integer> entry : indices.entrySet()) {
-            palette[entry.getValue()] = entry.getKey();
-        }
+        int[] palette = new PaletteIndex().map(values, mapped);
 
         if (palette.length == 1) {
             return single(palette[0], values.length);
@@ -218,5 +206,117 @@ public record PaletteData(int[] palette, long @Nullable [] packed, int bitsPerEn
             values[i] = this.palette[index];
         }
         return values;
+    }
+
+    /**
+     * Assigns every distinct value of a section its palette index, in the order the values first
+     * appear.
+     * <p>
+     * This is the inner loop of every save and runs once per entry, so it works on primitives only.
+     * A {@code HashMap<Integer, Integer>} boxed every block state above 127 and paid a lambda per
+     * entry, which made this mapping the larger part of the codec stage. Neighbouring entries are
+     * usually equal, so the last lookup is kept and repeated runs skip the table entirely.
+     * </p>
+     * <p>
+     * The first-appearance order is the one the previous map produced, so the written palette and
+     * with it the region file stay byte for byte the same. A slot is marked free by an index of
+     * zero rather than a reserved key, which leaves every {@code int} usable as a value.
+     * </p>
+     */
+    private static final class PaletteIndex {
+
+        private static final int INITIAL_SLOTS = 64;
+
+        private int[] keys = new int[INITIAL_SLOTS];
+        // The palette index plus one, so that zero marks a free slot.
+        private int[] slots = new int[INITIAL_SLOTS];
+        private int[] palette = new int[INITIAL_SLOTS / 2];
+        private int size;
+
+        /**
+         * Fills {@code mapped} with the palette index of every value.
+         *
+         * @param values the values of the section
+         * @param mapped receives the palette index of each value, at the same position
+         * @return the palette, every distinct value once in the order of its first appearance
+         */
+        private int[] map(int[] values, int[] mapped) {
+            if (values.length == 0) {
+                return new int[0];
+            }
+            int previousValue = values[0];
+            int previousIndex = indexOf(previousValue);
+
+            for (int i = 0; i < values.length; i++) {
+                int value = values[i];
+
+                if (value != previousValue) {
+                    previousValue = value;
+                    previousIndex = indexOf(value);
+                }
+                mapped[i] = previousIndex;
+            }
+            return Arrays.copyOf(this.palette, this.size);
+        }
+
+        private int indexOf(int value) {
+            int mask = this.keys.length - 1;
+            int slot = spread(value) & mask;
+
+            while (this.slots[slot] != 0) {
+                if (this.keys[slot] == value) {
+                    return this.slots[slot] - 1;
+                }
+                slot = (slot + 1) & mask;
+            }
+            return insert(slot, value);
+        }
+
+        private int insert(int slot, int value) {
+            int index = this.size;
+
+            this.keys[slot] = value;
+            this.slots[slot] = index + 1;
+
+            if (index == this.palette.length) {
+                this.palette = Arrays.copyOf(this.palette, index * 2);
+            }
+            this.palette[index] = value;
+            this.size++;
+
+            if (this.size * 2 >= this.keys.length) {
+                grow();
+            }
+            return index;
+        }
+
+        private void grow() {
+            int[] oldKeys = this.keys;
+            int[] oldSlots = this.slots;
+            int[] newKeys = new int[oldKeys.length * 2];
+            int[] newSlots = new int[oldKeys.length * 2];
+            int mask = newKeys.length - 1;
+
+            for (int index = 0; index < oldKeys.length; index++) {
+                if (oldSlots[index] == 0) {
+                    continue;
+                }
+                int slot = spread(oldKeys[index]) & mask;
+
+                while (newSlots[slot] != 0) {
+                    slot = (slot + 1) & mask;
+                }
+                newKeys[slot] = oldKeys[index];
+                newSlots[slot] = oldSlots[index];
+            }
+            this.keys = newKeys;
+            this.slots = newSlots;
+        }
+
+        @Contract(pure = true)
+        private static int spread(int value) {
+            int mixed = value * 0x9E3779B9;
+            return mixed ^ (mixed >>> 16);
+        }
     }
 }
