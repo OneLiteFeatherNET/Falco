@@ -87,7 +87,7 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       # Rejected before anything is built, so a bad input costs seconds rather than a Gradle run.
       # The filter is a JMH regex over class and method names; anything outside that alphabet is a
