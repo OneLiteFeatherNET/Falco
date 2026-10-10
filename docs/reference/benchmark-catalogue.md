@@ -136,6 +136,15 @@ exactly the run-to-run variability the single-fork objection is about, and it co
 code change to recover.
 
 
+## Size of the full run
+
+`./gradlew jmh` runs every measured method for every combination of the parameters its state class declares:
+50 methods over 488 configurations at commit `ca79507`, at the forks and iterations the annotations ask for.
+The count is dominated by `ScalingBenchmark`, whose fifteen section counts and five distinct-state counts share
+one state class and therefore form a full cross product of 300 configurations on their own. Budget well over
+an hour for it, and do not touch the machine while it runs; see
+[How-to Run the JMH benchmark suite](../how-to/run-the-jmh-benchmark-suite.md).
+
 ## Notes on the setup
 
 | Piece | Version | Why |

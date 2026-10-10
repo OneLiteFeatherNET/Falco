@@ -400,6 +400,14 @@ What they do not establish is stated in the same spirit [1]:
   last-writer-wins case is gone and the stale read is what is left. Whether it happens is up to the
   caller, and nothing in the API says so yet [1].
 
+## One light service serves every thread
+
+`ChunkLightService` holds exactly one field, the `BlockLightSource` it was constructed with, and every working
+buffer lives in a `ChunkLightPropagator` built inside the call. A single instance may therefore be used by as
+many threads as you like, and that is a property of the class layout rather than of a benchmark. `LightPropagator` has no such property: it keeps its buffers
+in instance fields, so it stays confined to one thread; the consequences are in
+[How-to Compute light for a loaded world](../how-to/compute-light-for-a-loaded-world.md).
+
 ## Sources
 
 1. [Project Status](../project-record/project-status.md), the working record: established facts, the five races and their

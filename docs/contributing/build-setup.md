@@ -187,3 +187,11 @@ japicmp the task rather than its archive produces the same silent pass.
 A `doFirst` guard fails the task if the baseline ever resolves into this build's own `build/libs`.
 Both mistakes above had one signature — a green check that verified nothing — and a compatibility
 gate that cannot fail is worse than none, because it reads as coverage.
+
+## Credentials and a 401 during resolution
+
+Building Falco needs `ONELITEFEATHER_MAVEN_USERNAME` and `ONELITEFEATHER_MAVEN_PASSWORD`, because
+Minestom and `mycelium-bom` are resolved from an authenticated endpoint. A 401 during dependency
+resolution means those two variables are unset or wrong. It is the failure that actually occurs, not a
+repository outage. Consumers of the published artefacts never see it, since their endpoints are public;
+see [Publishing](publishing.md) for how the credentials are wired into the build.

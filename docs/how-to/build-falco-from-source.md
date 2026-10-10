@@ -1,10 +1,12 @@
 # Build Falco from source
 
-Compile Falco itself, run its tests and render its Javadoc. Needed only to work on Falco. Consuming
-the published artefacts needs none of this — that is [How-to Add Falco to your build](add-falco-to-your-build.md).
+Compile Falco itself, run its tests and render its Javadoc. You end with a jar per library module and a
+benchmark jar. This is needed only to work on Falco. Consuming the published artefacts needs none of
+this — that is [How-to Add Falco to your build](add-falco-to-your-build.md).
 
-**Before you start:** Java 25, and OneLiteFeather Maven credentials. Falco compiles against Minestom
-and the internal `mycelium-bom`, both served from an authenticated endpoint.
+**Before you start:** Java 25, and OneLiteFeather Maven credentials, because Minestom and the internal
+`mycelium-bom` are served from an authenticated endpoint. How the build is put together is in
+[Build setup](../contributing/build-setup.md).
 
 1. Export the credentials:
 
@@ -40,7 +42,7 @@ and the internal `mycelium-bom`, both served from an authenticated endpoint.
 ## If it does not work
 
 A 401 during dependency resolution means the two environment variables from step 1 are unset or
-wrong. This is the failure that actually occurs; it is not a repository outage.
+wrong.
 
-See also: [Build Setup](../contributing/build-setup.md) for what the build is made of ·
+See also: [Build setup](../contributing/build-setup.md) for what the build is made of ·
 [How-to Run the JMH benchmark suite](run-the-jmh-benchmark-suite.md) to run what step 4 produced.

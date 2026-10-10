@@ -116,3 +116,10 @@ There is deliberately no tag-triggered publish workflow next to this one. Releas
 the default `GITHUB_TOKEN`, and a tag pushed by that token does not re-trigger workflows in the same
 repository — so a tag-triggered publish would either never fire or race this job. The comment in the
 workflow file records the same reasoning and is the authority if the two ever disagree.
+
+## Why consumers take the version from the BOM
+
+Every module of a release is cut from the same version number, and `falco-bom` carries that one
+number for the modules it constrains. A consumer that versions each module by hand can end up with a
+combination that was never built or tested together. The BOM is the way to avoid that; see
+[How-to Add Falco to your build](../how-to/add-falco-to-your-build.md).

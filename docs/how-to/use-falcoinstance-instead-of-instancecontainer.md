@@ -1,177 +1,161 @@
 # Use FalcoInstance instead of InstanceContainer
 
 Build an instance that unloads the chunks it loaded when it is unregistered, and whose chunks
-allocate their sections on demand.
+allocate their sections on demand. You end with a `FalcoInstance` registered with the server, and
+with the steps for the loader, the light engine and the listeners that you need.
 
 **Before you start:** `falco-instance` on the classpath ([How-to Add Falco to your build](add-falco-to-your-build.md)). Keep
 using `InstanceContainer` if you need `SharedInstance` views onto this world, or if you rely on any
 of the four Minestom sites that branch on `instanceof InstanceContainer` — see
 [Explanation Why falco-instance exists](../explanation/why-falco-instance-exists.md).
 
-## The shortest form
+## Create the shortest form
 
-```java
-FalcoInstance instance = FalcoInstance.builder(DimensionType.OVERWORLD)
-        .register(MinecraftServer.getInstanceManager());
-```
+1. Build the instance and register it in one call:
 
-`register` builds the instance and registers it, in that order, and returns it. The builder is
-immutable — every method returns a new one — so a half-configured builder can be handed around
-without anybody changing it underneath.
+   ```java
+   import net.minestom.server.MinecraftServer;
+   import net.minestom.server.world.DimensionType;
+   import net.onelitefeather.falco.instance.FalcoInstance;
 
-The constructors are public as well if a builder is not what you want:
-`new FalcoInstance(UUID.randomUUID(), DimensionType.OVERWORLD)`.
+   FalcoInstance instance = FalcoInstance.builder(DimensionType.OVERWORLD)
+           .register(MinecraftServer.getInstanceManager());
+   ```
 
-## With a chunk loader
+   `register` builds the instance and registers it, in that order, and returns it. The constructors are
+   public as well; their signatures are in
+   [Reference API surface and stability](../reference/api-surface-and-stability.md#entry-points-and-signatures).
 
-```java
-FalcoAnvilLoader loader = new FalcoAnvilLoader(Path.of("worlds", "lobby"), DimensionType.OVERWORLD.key());
+## Add a chunk loader and shut down cleanly
 
-FalcoInstance instance = FalcoInstance.builder(DimensionType.OVERWORLD)
-        .chunkLoader(loader)
-        .autoChunkLoad(true)
-        .ownsLoader(true)
-        .saveOnShutdown(true)
-        .registerAndShutdownWith(MinecraftServer.getInstanceManager(),
-                MinecraftServer.getSchedulerManager());
-```
+2. Give the instance a loader, and let it own the loader and save on shutdown:
 
-`registerAndShutdownWith` is the form worth preferring when the instance owns its loader.
-`ownsLoader(true)` means the instance closes the loader on shutdown, `saveOnShutdown(true)` means it
-writes its chunks first, and the shutdown task is registered for you — the three together are the
-part that is easy to get wrong by hand, because a loader closed before the save loses the save.
+   ```java
+   import net.minestom.server.MinecraftServer;
+   import net.minestom.server.world.DimensionType;
+   import net.onelitefeather.falco.anvil.FalcoAnvilLoader;
+   import net.onelitefeather.falco.instance.FalcoInstance;
 
-If you register by hand instead, `shutdown(InstanceManager)` does the same work and
-`unregister(InstanceManager)` unregisters without saving.
+   import java.nio.file.Path;
 
-## With the light engine
+   FalcoAnvilLoader loader = new FalcoAnvilLoader(Path.of("worlds", "lobby"), DimensionType.OVERWORLD.key());
 
-This is the combination that did not work before `1.0.0`:
+   FalcoInstance instance = FalcoInstance.builder(DimensionType.OVERWORLD)
+           .chunkLoader(loader)
+           .autoChunkLoad(true)
+           .ownsLoader(true)
+           .saveOnShutdown(true)
+           .registerAndShutdownWith(MinecraftServer.getInstanceManager(),
+                   MinecraftServer.getSchedulerManager());
+   ```
 
-```java
-// The scheduler takes the light service, not the instance — it binds to an instance later,
-// through the chunks its supplier produces.
-ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService());
+   `registerAndShutdownWith` is the form to prefer when the instance owns its loader. The reasons for the
+   three flags are in [Explanation Why falco-instance exists](../explanation/why-falco-instance-exists.md#owning-the-loader-and-saving-on-shutdown).
 
-FalcoInstance instance = FalcoInstance.builder(DimensionType.OVERWORLD)
-        .chunkLoader(loader)
-        .chunkSupplier(scheduler.supplier())
-        .autoChunkLoad(true)
-        .register(MinecraftServer.getInstanceManager());
-```
+3. If you register by hand instead, `shutdown(InstanceManager)` does the same work, and
+   `unregister(InstanceManager)` unregisters without saving.
 
-The supplier produces `FalcoLightingChunk`s, which extend `FalcoChunk`. Each one reports its block
-changes, loads and ticks to the scheduler, and the scheduler lights the touched regions and sends
-them. You write no listener.
+## Add the light engine
 
-`falco-light` declares `falco-instance` as `compileOnly`, so adding the light module does not bring
-this one with it — declare both, or use the BOM. See [Add Falco to your build](add-falco-to-your-build.md).
+4. Pass the scheduler's supplier to the builder, with the loader from step 2:
 
-## Watching the lifecycle
+   ```java
+   import net.minestom.server.MinecraftServer;
+   import net.minestom.server.world.DimensionType;
+   import net.onelitefeather.falco.instance.FalcoInstance;
+   import net.onelitefeather.falco.light.ChunkLightScheduler;
+   import net.onelitefeather.falco.light.ChunkLightService;
 
-**Minestom's own events still fire, and for most application code they are the right thing.**
-`FalcoInstance` dispatches `InstanceChunkLoadEvent` and `InstanceChunkUnloadEvent`, and the block
-writer dispatches `PlayerBlockBreakEvent`, so a listener registered on the `GlobalEventHandler`
-works here exactly as it does on an `InstanceContainer`. Take those unless you have a reason not to.
+   // The scheduler takes the light service, not the instance — it binds to an instance later,
+   // through the chunks its supplier produces.
+   ChunkLightScheduler scheduler = new ChunkLightScheduler(new ChunkLightService());
 
-`ChunkLifecycleListener` is the other thing, and the difference is *when*, not *what*:
+   FalcoInstance instance = FalcoInstance.builder(DimensionType.OVERWORLD)
+           .chunkLoader(loader)
+           .chunkSupplier(scheduler.supplier())
+           .autoChunkLoad(true)
+           .register(MinecraftServer.getInstanceManager());
+   ```
 
-| | `ChunkLifecycleListener` | `InstanceChunkLoadEvent` |
-| --- | --- | --- |
-| when | during the transition, inside the lock | after it, once the chunk is published and the future completed |
-| may call back into the instance | mostly no — stated per method | yes |
-| a throw | fails the chunk load and reaches the caller waiting on it | does not |
-| per block written | `onBlockChange`, no allocation | no equivalent |
+   The supplier produces `FalcoLightingChunk`s. You write no listener for the light; how the two parts
+   fit together is in [Explanation Why falco-instance exists](../explanation/why-falco-instance-exists.md#the-light-engine-on-the-instance).
 
-Take the listener when you must act *before* anybody else sees the chunk, or when you need per-block
-notification — which is what the light engine uses it for. Take the events for anything else.
+## Listen to chunk loads and unloads
 
-Two ways into the listener, depending on how much you need.
+5. Pass two consumers to the builder, which is enough for most things:
 
-The builder takes two consumers, which is enough for most things:
+   ```java
+   import net.minestom.server.MinecraftServer;
+   import net.minestom.server.world.DimensionType;
+   import net.onelitefeather.falco.instance.FalcoInstance;
 
-```java
-FalcoInstance.builder(DimensionType.OVERWORLD)
-        .chunkLifecycle(
-                chunk -> log.info("loaded {} {}", chunk.getChunkX(), chunk.getChunkZ()),
-                chunk -> log.info("unloaded {} {}", chunk.getChunkX(), chunk.getChunkZ()))
-        .register(manager);
-```
+   FalcoInstance.builder(DimensionType.OVERWORLD)
+           .chunkLifecycle(
+                   chunk -> logger.info("loaded {} {}", chunk.getChunkX(), chunk.getChunkZ()),    // your logger
+                   chunk -> logger.info("unloaded {} {}", chunk.getChunkX(), chunk.getChunkZ()))
+           .register(MinecraftServer.getInstanceManager());
+   ```
 
-For the full set, implement `ChunkLifecycleListener` and register it on the lifecycle. Every method
-has a default, so implement only what you need:
+   Minestom's `InstanceChunkLoadEvent` and `InstanceChunkUnloadEvent` are also dispatched, and for most
+   application code they are the better choice. When to use which is explained in
+   [Explanation Why falco-instance exists](../explanation/why-falco-instance-exists.md#events-and-the-chunk-lifecycle-listener).
 
-```java
-instance.lifecycle().addListener(new ChunkLifecycleListener() {
-    @Override
-    public void onPublish(ChunkLifecycleEvent event) { }   // visible to the world, before onLoad
+6. For the full set of callbacks, implement `ChunkLifecycleListener` and register it on the lifecycle of
+   the instance. Every method has a default, so implement only what you need. The methods are listed in
+   [Reference API surface and stability](../reference/api-surface-and-stability.md#chunk-lifecycle-listener).
 
-    @Override
-    public void onLoad(ChunkLifecycleEvent event) { }
+   ```java
+   import net.minestom.server.instance.block.Block;
+   import net.onelitefeather.falco.instance.ChunkLifecycleListener;
+   import net.onelitefeather.falco.instance.FalcoChunk;
 
-    @Override
-    public void onTick(ChunkLifecycleEvent event) { }
+   instance.lifecycle().addListener(new ChunkLifecycleListener() {
+       @Override
+       public void onBlockChange(FalcoChunk chunk, int x, int y, int z, Block block) {
+           // record the position only, nothing else; see the two rules below
+       }
+   });
+   ```
 
-    @Override
-    public void onUnload(ChunkLifecycleEvent event) { }
+   Two things to know before you write one:
 
-    @Override
-    public void onBlockChange(FalcoChunk chunk, int x, int y, int z, Block block) { }
-});
-```
+   - **`onBlockChange` runs inside the chunk's write lock.** Writing another block from it re-enters that
+     lock, and calling into code that takes a different lock is how a deadlock is built. Keep it to
+     recording the position.
+   - **A listener that throws fails the load** rather than being swallowed, and the caller waiting on the
+     chunk sees it. That is deliberate: a chunk whose listener failed is not a chunk anybody should be
+     handed.
 
-Two things to know before you write one:
+## Share a world through a container
 
-- **`onBlockChange` runs inside the chunk's write lock.** Writing another block from it re-enters that
-  lock, and calling into code that takes a different lock is how a deadlock is built. Keep it to
-  recording the position.
-- **A listener that throws fails the load** rather than being swallowed, and the caller waiting on the
-  chunk sees it. That is deliberate: a chunk whose listener failed is not a chunk anybody should be
-  handed.
+7. A `FalcoInstance` cannot back a shared instance. To get a shared view, create a container, give it the
+   Falco chunk type, and wrap it in a `FalcoSharedInstance`:
 
-## Shared worlds
+   ```java
+   import java.util.UUID;
+   import net.minestom.server.MinecraftServer;
+   import net.minestom.server.instance.InstanceContainer;
+   import net.minestom.server.instance.InstanceManager;
+   import net.onelitefeather.falco.instance.FalcoChunk;
+   import net.onelitefeather.falco.instance.FalcoSharedInstance;
 
-A `FalcoInstance` **cannot** back a shared instance, and this has not changed: `SharedInstance` takes
-an `InstanceContainer` and nothing else, so the attempt does not compile. What `FalcoSharedInstance`
-does is fix a container-backed view:
+   InstanceManager manager = MinecraftServer.getInstanceManager();
+   InstanceContainer world = manager.createInstanceContainer();
+   world.setChunkSupplier(FalcoChunk::new);
 
-```java
-InstanceManager manager = MinecraftServer.getInstanceManager();
-InstanceContainer world = manager.createInstanceContainer();
-world.setChunkSupplier(FalcoChunk::new);
+   // Not manager.createSharedInstance(world): that factory always builds Minestom's own type.
+   FalcoSharedInstance view = new FalcoSharedInstance(UUID.randomUUID(), world);
+   manager.registerSharedInstance(view);
+   ```
 
-// Not manager.createSharedInstance(world): that factory always builds Minestom's own type.
-FalcoSharedInstance view = new FalcoSharedInstance(UUID.randomUUID(), world);
-manager.registerSharedInstance(view);
-```
-
-The order matters. `createInstanceContainer` registers the container, and the view's constructor
-refuses one that is not registered — `registerSharedInstance` performs no such check, and an
-unregistered container is ticked by nobody.
-
-The view keeps its own generator, chunk supplier and auto-load setting, where Minestom's writes all
-three through to the container and lets one view reconfigure another. `saveInstance()` writes the
-view's own tags rather than the container's.
-
-What it does not change is who owns the blocks: `setBlock` reaches the container, which serialises
-every write on its own monitor. A world that needs Falco's write path uses `FalcoInstance` and gives
-up sharing.
-
+   The view keeps its own generator, chunk supplier and auto-load setting. The order of the calls and the
+   limits of sharing are explained in [Explanation Why falco-instance exists](../explanation/why-falco-instance-exists.md#shared-instances-refused-by-the-compiler-which-is-the-good-outcome).
 
 ## Read a chunk without materialising its sections
 
-`getSections()` and `getSection(int)` materialise every section they hand back, because Minestom's
-contract lets a caller write into the result. On a lazy chunk that turns a read into 24 allocations.
-`Heightmap#getHeight` does the same for the sections it descends through.
-
-Reach the storage with `chunk.storage()` and use the read-only counterparts:
-
-| To read | Use | Not |
-| --- | --- | --- |
-| one section | `view(int)` | `section(int)` |
-| all sections | `views()` | `sections()` |
-| how many exist | `materialisedSections()` | — |
-| whether one is still the shared empty | `shared(int)` | — |
+8. Read through `chunk.storage()` and not through `getSections()`, `getSection(int)` or `sections()`. The
+   read-only counterparts and what they replace are listed in
+   [Reference API surface and stability](../reference/api-surface-and-stability.md#read-only-section-access).
 
 ## Check it worked
 

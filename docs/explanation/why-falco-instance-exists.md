@@ -245,6 +245,13 @@ deliberate: the chunks *are* the container's, and a view that loaded its own wou
 view. `loadOptionalChunk` is overridden only so that the per-view auto-load decision is the one that
 answers.
 
+What the view does not change is who owns the blocks: `setBlock` reaches the container, which serialises
+every write on its own monitor. A world that needs Falco's write path therefore uses `FalcoInstance` and
+gives up sharing. The order of construction matters as well: `InstanceManager#createInstanceContainer`
+registers the container, and the view's constructor refuses a container that is not registered.
+`InstanceManager#registerSharedInstance` performs no such check, and an unregistered container is ticked by
+nobody.
+
 ### The chunk constructor and the empty viewer list
 
 `Chunk`'s constructor computes the shared instances whose players must also see the chunk
@@ -459,6 +466,43 @@ it, no instance timing has ever been produced here, and this document does not r
 be said from the source alone is that the two structures make opposite trade-offs, and that nobody
 has measured which one wins for chunk streaming. If that ever matters, it needs a benchmark run, not
 an argument — the benchmark classes exist since 2026-08-03, the run does not.
+
+## Owning the loader and saving on shutdown
+
+`registerAndShutdownWith` is the form worth preferring when the instance owns its loader. `ownsLoader(true)`
+means the instance closes the loader on shutdown, `saveOnShutdown(true)` means it writes its chunks first,
+and the shutdown task is registered for you. The three together are the part that is easy to get wrong by
+hand, because a loader closed before the save loses the save.
+
+## The light engine on the instance
+
+A `ChunkSupplier` produced by `ChunkLightScheduler#supplier()` makes `FalcoLightingChunk`s, which extend
+`FalcoChunk`. Each one reports its block changes, loads and ticks to the scheduler, and the scheduler lights
+the touched regions and sends them. The application writes no listener of its own.
+
+`falco-light` declares `falco-instance` as `compileOnly`, so adding the light module does not bring this one
+with it. An application declares both, or uses the BOM; see
+[How-to Add Falco to your build](../how-to/add-falco-to-your-build.md).
+
+## Events and the chunk lifecycle listener
+
+**Minestom's own events still fire, and for most application code they are the right thing.**
+`FalcoInstance` dispatches `InstanceChunkLoadEvent` and `InstanceChunkUnloadEvent`, and the block
+writer dispatches `PlayerBlockBreakEvent`, so a listener registered on the `GlobalEventHandler`
+works here exactly as it does on an `InstanceContainer`. Take those unless you have a reason not to.
+
+`ChunkLifecycleListener` is the other thing, and the difference is *when*, not *what*:
+
+| | `ChunkLifecycleListener` | `InstanceChunkLoadEvent` |
+| --- | --- | --- |
+| when | during the transition, inside the lock | after it, once the chunk is published and the future completed |
+| may call back into the instance | mostly no — stated per method | yes |
+| a throw | fails the chunk load and reaches the caller waiting on it | does not |
+| per block written | `onBlockChange`, no allocation | no equivalent |
+
+Take the listener when you must act *before* anybody else sees the chunk, or when you need per-block
+notification — which is what the light engine uses it for. Take the events for anything else. The methods
+of the listener are listed in [Reference API surface and stability](../reference/api-surface-and-stability.md#chunk-lifecycle-listener).
 
 ## What this module deliberately does not attempt
 

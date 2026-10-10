@@ -1,7 +1,8 @@
 # Load an Anvil world
 
 Serve a stored Anvil world (`r.<x>.<z>.mca` region files) from a Minestom instance using
-`FalcoAnvilLoader` instead of the built-in `AnvilLoader`.
+`FalcoAnvilLoader` instead of the built-in `AnvilLoader`. You end with an instance that streams its chunks
+from the world directory and refuses to replace a chunk it cannot read.
 
 **Before you start:** `falco-anvil` on the classpath ([How-to Add Falco to your build](add-falco-to-your-build.md)), and a
 world directory whose chunks are at or above the version floor on
@@ -48,15 +49,6 @@ public final class Bootstrap {
 
 ## Hand the loader to a map provider instead
 
-<!-- TODO(maintainer): this section previously documented an Aves integration built on a
-     `ChunkLoaderFactory` functional interface and a four-argument
-     `AbstractMapProvider#registerInstance` overload. Neither exists. `ChunkLoaderFactory` appears in
-     no .java file in this repository and in no commit of its history (`git log --all -S`), Falco
-     declares no dependency on Aves in any build file, and `net.theevilreaper.aves.map.provider
-     .AbstractMapProvider` at Aves 1.16.0 declares only the two- and three-argument overloads. The
-     section below states what is true today. Restore the factory prose once the interface is
-     actually shipped, on either side. -->
-
 `FalcoAnvilLoader` is a plain `net.minestom.server.instance.ChunkLoader`, so anything that already
 accepts one takes it without knowing this library exists. Pass it to
 `InstanceManager#createInstanceContainer(RegistryKey<DimensionType>, ChunkLoader)`:
@@ -83,16 +75,11 @@ public final class MapLoaders {
 }
 ```
 
-The relevant Falco signatures are:
-
-| Member | Declaration |
-| --- | --- |
-| [`FalcoAnvilLoader(Path, Key)`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-anvil/src/main/java/net/onelitefeather/falco/anvil/FalcoAnvilLoader.java) | `public FalcoAnvilLoader(Path worldRoot, Key dimension)` |
-| [`FalcoAnvilLoader(Path, Key, int)`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-anvil/src/main/java/net/onelitefeather/falco/anvil/FalcoAnvilLoader.java) | `public FalcoAnvilLoader(Path worldRoot, Key dimension, int openRegionLimit)` |
-
 A provider that keeps a world root per map passes that root and the dimension key of the instance it
-is building. Any other `ChunkLoader` is supplied the same way, which is what makes the choice
-reversible.
+is building. The constructors it can call are listed in
+[Reference API surface and stability](../reference/api-surface-and-stability.md#entry-points-and-signatures),
+and why this choice is reversible is explained in
+[Explanation Choosing between Falco and the built-in loader](../explanation/choosing-between-falco-and-the-built-in-loader.md).
 
 The `falco-demo` module does exactly this and is compiled on every build:
 [`LoaderKind#create`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-demo/src/main/java/net/onelitefeather/falco/demo/LoaderKind.java)
@@ -102,8 +89,8 @@ hands the result to `createInstanceContainer`.
 
 ## Raise the cached-region limit
 
-The number of region files held in the cache defaults to 64 and is set through the three-argument
-constructor:
+The three-argument constructor sets how many region files stay open. The default is in
+[Reference API surface and stability](../reference/api-surface-and-stability.md#entry-points-and-signatures).
 
 ```java
 FalcoAnvilLoader loader = new FalcoAnvilLoader(worldRoot, dimension, 256);

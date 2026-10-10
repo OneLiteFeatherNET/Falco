@@ -1,121 +1,94 @@
 # Run the JMH benchmark suite
 
-Execute the benchmarks in `falco-benchmarks` on your own machine. A normal `build` never runs them.
+Execute the benchmarks in `falco-benchmarks` on your own machine. You end with JMH's summary table and a
+`results.json` for the benchmarks you ran. A normal `build` never runs them.
 
 **Before you start:** a working build ([How-to Build Falco from source](build-falco-from-source.md)). What the results can and
 cannot mean is [Explanation What the benchmarks establish](../explanation/what-the-benchmarks-establish.md) — read it before quoting a number.
 
-```bash
-./gradlew jmh                      # every benchmark, full settings
-```
+## Run the full suite
 
-That is every measured method for every combination of the parameters its state class declares — 50
-methods over 488 configurations at commit `ca79507`, at the forks and iterations the annotations ask
-for. Budget well over an hour and do not touch the machine while it runs. The count is dominated by
-`ScalingBenchmark`, whose fifteen section counts and five distinct-state counts share one state class
-and therefore form a full cross product of 300 configurations on their own.
+1. Run every benchmark with the full settings:
+
+   ```bash
+   ./gradlew jmh                      # every benchmark, full settings
+   ```
+
+   How many methods and configurations that is, and how long it takes, is in
+   [Reference Benchmark catalogue](../reference/benchmark-catalogue.md#size-of-the-full-run).
 
 ## Or from CI, when the run record matters more than the machine
 
-The **Benchmark** workflow
-([`.github/workflows/benchmark.yml`](https://github.com/OneLiteFeatherNET/Falco/blob/main/.github/workflows/benchmark.yml))
-runs the same jar on demand and uploads four things: `results.json`, the readable output, **the exact
-command line as executed**, and a filled-in provenance line. Two profiles:
+2. Use the **Benchmark** workflow when the run record matters more than the machine. It runs the same jar on
+   demand and uploads the results with the exact command line. Choose the `custom` profile for one table or
+   `full` for the whole suite, and leave `forks` empty to keep each class annotation. Its profiles, its
+   provenance purpose and the rule that a shard is a whole class are in
+   [Contributing Benchmarks and demo](../contributing/benchmarks-and-demo.md#the-ci-benchmark-workflow).
 
-| | What it does |
-| --- | --- |
-| `custom` | one JMH filter in one job — for re-running a single table |
-| `full` | the whole suite across sixteen shards, about half an hour where a sequential run is five |
+   CI figures come from a shared runner and may not be merged with the published tables. The reason is in
+   [Explanation What a measurement here means](../explanation/what-a-measurement-here-means.md#the-limits-stated-without-softening).
 
-**Its purpose is provenance, not precision.** Many of the gaps listed on this page are of the form
-*no run record was kept* rather than *the number is wrong*, and those close with a run that documents
-itself even from a machine that measures worse. Leave `forks` empty to keep each class annotation,
-which is what re-running a published table needs.
+## Restrict the run to what you are working on
 
-**What its numbers may not be used for.** A shared runner is not the machine the published tables
-came from, and the difference is not only in absolute terms: the same light comparison measures 1.35×
-there against 1.13× here. A ratio is no more portable than an absolute figure, only more stable when
-the hardware is fixed — see
-[What a measurement here means](../explanation/what-a-measurement-here-means.md#the-limits-stated-without-softening). CI figures
-therefore belong in their own table with their own provenance line, never merged into one measured
-elsewhere.
+3. The full run is not what you want during development. Restrict it to one class, one method or a regex:
 
-One thing the workflow enforces rather than advises: **a shard is a whole class.** Shards run on
-separate runners, so splitting a comparison class would put `falcoRead` and `minestomRead` on
-different CPUs and the resulting ratio would measure the hardware. That happened once, at 2.13×
-against the 1.13× one machine gives.
+   ```bash
+   # One class
+   ./gradlew jmh -Pjmh.include='BitPackerBenchmark'
 
-The full run is not what you want during development. Restrict it to what you are working on:
+   # One method
+   ./gradlew jmh -Pjmh.include='ChunkSaveStageBenchmark.codec'
 
-```bash
-# One class
-./gradlew jmh -Pjmh.include='BitPackerBenchmark'
+   # A regex over several
+   ./gradlew jmh -Pjmh.include='light\..*Propagator.*'
+   ```
 
-# One method
-./gradlew jmh -Pjmh.include='ChunkSaveStageBenchmark.codec'
+4. Read the two files the Gradle task writes. Both land under `build/`, which is gitignored:
 
-# A regex over several
-./gradlew jmh -Pjmh.include='light\..*Propagator.*'
-```
+   | File | Content |
+   | --- | --- |
+   | `build/reports/jmh/human.txt` | the console output |
+   | `build/reports/jmh/results.json` | machine readable, for [JMH Visualizer](https://jmh.morethan.io/) |
 
-The Gradle task writes two files:
+   No run's output is committed in this repository, which is why every provenance line in the published
+   tables says so.
 
-| File | Content |
-| --- | --- |
-| `build/reports/jmh/human.txt` | the console output |
-| `build/reports/jmh/results.json` | machine readable, for [JMH Visualizer](https://jmh.morethan.io/) |
+## Run the jar directly
 
-Both land under `build/`, which is gitignored. **No run's output is committed in this repository**,
-which is why every provenance line above says so.
+5. The task builds a self-contained benchmark jar, which is the faster way to iterate because it skips
+   Gradle entirely and accepts every JMH option:
 
-## Running the jar directly
+   ```bash
+   ./gradlew jmhJar
+   java -jar build/libs/falco-*-jmh.jar 'BitPackerBenchmark.pack' -f 1 -wi 1 -i 1
 
-The task builds a self-contained benchmark jar, which is the faster way to iterate because it skips
-Gradle entirely and accepts every JMH option:
+   java -jar build/libs/falco-*-jmh.jar -l          # list every benchmark
+   java -jar build/libs/falco-*-jmh.jar -h          # every option
+   ```
 
-```bash
-./gradlew jmhJar
-java -jar build/libs/falco-*-jmh.jar 'BitPackerBenchmark.pack' -f 1 -wi 1 -i 1
+   A quick smoke run — one fork, one warmup iteration, one measurement iteration — is `-f 1 -wi 1 -i 1`.
+   That is enough to prove a benchmark executes and produces a plausible number. It is **not** enough
+   to compare two versions of the code; for that, drop the overrides and let the annotations decide.
 
-java -jar build/libs/falco-*-jmh.jar -l          # list every benchmark
-java -jar build/libs/falco-*-jmh.jar -h          # every option
-```
+   JMH allows one instance at a time. A crashed run leaves `/tmp/jmh.lock` behind and every later run
+   fails with *"Another JMH instance might be running"*; delete the file.
 
-A quick smoke run — one fork, one warmup iteration, one measurement iteration — is `-f 1 -wi 1 -i 1`.
-That is enough to prove a benchmark executes and produces a plausible number. It is **not** enough
-to compare two versions of the code; for that, drop the overrides and let the annotations decide.
+## Profile a benchmark
 
-JMH allows one instance at a time. A crashed run leaves `/tmp/jmh.lock` behind and every later run
-fails with *"Another JMH instance might be running"*; delete the file.
+6. Profile allocation first. `-prof gc` is the one worth reaching for first, and why it answers allocation
+   claims more reliably than timing is explained in
+   [Explanation What the benchmarks establish](../explanation/what-the-benchmarks-establish.md#threats-to-validity).
 
-## Profiling a benchmark
+   ```bash
+   java -jar build/libs/falco-*-jmh.jar 'PaletteDataBenchmark.encode' -prof gc
+   java -jar build/libs/falco-*-jmh.jar 'PaletteDataBenchmark.encode' -prof perfasm   # Linux, needs perf
+   ```
 
-```bash
-java -jar build/libs/falco-*-jmh.jar 'PaletteDataBenchmark.encode' -prof gc
-java -jar build/libs/falco-*-jmh.jar 'PaletteDataBenchmark.encode' -prof perfasm   # Linux, needs perf
-```
+## Why build does not run them
 
-`-prof gc` is the one worth reaching for first. Several of the claims on the other pages are about
-*allocation*, not about time, and `gc.alloc.rate.norm` answers those directly — and does so far more
-reproducibly than any timing here.
-
-
-## Why `build` does not run them
-
-The benchmarks do not run during `./gradlew build`, `check` or `test`. `jmh` and `jmhJar` are only
-reachable when asked for by name. A benchmark run takes long enough that wiring it into the normal
-build would make every commit painful, and JMH numbers are too noisy on a shared CI runner to gate
-anything on them anyway.
-
-Verify it for yourself:
-
-```bash
-./gradlew clean build --dry-run | grep -i jmh    # prints nothing except the compile task
-```
-
-`compileJmhJava` *is* part of `build`, and that is on purpose: a benchmark that no longer compiles
-after a refactoring should break the build like any other source set.
-
+The benchmarks are not part of `./gradlew build`, `check` or `test`; they run only when asked for by name, and
+`compileJmhJava` is part of `build` on purpose. The build wiring is in
+[Contributing Benchmarks and demo](../contributing/benchmarks-and-demo.md#falco-benchmarks).
 
 ## Check it worked
 

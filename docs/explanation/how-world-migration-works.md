@@ -134,6 +134,11 @@ same chunk twice: refused without migration, loaded with it.
 
 ## The rules, and where their numbers come from
 
+Migration only fixes what someone has written down. A block whose renamed or removed name has no rule
+still becomes air after migration, because nothing in the engine can guess its replacement. The rules
+are therefore the part of the engine that needs maintenance, and every number in the rule file carries
+its source in a comment beside it.
+
 [`BlockStateRules`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-migration/src/main/java/net/onelitefeather/falco/migration/BlockStateRules.java)
 holds the block-state changes. Each rule carries a `since()`: the `DataVersion` the change happened
 in, so a rule applies exactly when `since() > sourceVersion`.

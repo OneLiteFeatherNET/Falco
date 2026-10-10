@@ -814,6 +814,31 @@ command lines for every published table live in one place — [How-to Reproduce 
 What a reproduction of yours establishes, and what it does not, is the subject of the rest of this
 page.
 
+### What agreement would look like
+
+A replication is not expected to reproduce these numbers. It is expected to reproduce these
+conclusions, and the criteria are stated in advance so that neither side gets to decide after the
+fact.
+
+- **A row marked *supported* agrees** if the direction is the same and your conservative ratio bounds
+  overlap the ones printed in the table. It **disagrees** if the direction reverses, or if your
+  bounds are disjoint from ours — which would mean one of the two machines is measuring something the
+  other is not.
+- **A row marked *no difference resolvable* agrees** if your intervals also overlap, and is a *new*
+  result if yours are disjoint. Resolving a difference we could not is an improvement on this page,
+  not a contradiction of it.
+- **A row marked *not usable* agrees** if your slower side is also dispersed — an error bar that is a
+  large fraction of its own mean. A run in which Minestom's read time stays tight under four or eight
+  concurrent readers would be a genuine refutation of the loader's central claim, and it is the
+  single most valuable measurement anyone outside this project could contribute.
+- **Absolute microseconds are not expected to agree at all.** Do not report a mismatch in them as a
+  failure to reproduce; report the ratio.
+
+Ratios reproduce, third digits do not. Two of the five repeats this project has run behaved that
+way; on the other two, both on the loader table, Falco's numbers reproduced and Minestom's did not.
+A fifth that behaves differently from any of them is worth hearing about. The repeats themselves are
+listed under [Reference Measured results](../reference/measured-results.md#measurement-environment).
+
 ## What this all adds up to
 
 The honest summary is narrower than the headline factors, and it is the summary that should be
