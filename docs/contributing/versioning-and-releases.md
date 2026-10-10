@@ -104,7 +104,7 @@ publish-snapshot:
 ```
 
 `-Psnapshot` reaches Gradle inside the task strings because the shared
-`OneLiteFeatherNET/workflows/.github/workflows/gradle-publish.yml@v2.4.0` workflow passes them to
+`OneLiteFeatherNET/workflows/.github/workflows/gradle-publish.yml` workflow, at the version pinned in [`.github/workflows/release-please.yml`](https://github.com/OneLiteFeatherNET/Falco/blob/main/.github/workflows/release-please.yml), passes them to
 `./gradlew` verbatim and offers no separate input for properties or environment variables.
 
 Everything that is not a release therefore ships a snapshot: a merged feature, a documentation fix,

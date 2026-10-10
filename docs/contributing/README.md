@@ -36,23 +36,25 @@ a republication of the BOM without a single commit in this repository.
 | | | Pinned here |
 | --- | --- | --- |
 | Java | 25 (toolchain and `release`), no `--enable-preview` anywhere | yes, in the root `build.gradle.kts` |
-| Minestom | `2026.06.20-26.1.2`, `compileOnly` | **no** — `library("minestom", …).withoutVersion()`, resolved through `net.onelitefeather:mycelium-bom` `1.7.2` |
-| Adventure | `5.1.1`, `adventure-nbt` used directly — Minestom speaks `CompoundBinaryTag` natively, so there is no conversion layer | yes, `adventure-bom` `5.1.1` |
+| Minestom | `2026.10.07-26.2`, `compileOnly` | **no** — `library("minestom", …).withoutVersion()`, resolved through `net.onelitefeather:mycelium-bom` `1.8.9` |
+| Adventure | `5.2.0`, `adventure-nbt` used directly — Minestom speaks `CompoundBinaryTag` natively, so there is no conversion layer | yes, `adventure-bom` `5.2.0` |
 | Annotations | `org.jetbrains:annotations:26.1.0` | yes |
-| Tests | JUnit 6.1.0, Cyano `0.6.2` (`MicrotusExtension`) for anything needing a server | **no** — both `withoutVersion()`, resolved through `mycelium-bom` `1.7.2` |
+| Tests | JUnit 6.1.3, Cyano `0.7.6` (`MicrotusExtension`) for anything needing a server | **no** — both `withoutVersion()`, resolved through `mycelium-bom` `1.8.9` |
 | Benchmarks | JMH 1.37 via `me.champeau.jmh` 0.7.3, in the separate `falco-benchmarks` module | yes, both |
-| `fastutil` | `8.5.18` | yes |
-| Architecture | ArchUnit 1.4.2, in the separate `falco-archunit` module | yes |
-| Build | Gradle 9.6.1, seven modules on one shared version | yes |
+| `fastutil` | `8.5.19` | yes |
+| Architecture | ArchUnit 1.5.1, in the separate `falco-archunit` module | yes |
+| Build | Gradle 9.8.1, eight modules on one shared version | yes |
 
-The seven modules are `falco-anvil`, `falco-light`, `falco-instance`, `falco-benchmarks`,
-`falco-demo`, `falco-archunit` and `falco-bom`; the first three are published, `falco-bom` publishes
-only their constraints, and the other three are not published at all.
+The eight modules are `falco-anvil`, `falco-light`, `falco-instance`, `falco-migration`,
+`falco-bom`, `falco-benchmarks`, `falco-demo` and `falco-archunit`; `falco-anvil`, `falco-light`,
+`falco-instance` and `falco-migration` are published, `falco-bom` publishes only version constraints
+for `falco-anvil`, `falco-light` and `falco-instance`, and `falco-benchmarks`, `falco-demo` and
+`falco-archunit` are not published at all.
 
 **The Minestom version is the one that would invalidate a comparison silently.** Every head-to-head
 table under [Measured](../reference/measured-results.md#measured) measures the Minestom of the day the run happened,
-and that version is decided by `mycelium-bom` `1.7.2`, not by anything in this repository.
-`2026.06.20-26.1.2` is what it resolved to; a third party reproducing a number has to check that
+and that version is decided by `mycelium-bom` `1.8.9`, not by anything in this repository.
+`2026.10.07-26.2` is what it resolves to today; a third party reproducing a number has to check that
 theirs resolves to the same thing before comparing.
 
 `adventure-nbt`, `jetbrains-annotations` and `fastutil` are declared explicitly rather than taken
@@ -169,7 +171,8 @@ Four of its checks decide most of the outcome.
 
 [`.github/workflows/build-pr.yml`](https://github.com/OneLiteFeatherNET/Falco/blob/main/.github/workflows/build-pr.yml)
 is what then runs on the branch. It is a thin caller of the shared
-`OneLiteFeatherNET/workflows/.github/workflows/gradle-build-pr.yml` job at `v2.4.0`, pinned to
+`OneLiteFeatherNET/workflows/.github/workflows/gradle-build-pr.yml` job at the version pinned in
+[`.github/workflows/build-pr.yml`](https://github.com/OneLiteFeatherNET/Falco/blob/main/.github/workflows/build-pr.yml), pinned to
 Java 25 on Temurin with `run-tests: true`, so a pull request is checked by the same build the first
 command under [Working on this](#working-on-this) runs locally. A second workflow,
 `close_invalid_prs.yml`, calls the organisation's `close-invalid-prs` job when a pull request is
@@ -184,7 +187,7 @@ default owner later cannot silently widen who approves a release.
 
 - The versions in [Environment](#environment) are declared in
   [`settings.gradle.kts`](https://github.com/OneLiteFeatherNET/Falco/blob/main/settings.gradle.kts)
-  for the version catalogue and the seven modules, in
+  for the version catalogue and the eight modules, in
   [`build.gradle.kts`](https://github.com/OneLiteFeatherNET/Falco/blob/main/build.gradle.kts) for the
   toolchain, the release target and the single `version = …` line, and in
   [`gradle/wrapper/gradle-wrapper.properties`](https://github.com/OneLiteFeatherNET/Falco/blob/main/gradle/wrapper/gradle-wrapper.properties)

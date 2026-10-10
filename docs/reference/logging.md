@@ -32,7 +32,7 @@ Example: `Failed to load the chunk chunk=[{},{}] region={} dim={}`.
 
 | Level | Emitted for |
 | --- | --- |
-| `INFO` | Loader opening; a close with no errors. |
+| `INFO` | Loader opening; a close with no errors; a region file copied to the migration backup directory before its chunks are migrated (`Copied {} to {} before migrating its chunks on disk`, [`FalcoAnvilLoader.java:2203`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-anvil/src/main/java/net/onelitefeather/falco/anvil/FalcoAnvilLoader.java)). |
 | `WARN` | A throttled data problem; a close with errors; the skip breakdown. |
 | `ERROR` | A failed chunk load; a failed chunk save; a failed group in `saveChunks`; a region file that could not be closed. |
 | `DEBUG` | A region file opened or closed; the first chunk found with no region file or no entry in one. |

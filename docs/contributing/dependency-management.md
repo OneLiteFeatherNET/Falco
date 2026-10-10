@@ -62,30 +62,31 @@ itself. Where a version is stated below it is the one the catalog declares today
   `net.kyori:adventure-text-minimessage`, `net.onelitefeather:cyano`, Mockito and the JUnit BOM, and
   nothing else — checkable in the published `mycelium-bom` POM. JMH is not among them, so both the
   benchmark harness and the Gradle JMH plugin need an explicit version here.
-- **`slf4j` (`2.0.18`) and `annotations` (`26.1.0`).** Not managed by the mycelium BOM either, for
+- **`slf4j` (`2.0.20`) and `annotations` (`26.1.0`).** Not managed by the mycelium BOM either, for
   the same reason and with the same consequence.
-- **`adventureBom` (`5.1.1`).** The library modules receive Adventure transitively through Minestom,
+- **`adventureBom` (`5.2.0`).** The library modules receive Adventure transitively through Minestom,
   which is `compileOnly` and therefore never reaches a runtime classpath (see below). The benchmarks
   module runs its code for real and needs Adventure at runtime, so it imports the Adventure platform
-  directly. The value matches what Minestom pulls in — `net.minestom:minestom:2026.06.20-26.1.2`
-  declares `net.kyori:adventure-nbt` at version `5.1.1` — but nothing in the build asserts that the
-  two agree, so a Minestom upgrade that moves Adventure has to be followed here by hand.
+  directly. The value is meant to match what Minestom pulls in. It matched `net.minestom:minestom:2026.06.20-26.1.2`,
+  which declares `net.kyori:adventure-nbt` at `5.1.1`; whether the version resolved today declares the same
+  version was not re-checked for this page. Nothing in the build asserts that the two agree, so a
+  Minestom upgrade that moves Adventure has to be followed here by hand.
 - **`slf4j.simple`.** Only `falco-demo` needs an SLF4J binding, and it takes it as `runtimeOnly`. The
   library modules depend on `slf4j-api` alone and leave the choice of binding to the consumer; a demo
   that actually runs would otherwise greet the user with "No SLF4J providers were found" before
   printing anything of its own.
-- **`fastutil` (`8.5.18`, explicit version).** Minestom declares `it.unimi.dsi:fastutil` at
+- **`fastutil` (`8.5.19`, explicit version).** Minestom declares `it.unimi.dsi:fastutil` at
   **runtime** scope, so it never reaches a *compile* classpath through Minestom. `falco-instance`
   compiles against fastutil types, and `falco-light`'s equivalence test and the comparison benchmarks
   call Minestom methods that take a fastutil collection, so the dependency has to be named
-  explicitly — and naming it means pinning it. `8.5.18` is the same version Minestom
-  `2026.06.20-26.1.2` declares.
+  explicitly — and naming it means pinning it. The value is meant to match the version Minestom
+  declares: `8.5.18` was the match for `2026.06.20-26.1.2`, and the version resolved today was not re-checked.
 
 Six entries are declared with `withoutVersion()` — `minestom`, `adventure.nbt`, `cyano` and the
 three JUnit coordinates. Their versions come from a platform at use site: the mycelium BOM for
 Minestom, Cyano and JUnit, and Minestom's own dependency graph for `adventure-nbt`. The consequence
 worth knowing is that **no Minestom version string appears anywhere in this repository**: it is
-whatever `net.onelitefeather:mycelium-bom:1.7.2` manages, which today is `2026.06.20-26.1.2`. What
+whatever `net.onelitefeather:mycelium-bom:1.8.9` manages, which today is `2026.10.07-26.2`. What
 that costs is traceability — an upgrade to the mycelium BOM moves Minestom, and therefore moves the
 Minestom side of every comparison this project publishes, through a diff that mentions only a BOM
 version. Anyone reproducing a measured result therefore needs the Minestom version stated alongside

@@ -143,7 +143,7 @@ runs that workflow, and exactly one of its two publish jobs fires:
 | `publish` | `release_created == 'true'` | `publish` |
 | `publish-snapshot` | `release_created != 'true'` | `-Psnapshot build`, then `-Psnapshot publish` |
 
-Both jobs call `OneLiteFeatherNET/workflows/.github/workflows/gradle-publish.yml@v2.4.0` with
+Both jobs call `OneLiteFeatherNET/workflows/.github/workflows/gradle-publish.yml` at the version pinned in [`.github/workflows/release-please.yml`](https://github.com/OneLiteFeatherNET/Falco/blob/main/.github/workflows/release-please.yml), with
 `java-version: "25"` and `secrets: inherit`, which is where the two `ONELITEFEATHER_MAVEN_*` values
 the block above reads come from. The conditions are exact opposites of the same output, so a push
 publishes either a release or a snapshot and never both. [Versioning and
