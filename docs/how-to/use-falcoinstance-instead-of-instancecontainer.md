@@ -151,6 +151,17 @@ of the four Minestom sites that branch on `instanceof InstanceContainer` — see
    The view keeps its own generator, chunk supplier and auto-load setting. The order of the calls and the
    limits of sharing are explained in [Explanation Why falco-instance exists](../explanation/why-falco-instance-exists.md#shared-instances-refused-by-the-compiler-which-is-the-good-outcome).
 
+## Set a generator
+
+Generation uses the usual Minestom API:
+
+```java
+instance.setGenerator(unit -> unit.modifier().fillHeight(0, 40, Block.STONE));
+```
+
+The generator is handed copies of the section palettes, and they are moved over only when it returns.
+A generator that fails halfway therefore leaves the chunk as it was, instead of half built and published.
+
 ## Read a chunk without materialising its sections
 
 8. Read through `chunk.storage()` and not through `getSections()`, `getSection(int)` or `sections()`. The

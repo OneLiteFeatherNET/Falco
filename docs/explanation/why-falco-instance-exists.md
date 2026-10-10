@@ -356,6 +356,9 @@ call legal.
 the setter `public` itself and holds its blocks in a `BlockStorage` of its own, so nothing about the
 storage is inherited any more. The barrier is unchanged — it is answered one class lower down.
 
+Before `1.0.0` this was a real choice for a server. The lighting chunk and the Falco chunk both extended
+`DynamicChunk`, a class has one superclass, and a server had to pick one of the two.
+
 The sentence that used to stand here said that `FalcoChunk` adds nothing beyond re-exposing those
 members, and that Minestom's block storage was never the part that needed replacing. Both were true
 of the first version and neither is true now. What changed the answer was a measurement rather than

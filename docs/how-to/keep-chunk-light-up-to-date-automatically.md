@@ -68,6 +68,55 @@ that already has a pool can hand that one over instead.
    source is retracted before the light is spread again. How this works, and why the update is identical to a
    full recalculation, is explained in [Explanation How the light engine works](../explanation/how-the-light-engine-works.md#incremental-updates-and-what-they-keep).
 
+## Tune the scheduler
+
+The builder carries the settings that matter under load. Every one has a default; the values below
+are the ones you would most often set:
+
+```java
+ChunkLightScheduler scheduler = ChunkLightScheduler.builder(lighting)
+        .executor(ChunkLightScheduler.defaultExecutor())
+        .maxAreaSize(4)               // chunks per side of one lighting area
+        .maxCachedChunks(256)         // opacity tables kept between passes
+        .skyLight(ChunkLightScheduler.SkyLight.FROM_DIMENSION)
+        .onFailure(throwable -> log.error("lighting failed", throwable))
+        .build();
+```
+
+`maxAreaSize` decides where one lighting area ends: a larger value means fewer seams between areas, and
+a smaller one means less work per pass. `SkyLight.FROM_DIMENSION` computes sky light only when the
+dimension has skylight. `onFailure` receives what a failed pass threw, so a lighting failure is logged
+instead of disappearing.
+
+## Tell the scheduler about changes Falco did not make
+
+When something outside Falco changes the world, say so, and the chunk is relit on the next tick:
+
+```java
+scheduler.markChanged(instance, 0, 0);              // this chunk needs relighting
+scheduler.markChanged(instance, 0, 0, 8, 40, 8);    // this position did
+scheduler.markDirty(instance, 0, 0);                // relight without an incremental path
+```
+
+## Use it on an InstanceContainer
+
+On a `FalcoInstance` the supplier is all you need. On an `InstanceContainer`, build the chunks yourself,
+hang a `ChunkLightListener` on each one, and tick the scheduler from a repeating task:
+
+```java
+container.setChunkSupplier((instance, x, z) -> {
+    FalcoChunk chunk = new FalcoChunk(instance, x, z);
+    chunk.addLifecycleListener(new ChunkLightListener(scheduler));
+    return chunk;
+});
+MinecraftServer.getSchedulerManager().buildTask(() -> scheduler.onTick(container, System.currentTimeMillis()))
+        .repeat(TaskSchedule.tick(1))
+        .schedule();
+```
+
+Use `FalcoInstance` unless you need the container's own write path; see
+[Use FalcoInstance instead of InstanceContainer](use-falcoinstance-instead-of-instancecontainer.md).
+
 ## Check it worked
 
 Place a block, let one tick pass, and the surrounding light is correct without any call of your own.
