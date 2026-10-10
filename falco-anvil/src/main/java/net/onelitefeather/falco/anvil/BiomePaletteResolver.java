@@ -143,7 +143,7 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
     @Override
     public int toId(String name, @Nullable CompoundBinaryTag properties) {
         DynamicRegistry<Biome> registry = registry();
-        int id = registry.getId(RegistryKey.unsafeOf(name));
+        int id = registry.getId(RegistryKey.of(name));
 
         if (id != -1) {
             return id;
@@ -152,7 +152,7 @@ public final class BiomePaletteResolver implements PaletteEntryResolver {
             LOGGER.warn("The biome '{}' is unknown, further chunks with it are not reported", name);
         }
         String substituteName = this.policy.onUnknownBiome(name);
-        int substituteId = registry.getId(RegistryKey.unsafeOf(substituteName));
+        int substituteId = registry.getId(RegistryKey.of(substituteName));
 
         // The policy is not consulted a second time for its own substitute, for the same reason
         // BlockPaletteResolver does not: a second call could loop, and a substitute the registry

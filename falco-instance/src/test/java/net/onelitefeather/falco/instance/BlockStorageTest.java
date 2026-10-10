@@ -333,7 +333,7 @@ class BlockStorageTest {
     @DisplayName("refuses to write a biome that is not registered")
     void testUnregisteredBiomeIsRejected(String name, Supplier<BlockStorage> factory) {
         final BlockStorage storage = factory.get();
-        final RegistryKey<Biome> unregistered = RegistryKey.unsafeOf("falco:not_a_biome");
+        final RegistryKey<Biome> unregistered = RegistryKey.of("falco:not_a_biome");
 
         assertThrows(IllegalStateException.class, () -> storage.setBiome(4, 20, 8, unregistered));
         assertEquals(0, storage.section(5).biomePalette().count(),

@@ -341,7 +341,8 @@ public final class LazySectionBlockStorage implements BlockStorage {
             // Emptied as well as released. A caller which took the section through the boundary
             // before the reset holds a reference this class cannot reach, and DynamicChunk#reset
             // leaves such a caller with an emptied section rather than with a stale one.
-            section.clear();
+            section.blockPalette().fill(0);
+            section.biomePalette().fill(0);
             // Released with the same handle the materialisation publishes through, so that a
             // materialisation racing this reset either sees the slot before it was released and
             // keeps its section, or sees it afterwards and materialises a new one. A plain store

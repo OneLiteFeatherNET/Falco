@@ -207,7 +207,8 @@ public final class SectionBlockStorage implements BlockStorage {
     @Override
     public void clear() {
         for (Section section : this.sections) {
-            section.clear();
+            section.blockPalette().fill(0);
+            section.biomePalette().fill(0);
         }
     }
 }
