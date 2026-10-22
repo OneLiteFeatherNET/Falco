@@ -12,6 +12,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Function;
 
 /**
  * The {@link ChunkLightService} class calculates the block light of a chunk and hands the result to
@@ -33,9 +36,9 @@ import java.util.List;
  * does not recompute what was just calculated.
  * </p>
  * <p>
- * A single instance may be used by as many threads as one likes. The service holds nothing beyond
- * the source it was built with, which only answers questions about a block and never changes, so
- * every call brings its own working state and two calls cannot reach each other. That matters more
+ * A single instance may be used by as many threads as one likes. Beyond the source it was built
+ * with, which only answers questions about a block and never changes, the service holds only idle
+ * propagators, and a call takes one for itself alone, so two calls cannot reach each other. That matters more
  * here than elsewhere: a server lights the chunks around its players in parallel and keeps one
  * service for the whole instance, and because {@code set} clears the update flag, a result which two
  * threads had corrupted would never be recomputed. The world would simply carry wrong light.
@@ -57,11 +60,11 @@ import java.util.List;
  * path that carries the obligation.
  * </p>
  * <p>
- * The working state of a call is the propagator, which keeps buffers and is therefore built per
- * call rather than kept in a field. Its buffers are the entire cost of that choice, and an
- * allocation per chunk is far cheaper than either handing every thread its own service or letting
- * the threads take turns on a shared one, which would give up exactly the parallelism this service
- * exists to allow.
+ * The working state of a call is the propagator, which keeps buffers for a whole column. A call
+ * takes one from a pool, and returns it when it is done, so no two calls ever hold the same one at
+ * once. The pool keeps the parallelism this service exists to allow — a thread which finds it empty
+ * builds a new propagator rather than waiting — and spares a server the buffers of one propagator
+ * per lit chunk, which used to be the largest allocation of every call.
  * </p>
  * <p>
  * This type is experimental. The light engine is new and its API may still change.
@@ -98,6 +101,17 @@ public final class ChunkLightService {
     private final BlockLightSource source;
 
     /**
+     * The propagators no call is currently using.
+     * <p>
+     * A propagator holds buffers for a whole column, several hundred kilobytes for a tall world. A
+     * ThreadLocal would not keep them, because a scheduler runs every area on a virtual thread of its
+     * own, so they are kept here instead. The queue never grows beyond the amount of calls that ran
+     * at the same time, which is what a server already bounds by the processor count.
+     * </p>
+     */
+    private final Queue<ChunkLightPropagator> propagators = new ConcurrentLinkedQueue<>();
+
+    /**
      * Creates a service which reads the block properties from the registry of the server.
      */
     public ChunkLightService() {
@@ -124,7 +138,31 @@ public final class ChunkLightService {
      * @param chunk the chunk to light
      */
     public void calculate(Chunk chunk) {
-        applyLight(chunk, new ChunkLightPropagator().propagate(opacityOf(chunk)), false);
+        List<SectionOpacity> opacity = opacityOf(chunk);
+        applyLight(chunk, withPropagator(propagator -> propagator.propagate(opacity)), false);
+    }
+
+    /**
+     * Runs the given work with a propagator nobody else is using during the call.
+     * <p>
+     * The propagator is taken from the pool, or built if the pool is empty, and returned afterwards
+     * even if the work fails. The work must not keep it beyond the call, since the next caller
+     * overwrites its buffers.
+     * </p>
+     *
+     * @param work the work to run
+     * @param <T>  the type of the result
+     * @return what the work returned
+     */
+    <T> T withPropagator(Function<ChunkLightPropagator, T> work) {
+        @Nullable ChunkLightPropagator pooled = this.propagators.poll();
+        ChunkLightPropagator propagator = pooled != null ? pooled : new ChunkLightPropagator();
+
+        try {
+            return work.apply(propagator);
+        } finally {
+            this.propagators.offer(propagator);
+        }
     }
 
     /**
@@ -195,7 +233,7 @@ public final class ChunkLightService {
      */
     public void calculateSky(Chunk chunk) {
         List<SectionOpacity> opacity = opacityOf(chunk);
-        List<LightNibbles> light = new ChunkLightPropagator().propagateSky(opacity);
+        List<LightNibbles> light = withPropagator(propagator -> propagator.propagateSky(opacity));
         applyLight(chunk, light, true);
     }
 
@@ -289,7 +327,7 @@ public final class ChunkLightService {
 
                 List<SectionOpacity> opacity = opacityOf(chunk);
                 neighbourhood[slot(offsetX, offsetZ)] =
-                        new NeighbourhoodEntry(chunk, opacity, ChunkLightState.blockLight(opacity));
+                        new NeighbourhoodEntry(chunk, opacity, withPropagator(propagator -> ChunkLightState.blockLight(opacity, propagator)));
             }
         }
         return neighbourhood;

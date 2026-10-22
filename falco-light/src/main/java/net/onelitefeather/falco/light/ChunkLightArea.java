@@ -16,9 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 import java.util.function.ToLongFunction;
@@ -169,19 +167,6 @@ public final class ChunkLightArea {
     private final Map<ChunkArea, Kept> kept;
     private final AtomicLong fullPropagations = new AtomicLong();
     private final AtomicLong tableBuilds = new AtomicLong();
-
-    /**
-     * The propagators no pass is currently using.
-     * <p>
-     * A propagator holds buffers for a whole column, several hundred kilobytes for a tall world, and
-     * a pass needs one for every chunk it searches in full. Allocating them per chunk made those
-     * buffers the largest single allocation of a pass. A ThreadLocal would not help, because every
-     * area runs on a virtual thread of its own, so they are kept here instead: a pass takes one,
-     * returns it when the chunk is searched, and the queue never grows beyond the amount of passes
-     * that ran at the same time — which the scheduler bounds by the processor count.
-     * </p>
-     */
-    private final Queue<ChunkLightPropagator> propagators = new ConcurrentLinkedQueue<>();
 
     /**
      * Creates an area computation which reads and writes through the given service.
@@ -563,6 +548,10 @@ public final class ChunkLightArea {
 
     /**
      * Searches the whole chunk for its light and counts the search.
+     * <p>
+     * The propagator comes from the pool of the service, so an area and the single chunk calls of
+     * the same service keep one set of buffers between them rather than two.
+     * </p>
      *
      * @param opacity the light properties of every section of the chunk
      * @param sky     whether the sky light is computed instead of the block light
@@ -570,16 +559,9 @@ public final class ChunkLightArea {
      */
     private ChunkLightState propagate(List<SectionOpacity> opacity, boolean sky) {
         this.fullPropagations.incrementAndGet();
-        @Nullable ChunkLightPropagator pooled = this.propagators.poll();
-        ChunkLightPropagator propagator = pooled != null ? pooled : new ChunkLightPropagator();
-
-        try {
-            return sky
-                    ? ChunkLightState.skyLight(opacity, propagator)
-                    : ChunkLightState.blockLight(opacity, propagator);
-        } finally {
-            this.propagators.offer(propagator);
-        }
+        return this.service.withPropagator(propagator -> sky
+                ? ChunkLightState.skyLight(opacity, propagator)
+                : ChunkLightState.blockLight(opacity, propagator));
     }
 
     /**
