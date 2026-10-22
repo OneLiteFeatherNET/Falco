@@ -128,6 +128,44 @@ class ChunkBorderLightTest {
     }
 
     @Test
+    void testInjectingFromTheNeighbourMatchesInjectingItsBorder() {
+        for (BlockFace face : List.of(BlockFace.WEST, BlockFace.EAST, BlockFace.NORTH, BlockFace.SOUTH)) {
+            // The lamp sits on the edge of the neighbour that faces this chunk.
+            int[] column = borderColumn(face.opposite(), 5);
+            List<int[]> neighbour = airChunk(2);
+            neighbour.get(1)[index(column[0], 4, column[1])] = LAMP;
+            ChunkLightState neighbourState = ChunkLightState.blockLight(tables(neighbour));
+
+            List<SectionOpacity> tables = tables(airChunk(2));
+            ChunkLightState copied = ChunkLightState.blockLight(tables);
+            ChunkLightState direct = ChunkLightState.blockLight(tables);
+
+            boolean copiedChanged = copied.injectBorder(tables, face, neighbourState.border(face.opposite()));
+            boolean directChanged = direct.injectBorder(tables, face, neighbourState);
+
+            assertEquals(copiedChanged, directChanged, "both injections report the same through " + face);
+
+            for (int y = 0; y < 2 * LightNibbles.DIMENSION; y++) {
+                for (int z = 0; z < LightNibbles.DIMENSION; z++) {
+                    for (int x = 0; x < LightNibbles.DIMENSION; x++) {
+                        assertEquals(copied.get(x, y, z), direct.get(x, y, z),
+                                "mismatch through " + face + " at " + x + " " + y + " " + z);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void testANeighbourOfAnotherHeightIsRejected() {
+        List<SectionOpacity> tables = tables(airChunk(2));
+        ChunkLightState state = ChunkLightState.blockLight(tables);
+        ChunkLightState neighbour = ChunkLightState.blockLight(tables(airChunk(1)));
+
+        assertThrows(IllegalArgumentException.class, () -> state.injectBorder(tables, BlockFace.WEST, neighbour));
+    }
+
+    @Test
     void testTheBorderOfAChunkCanBeRead() {
         List<int[]> sections = airChunk(1);
         sections.get(0)[index(15, 8, 4)] = LAMP;

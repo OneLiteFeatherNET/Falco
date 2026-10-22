@@ -627,9 +627,7 @@ public final class ChunkLightArea {
                 if (neighbour == null) {
                     continue;
                 }
-                changed |= entry.state().injectBorder(
-                        entry.opacity(), face, neighbour.state().border(face.opposite())
-                );
+                changed |= entry.state().injectBorder(entry.opacity(), face, neighbour.state());
             }
         }
         return changed;

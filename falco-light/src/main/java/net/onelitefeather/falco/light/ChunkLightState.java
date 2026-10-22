@@ -600,19 +600,68 @@ public final class ChunkLightState {
                             + " levels but the given one holds " + border.length
             );
         }
+        return inject(sections, face, border, 0, LightNibbles.DIMENSION, 1);
+    }
 
+    /**
+     * Feeds the light of a neighbouring chunk into this one, reading its border straight from it.
+     * <p>
+     * This is what an exchange over an area uses. {@link #border(BlockFace)} copies the edge into a
+     * new array only for it to be read once and thrown away, and an exchange does that for every
+     * face of every chunk in every round. Reading the levels of the neighbour in place gives the
+     * same result without the copy, since nothing writes to the neighbour while this chunk reads it.
+     * </p>
+     *
+     * @param sections  the light properties of every section of this chunk
+     * @param face      the border the light enters through
+     * @param neighbour the chunk which lies beyond that border
+     * @return true if at least one level of this chunk was raised, otherwise false
+     * @throws IllegalArgumentException if the face is not horizontal or the neighbour has another height
+     * @see #injectBorder(List, BlockFace, byte[])
+     */
+    boolean injectBorder(List<SectionOpacity> sections, BlockFace face, ChunkLightState neighbour) {
+        checkHorizontal(face);
+
+        if (neighbour.height != this.height) {
+            throw new IllegalArgumentException(
+                    "This chunk is " + this.height + " blocks high but the given neighbour is " + neighbour.height
+            );
+        }
+        BlockFace opposite = face.opposite();
+        return inject(sections, face, neighbour.levels, borderStart(opposite), 1 << 8, borderStride(opposite));
+    }
+
+    /**
+     * Raises the levels along one border from the given source and spreads them into the chunk.
+     * <p>
+     * The source is either a copied border or the levels of the neighbour itself. Both are walked by
+     * height first and along the border second, so the caller only describes where the walk starts
+     * and how far one step in either direction moves through the source.
+     * </p>
+     *
+     * @param sections        the light properties of every section of this chunk
+     * @param face            the border the light enters through
+     * @param source          the array holding the levels of the neighbouring border
+     * @param sourceStart     the index of the bottom block at offset zero in the source
+     * @param sourceRowStride the distance between two heights in the source
+     * @param sourceStride    the distance between two offsets in the source
+     * @return true if at least one level of this chunk was raised, otherwise false
+     */
+    private boolean inject(List<SectionOpacity> sections, BlockFace face, byte[] source,
+                           int sourceStart, int sourceRowStride, int sourceStride) {
         int tail = 0;
         int start = borderStart(face);
         int stride = borderStride(face);
-        int slot = 0;
 
         for (int y = 0; y < this.height; y++) {
             int index = (y << 8) + start - stride;
+            int sourceIndex = y * sourceRowStride + sourceStart - sourceStride;
 
             for (int offset = 0; offset < LightNibbles.DIMENSION; offset++) {
                 // Advanced first, so every continue below still moves on to the next block.
                 index += stride;
-                int incoming = border[slot++] - 1;
+                sourceIndex += sourceStride;
+                int incoming = source[sourceIndex] - 1;
 
                 if (incoming <= 0) {
                     continue;
