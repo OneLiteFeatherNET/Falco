@@ -174,7 +174,23 @@ public final class ChunkLightState {
      * @return the created state
      */
     public static ChunkLightState blockLight(List<SectionOpacity> sections) {
-        return of(sections, new ChunkLightPropagator().propagateLevels(sections), false);
+        return blockLight(sections, new ChunkLightPropagator());
+    }
+
+    /**
+     * Calculates the block light of a chunk with the given propagator and keeps it for later updates.
+     * <p>
+     * A propagator sizes its buffers for a whole column, which is several hundred kilobytes for a
+     * tall world. A caller which builds many states one after another hands in the same propagator
+     * each time instead of having a new one allocated for every chunk.
+     * </p>
+     *
+     * @param sections   the light properties of every section of the chunk
+     * @param propagator the propagator to calculate with, used by nobody else during the call
+     * @return the created state
+     */
+    static ChunkLightState blockLight(List<SectionOpacity> sections, ChunkLightPropagator propagator) {
+        return of(sections, propagator.propagateLevels(sections), false);
     }
 
     /**
@@ -184,7 +200,19 @@ public final class ChunkLightState {
      * @return the created state
      */
     public static ChunkLightState skyLight(List<SectionOpacity> sections) {
-        return of(sections, new ChunkLightPropagator().propagateSkyLevels(sections), true);
+        return skyLight(sections, new ChunkLightPropagator());
+    }
+
+    /**
+     * Calculates the sky light of a chunk with the given propagator and keeps it for later updates.
+     *
+     * @param sections   the light properties of every section of the chunk
+     * @param propagator the propagator to calculate with, used by nobody else during the call
+     * @return the created state
+     * @see #blockLight(List, ChunkLightPropagator)
+     */
+    static ChunkLightState skyLight(List<SectionOpacity> sections, ChunkLightPropagator propagator) {
+        return of(sections, propagator.propagateSkyLevels(sections), true);
     }
 
     /**
