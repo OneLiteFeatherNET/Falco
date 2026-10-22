@@ -163,7 +163,7 @@ public class TerrainAreaBenchmark {
      *
      * @param chunk the chunk to fill
      */
-    private static void generate(Chunk chunk) {
+    static void generate(Chunk chunk) {
         int baseX = chunk.getChunkX() * 16;
         int baseZ = chunk.getChunkZ() * 16;
         int minY = chunk.getMinSection() * 16;

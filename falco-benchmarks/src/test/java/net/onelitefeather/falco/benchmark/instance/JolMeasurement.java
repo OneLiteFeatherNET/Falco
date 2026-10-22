@@ -92,7 +92,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * @version 1.0.0
  * @since 0.4.0
  */
-final class JolMeasurement {
+public final class JolMeasurement {
 
     /**
      * The JOL option that lets a graph walk read a field of a record class of {@code java.base}.
@@ -181,7 +181,7 @@ final class JolMeasurement {
      * @throws org.opentest4j.TestAbortedException if JOL is not sizing through the instrumentation
      *                                             agent, or if the mode cannot be determined
      */
-    static void require() {
+    public static void require() {
         final State state = State.CURRENT;
 
         Assumptions.assumeTrue(state.mode != Mode.UNKNOWN,
@@ -224,7 +224,7 @@ final class JolMeasurement {
      *
      * @return the description of how the numbers below it were obtained
      */
-    static String describe() {
+    public static String describe() {
         final State state = State.CURRENT;
         return String.format(Locale.ROOT, "jol 0.17, sizes from %s, %s=%s, Serviceability Agent %s",
                 state.mode.description(), MAGIC_FIELD_OFFSET,
