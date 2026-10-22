@@ -166,7 +166,25 @@ public final class ChunkLightPropagator {
      */
     public List<LightNibbles> propagate(List<SectionOpacity> sections) {
         int height = prepare(sections);
-        return search(sections, height, seed(sections, height));
+        search(height, seed(sections, height));
+        return collect(sections.size());
+    }
+
+    /**
+     * Calculates the light of every section of a chunk as one level per position of the column.
+     * <p>
+     * A {@link ChunkLightState} keeps its light in exactly this layout. Handing it the flat levels
+     * spares it packing every section into nibbles only to unpack them again right away.
+     * </p>
+     *
+     * @param sections the light properties of every section of the chunk
+     * @return one level per position, indexed like the positions of a {@link ChunkLightState}
+     * @throws IllegalArgumentException if the chunk holds no section
+     */
+    byte[] propagateLevels(List<SectionOpacity> sections) {
+        int height = prepare(sections);
+        search(height, seed(sections, height));
+        return levelsOf(height);
     }
 
     /**
@@ -183,7 +201,32 @@ public final class ChunkLightPropagator {
      */
     public List<LightNibbles> propagateSky(List<SectionOpacity> sections) {
         int height = prepare(sections);
-        return search(sections, height, seedSky(height));
+        search(height, seedSky(height));
+        return collect(sections.size());
+    }
+
+    /**
+     * Calculates the sky light of every section of a chunk as one level per position of the column.
+     *
+     * @param sections the light properties of every section of the chunk
+     * @return one level per position, indexed like the positions of a {@link ChunkLightState}
+     * @throws IllegalArgumentException if the chunk holds no section
+     * @see #propagateLevels(List)
+     */
+    byte[] propagateSkyLevels(List<SectionOpacity> sections) {
+        int height = prepare(sections);
+        search(height, seedSky(height));
+        return levelsOf(height);
+    }
+
+    /**
+     * Copies the levels of the last run out of the buffer, which the next run overwrites.
+     *
+     * @param height the amount of blocks the column spans vertically
+     * @return one level per position of the column
+     */
+    private byte[] levelsOf(int height) {
+        return Arrays.copyOf(this.levels, height * LightNibbles.DIMENSION * LightNibbles.DIMENSION);
     }
 
     /**
@@ -215,12 +258,10 @@ public final class ChunkLightPropagator {
     /**
      * Spreads the queued levels through the column.
      *
-     * @param sections the light properties of every section of the chunk
-     * @param height   the amount of blocks the column spans vertically
-     * @param queued   the amount of positions which were queued as sources
-     * @return the calculated light of every section
+     * @param height the amount of blocks the column spans vertically
+     * @param queued the amount of positions which were queued as sources
      */
-    private List<LightNibbles> search(List<SectionOpacity> sections, int height, int queued) {
+    private void search(int height, int queued) {
         int tail = queued;
         int head = 0;
 
@@ -270,7 +311,6 @@ public final class ChunkLightPropagator {
                 this.queue[tail++] = neighbourIndex | (OPPOSITE_INDEX[faceIndex] << POSITION_BITS);
             }
         }
-        return collect(sections.size());
     }
 
     /**

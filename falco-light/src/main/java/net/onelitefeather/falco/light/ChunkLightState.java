@@ -174,7 +174,7 @@ public final class ChunkLightState {
      * @return the created state
      */
     public static ChunkLightState blockLight(List<SectionOpacity> sections) {
-        return of(sections, new ChunkLightPropagator().propagate(sections), false);
+        return of(sections, new ChunkLightPropagator().propagateLevels(sections), false);
     }
 
     /**
@@ -184,34 +184,19 @@ public final class ChunkLightState {
      * @return the created state
      */
     public static ChunkLightState skyLight(List<SectionOpacity> sections) {
-        return of(sections, new ChunkLightPropagator().propagateSky(sections), true);
+        return of(sections, new ChunkLightPropagator().propagateSkyLevels(sections), true);
     }
 
     /**
      * Builds a state from an already calculated light.
      *
      * @param sections the light properties of every section of the chunk
-     * @param light    the calculated light of every section
+     * @param levels   one level per position, laid out like the levels of a state; taken over as is
      * @param sky      whether the light is sky light
      * @return the created state
      */
-    private static ChunkLightState of(List<SectionOpacity> sections, List<LightNibbles> light, boolean sky) {
-        int sectionCount = sections.size();
-        byte[] levels = new byte[sectionCount * LightNibbles.BLOCK_COUNT];
-
-        for (int section = 0; section < sectionCount; section++) {
-            LightNibbles nibbles = light.get(section);
-            int base = section * LightNibbles.DIMENSION;
-
-            for (int y = 0; y < LightNibbles.DIMENSION; y++) {
-                for (int z = 0; z < LightNibbles.DIMENSION; z++) {
-                    for (int x = 0; x < LightNibbles.DIMENSION; x++) {
-                        levels[index(x, base + y, z)] = (byte) nibbles.get(x, y, z);
-                    }
-                }
-            }
-        }
-        return new ChunkLightState(levels, sectionCount, sky, sky ? skyTopOf(sections) : NO_HEIGHTMAP);
+    private static ChunkLightState of(List<SectionOpacity> sections, byte[] levels, boolean sky) {
+        return new ChunkLightState(levels, sections.size(), sky, sky ? skyTopOf(sections) : NO_HEIGHTMAP);
     }
 
     /**
