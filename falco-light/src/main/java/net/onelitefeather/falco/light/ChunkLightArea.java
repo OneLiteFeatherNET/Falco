@@ -590,21 +590,6 @@ public final class ChunkLightArea {
      * the rounds keeps a case which should not exist from looping forever, and hitting it is
      * reported rather than silently accepted.
      * </p>
-     *
-     * @param entries the chunks of the area and of its ring
-     */
-    private static void exchangeUntilSettled(Map<ChunkArea, Entry> entries) {
-        for (int round = 0; round < MAX_EXCHANGE_ROUNDS; round++) {
-            if (!exchange(entries)) {
-                return;
-            }
-        }
-        LOGGER.warn("The light of an area of {} chunks did not settle after {} exchange rounds",
-                entries.size(), MAX_EXCHANGE_ROUNDS);
-    }
-
-    /**
-     * Hands the border of every loaded face neighbour to every chunk of the area once.
      * <p>
      * The ring takes part in this in both directions. Light which leaves the area, travels through
      * a ring chunk and comes back is the only path when the direct way inside the area is walled
@@ -613,24 +598,33 @@ public final class ChunkLightArea {
      * </p>
      *
      * @param entries the chunks of the area and of its ring
-     * @return true if at least one chunk raised a level, otherwise false
      */
-    private static boolean exchange(Map<ChunkArea, Entry> entries) {
-        boolean changed = false;
+    private static void exchangeUntilSettled(Map<ChunkArea, Entry> entries) {
+        List<ChunkArea> positions = List.copyOf(entries.keySet());
+        Map<ChunkArea, Integer> slots = HashMap.newHashMap(positions.size());
+        List<ChunkLightState> states = new ArrayList<>(positions.size());
+        List<List<SectionOpacity>> opacity = new ArrayList<>(positions.size());
 
-        for (Map.Entry<ChunkArea, Entry> current : entries.entrySet()) {
-            Entry entry = current.getValue();
+        for (ChunkArea position : positions) {
+            Entry entry = entries.get(position);
+            slots.put(position, states.size());
+            states.add(entry.state());
+            opacity.add(entry.opacity());
+        }
 
-            for (BlockFace face : HORIZONTAL_FACES) {
-                @Nullable Entry neighbour = entries.get(current.getKey().neighbour(face));
+        int[] neighbours = new int[positions.size() * BorderExchange.FACES.length];
 
-                if (neighbour == null) {
-                    continue;
-                }
-                changed |= entry.state().injectBorder(entry.opacity(), face, neighbour.state());
+        for (int chunk = 0; chunk < positions.size(); chunk++) {
+            for (int face = 0; face < BorderExchange.FACES.length; face++) {
+                @Nullable Integer neighbour = slots.get(positions.get(chunk).neighbour(BorderExchange.FACES[face]));
+                neighbours[chunk * BorderExchange.FACES.length + face] = neighbour == null ? -1 : neighbour;
             }
         }
-        return changed;
+
+        if (!new BorderExchange(states, opacity, neighbours).settle(MAX_EXCHANGE_ROUNDS)) {
+            LOGGER.warn("The light of an area of {} chunks did not settle after {} exchange rounds",
+                    entries.size(), MAX_EXCHANGE_ROUNDS);
+        }
     }
 
     /**
