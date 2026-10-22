@@ -2,6 +2,7 @@ package net.onelitefeather.falco.light;
 
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -53,6 +54,21 @@ public final class ChunkLightState {
      * The heightmap of a state which holds block light. Block light never reads it.
      */
     private static final int[] NO_HEIGHTMAP = new int[0];
+
+    /**
+     * The retraction queue of a state which has not retracted anything yet.
+     * <p>
+     * Only an update retracts, and most states never see one: a ring chunk of an area pass is
+     * copied, takes part in the border exchange and is thrown away. Sharing an empty queue spares
+     * every such copy 5 KB. Nothing is ever written into it, since the first write grows the queue.
+     * </p>
+     */
+    private static final int[] NO_REMOVALS = new int[0];
+
+    /**
+     * The levels belonging to {@link #NO_REMOVALS}.
+     */
+    private static final byte[] NO_REMOVAL_LEVELS = new byte[0];
 
     /**
      * Builds the table {@link #OPPOSITES} holds.
@@ -108,8 +124,8 @@ public final class ChunkLightState {
         this.height = sectionCount * LightNibbles.DIMENSION;
         this.sky = sky;
         this.skyTop = skyTop;
-        this.removalQueue = new int[INITIAL_QUEUE_SIZE];
-        this.removalLevels = new byte[INITIAL_QUEUE_SIZE];
+        this.removalQueue = NO_REMOVALS;
+        this.removalLevels = NO_REMOVAL_LEVELS;
         this.additionQueue = new int[INITIAL_QUEUE_SIZE];
     }
 
@@ -157,14 +173,30 @@ public final class ChunkLightState {
 
     /**
      * Makes room for one more entry in the retraction queue.
+     * <p>
+     * A state starts without a retraction queue, see {@link #NO_REMOVALS}, so the first entry
+     * creates it at {@link #INITIAL_QUEUE_SIZE} and every later one doubles it.
+     * </p>
      *
      * @param tail the amount of entries the queue currently holds
      */
     private void ensureRemovalRoom(int tail) {
         if (tail == this.removalQueue.length) {
-            this.removalQueue = Arrays.copyOf(this.removalQueue, this.removalQueue.length * 2);
-            this.removalLevels = Arrays.copyOf(this.removalLevels, this.removalLevels.length * 2);
+            int size = Math.max(INITIAL_QUEUE_SIZE, this.removalQueue.length * 2);
+            this.removalQueue = Arrays.copyOf(this.removalQueue, size);
+            this.removalLevels = Arrays.copyOf(this.removalLevels, size);
         }
+    }
+
+    /**
+     * Returns whether this state holds a retraction queue of its own.
+     *
+     * @return true once an update retracted something, otherwise false
+     */
+    @VisibleForTesting
+    @Contract(pure = true)
+    boolean holdsRemovalQueue() {
+        return this.removalQueue != NO_REMOVALS;
     }
 
     /**

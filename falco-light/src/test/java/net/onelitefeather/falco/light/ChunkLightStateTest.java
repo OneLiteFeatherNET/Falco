@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests the incremental update of an already calculated chunk light.
@@ -334,5 +336,32 @@ class ChunkLightStateTest {
         state.update(updated, 8, 24, 8);
 
         assertEquals(15, state.get(8, 24, 8));
+    }
+
+    @Test
+    void testAStateCreatesItsRetractionQueueOnlyWhenItRetracts() {
+        List<int[]> sections = airChunk(2);
+        sections.get(0)[index(8, 8, 8)] = LAMP;
+        ChunkLightState state = ChunkLightState.blockLight(tables(sections));
+        ChunkLightState copy = state.copy();
+
+        assertFalse(state.holdsRemovalQueue(), "a calculated state has retracted nothing");
+        assertFalse(copy.holdsRemovalQueue(), "and neither has its copy");
+
+        // A lamp in open air lit a few thousand positions, so the retraction has to grow the queue
+        // past its first size as well as create it.
+        sections.get(0)[index(8, 8, 8)] = AIR;
+        copy.update(tables(sections), 8, 8, 8);
+
+        assertTrue(copy.holdsRemovalQueue(), "the update retracted the light of the lamp");
+        assertFalse(state.holdsRemovalQueue(), "the state the copy came from shares no queue with it");
+
+        for (int y = 0; y < 2 * LightNibbles.DIMENSION; y++) {
+            for (int z = 0; z < LightNibbles.DIMENSION; z++) {
+                for (int x = 0; x < LightNibbles.DIMENSION; x++) {
+                    assertEquals(0, copy.get(x, y, z), "every position the lamp lit is dark again");
+                }
+            }
+        }
     }
 }
