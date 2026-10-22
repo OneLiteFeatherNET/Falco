@@ -44,9 +44,29 @@ public final class ChunkLightState {
     private static final int MASK = LightNibbles.DIMENSION - 1;
 
     /**
+     * The opposite of every face, indexed like {@link #FACES}, so the search reads it from a table
+     * instead of switching over the face for every neighbour it looks at.
+     */
+    private static final BlockFace[] OPPOSITES = opposites();
+
+    /**
      * The heightmap of a state which holds block light. Block light never reads it.
      */
     private static final int[] NO_HEIGHTMAP = new int[0];
+
+    /**
+     * Builds the table {@link #OPPOSITES} holds.
+     *
+     * @return the opposite of every face, indexed like {@link #FACES}
+     */
+    private static BlockFace[] opposites() {
+        BlockFace[] opposites = new BlockFace[FACES.length];
+
+        for (int index = 0; index < FACES.length; index++) {
+            opposites[index] = FACES[index].opposite();
+        }
+        return opposites;
+    }
 
     /**
      * The height of a column which nothing stops the sky in.
@@ -511,7 +531,8 @@ public final class ChunkLightState {
             int y = index >> 8;
             int next = level - 1;
 
-            for (BlockFace face : FACES) {
+            for (int faceIndex = 0; faceIndex < FACES.length; faceIndex++) {
+                BlockFace face = FACES[faceIndex];
                 int neighbourX = x + face.offsetX();
                 int neighbourY = y + face.offsetY();
                 int neighbourZ = z + face.offsetZ();
@@ -519,13 +540,15 @@ public final class ChunkLightState {
                 if (isOutside(neighbourX, neighbourY, neighbourZ)) {
                     continue;
                 }
-                if (blocksFace(sections, neighbourX, neighbourY, neighbourZ, face.opposite())) {
-                    continue;
-                }
 
                 int neighbourIndex = index(neighbourX, neighbourY, neighbourZ);
 
+                // The level is one array read, the occlusion a list lookup, a section and a table,
+                // and the level rejects far more often. Cheapest and most selective test first.
                 if (this.levels[neighbourIndex] >= next) {
+                    continue;
+                }
+                if (blocksFace(sections, neighbourX, neighbourY, neighbourZ, OPPOSITES[faceIndex])) {
                     continue;
                 }
                 this.levels[neighbourIndex] = (byte) next;
