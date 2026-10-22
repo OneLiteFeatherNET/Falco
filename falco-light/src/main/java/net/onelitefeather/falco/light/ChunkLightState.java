@@ -661,26 +661,10 @@ public final class ChunkLightState {
         List<LightNibbles> result = new ArrayList<>(this.sectionCount);
 
         for (int section = 0; section < this.sectionCount; section++) {
-            int base = section * LightNibbles.DIMENSION;
-            LightNibbles nibbles = LightNibbles.uniform(0);
-            boolean uniform = true;
-            int first = this.levels[index(0, base, 0)];
-
-            for (int y = 0; y < LightNibbles.DIMENSION; y++) {
-                for (int z = 0; z < LightNibbles.DIMENSION; z++) {
-                    for (int x = 0; x < LightNibbles.DIMENSION; x++) {
-                        int level = this.levels[index(x, base + y, z)];
-
-                        if (level != first) {
-                            uniform = false;
-                        }
-                        if (level != 0) {
-                            nibbles.set(x, y, z, level);
-                        }
-                    }
-                }
-            }
-            result.add(uniform ? LightNibbles.uniform(first) : nibbles);
+            // The levels of a section lie next to each other, because the index of a position puts
+            // its y coordinate into the highest bits. One pass packs them and detects a uniform
+            // section, where writing them one by one would check and shift every single level.
+            result.add(LightNibbles.ofLevels(this.levels, section * LightNibbles.BLOCK_COUNT));
         }
         return result;
     }
