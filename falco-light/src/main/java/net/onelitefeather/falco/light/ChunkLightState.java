@@ -556,10 +556,15 @@ public final class ChunkLightState {
     public byte[] border(BlockFace face) {
         checkHorizontal(face);
         byte[] border = new byte[this.height * LightNibbles.DIMENSION];
+        int start = borderStart(face);
+        int stride = borderStride(face);
+        int slot = 0;
 
         for (int y = 0; y < this.height; y++) {
-            for (int offset = 0; offset < LightNibbles.DIMENSION; offset++) {
-                border[y * LightNibbles.DIMENSION + offset] = this.levels[borderIndex(face, y, offset)];
+            int index = (y << 8) + start;
+
+            for (int offset = 0; offset < LightNibbles.DIMENSION; offset++, index += stride) {
+                border[slot++] = this.levels[index];
             }
         }
         return border;
@@ -597,17 +602,21 @@ public final class ChunkLightState {
         }
 
         int tail = 0;
+        int start = borderStart(face);
+        int stride = borderStride(face);
+        int slot = 0;
 
         for (int y = 0; y < this.height; y++) {
+            int index = (y << 8) + start - stride;
+
             for (int offset = 0; offset < LightNibbles.DIMENSION; offset++) {
-                int incoming = border[y * LightNibbles.DIMENSION + offset] - 1;
+                // Advanced first, so every continue below still moves on to the next block.
+                index += stride;
+                int incoming = border[slot++] - 1;
 
                 if (incoming <= 0) {
                     continue;
                 }
-
-                int index = borderIndex(face, y, offset);
-
                 if (this.levels[index] >= incoming) {
                     continue;
                 }
@@ -625,20 +634,38 @@ public final class ChunkLightState {
     }
 
     /**
-     * Calculates the index of a block which lies on the given border.
+     * Calculates the index of the first block of the given border at the bottom of the column.
+     * <p>
+     * A border is walked by height first and along the remaining horizontal axis second. The face
+     * is the same for every block of that walk, so it is resolved once into this start and the
+     * {@link #borderStride(BlockFace) stride} instead of once per block.
+     * </p>
      *
-     * @param face   the border the block lies on
-     * @param y      the y coordinate inside the column
-     * @param offset the position along the remaining horizontal axis
-     * @return the index of the block
+     * @param face the border to walk
+     * @return the index of the block at offset zero and height zero
      */
     @Contract(pure = true)
-    private static int borderIndex(BlockFace face, int y, int offset) {
+    private static int borderStart(BlockFace face) {
         return switch (face) {
-            case WEST -> index(0, y, offset);
-            case EAST -> index(LightNibbles.DIMENSION - 1, y, offset);
-            case NORTH -> index(offset, y, 0);
-            case SOUTH -> index(offset, y, LightNibbles.DIMENSION - 1);
+            case WEST, NORTH -> index(0, 0, 0);
+            case EAST -> index(LightNibbles.DIMENSION - 1, 0, 0);
+            case SOUTH -> index(0, 0, LightNibbles.DIMENSION - 1);
+            case TOP, BOTTOM -> throw new IllegalArgumentException("The face " + face + " is not horizontal");
+        };
+    }
+
+    /**
+     * Calculates how far apart two neighbouring blocks of the given border lie in the index.
+     *
+     * @param face the border to walk
+     * @return the distance between two blocks one offset apart
+     * @see #borderStart(BlockFace)
+     */
+    @Contract(pure = true)
+    private static int borderStride(BlockFace face) {
+        return switch (face) {
+            case WEST, EAST -> index(0, 0, 1);
+            case NORTH, SOUTH -> index(1, 0, 0);
             case TOP, BOTTOM -> throw new IllegalArgumentException("The face " + face + " is not horizontal");
         };
     }
