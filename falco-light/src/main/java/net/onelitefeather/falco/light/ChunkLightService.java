@@ -76,8 +76,6 @@ public final class ChunkLightService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ChunkLightService.class);
 
-    private static final BlockFace[] HORIZONTAL_FACES = {BlockFace.NORTH, BlockFace.SOUTH, BlockFace.WEST, BlockFace.EAST};
-
     /**
      * The amount of chunks the exchanged area reaches beyond the chunk in the middle.
      * A level of fifteen cannot survive more than one chunk of travel, so a further ring could not
@@ -305,56 +303,47 @@ public final class ChunkLightService {
      * @param chunkZ        the chunk z coordinate of the middle of the area
      */
     private static void exchangeUntilSettled(@Nullable NeighbourhoodEntry[] neighbourhood, int chunkX, int chunkZ) {
-        for (int round = 0; round < MAX_EXCHANGE_ROUNDS; round++) {
-            if (!exchange(neighbourhood)) {
-                return;
+        // The loaded chunks are numbered in slot order, which walks the area in a fixed order so
+        // that two runs over the same chunks do the same work in the same sequence.
+        int[] indices = new int[neighbourhood.length];
+        List<ChunkLightState> states = new ArrayList<>(neighbourhood.length);
+        List<List<SectionOpacity>> opacity = new ArrayList<>(neighbourhood.length);
+
+        for (int slot = 0; slot < neighbourhood.length; slot++) {
+            @Nullable NeighbourhoodEntry entry = neighbourhood[slot];
+            indices[slot] = entry == null ? -1 : states.size();
+
+            if (entry != null) {
+                states.add(entry.state());
+                opacity.add(entry.opacity());
             }
         }
-        LOGGER.warn(
-                "The light of a chunk and its neighbours did not settle after {} exchange rounds chunk=[{},{}]",
-                MAX_EXCHANGE_ROUNDS, chunkX, chunkZ
-        );
-    }
 
-    /**
-     * Hands the border of every loaded neighbour to every loaded chunk of the area once.
-     * <p>
-     * The area is walked in a fixed order so that two runs over the same chunks do the same work
-     * in the same sequence.
-     * </p>
-     *
-     * @param neighbourhood the chunks of the exchanged area
-     * @return true if at least one chunk raised a level, otherwise false
-     */
-    private static boolean exchange(@Nullable NeighbourhoodEntry[] neighbourhood) {
-        boolean changed = false;
+        int[] neighbours = new int[states.size() * BorderExchange.FACES.length];
 
         for (int offsetZ = -NEIGHBOURHOOD_RADIUS; offsetZ <= NEIGHBOURHOOD_RADIUS; offsetZ++) {
             for (int offsetX = -NEIGHBOURHOOD_RADIUS; offsetX <= NEIGHBOURHOOD_RADIUS; offsetX++) {
-                @Nullable NeighbourhoodEntry entry = neighbourhood[slot(offsetX, offsetZ)];
+                int chunk = indices[slot(offsetX, offsetZ)];
 
-                if (entry == null) {
+                if (chunk < 0) {
                     continue;
                 }
 
-                for (BlockFace face : HORIZONTAL_FACES) {
-                    int neighbourX = offsetX + face.offsetX();
-                    int neighbourZ = offsetZ + face.offsetZ();
-
-                    if (isOutside(neighbourX, neighbourZ)) {
-                        continue;
-                    }
-
-                    @Nullable NeighbourhoodEntry neighbour = neighbourhood[slot(neighbourX, neighbourZ)];
-
-                    if (neighbour == null) {
-                        continue;
-                    }
-                    changed |= entry.state().injectBorder(entry.opacity(), face, neighbour.state());
+                for (int face = 0; face < BorderExchange.FACES.length; face++) {
+                    int neighbourX = offsetX + BorderExchange.FACES[face].offsetX();
+                    int neighbourZ = offsetZ + BorderExchange.FACES[face].offsetZ();
+                    neighbours[chunk * BorderExchange.FACES.length + face] =
+                            isOutside(neighbourX, neighbourZ) ? -1 : indices[slot(neighbourX, neighbourZ)];
                 }
             }
         }
-        return changed;
+
+        if (!new BorderExchange(states, opacity, neighbours).settle(MAX_EXCHANGE_ROUNDS)) {
+            LOGGER.warn(
+                    "The light of a chunk and its neighbours did not settle after {} exchange rounds chunk=[{},{}]",
+                    MAX_EXCHANGE_ROUNDS, chunkX, chunkZ
+            );
+        }
     }
 
     /**
