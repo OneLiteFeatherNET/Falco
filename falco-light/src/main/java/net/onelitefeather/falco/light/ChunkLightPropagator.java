@@ -220,6 +220,26 @@ public final class ChunkLightPropagator {
     }
 
     /**
+     * Returns where the sky stopped in every column during the last sky run.
+     * <p>
+     * {@link #seedSky(int)} finds this on its way down anyway. A {@link ChunkLightState} keeps the
+     * same heightmap for its updates, and handing it over spares the state a second walk down every
+     * column through the list of sections.
+     * </p>
+     *
+     * @return the highest position which stops the sky per column, or a negative value for an open
+     * column; a new array the caller may keep
+     */
+    int[] skyTops() {
+        int[] skyTops = new int[COLUMN_COUNT];
+
+        for (int column = 0; column < COLUMN_COUNT; column++) {
+            skyTops[column] = this.skyBottom[column] - 1;
+        }
+        return skyTops;
+    }
+
+    /**
      * Copies the levels of the last run out of the buffer, which the next run overwrites.
      *
      * @param height the amount of blocks the column spans vertically

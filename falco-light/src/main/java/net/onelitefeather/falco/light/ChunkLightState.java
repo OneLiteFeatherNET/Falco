@@ -190,7 +190,7 @@ public final class ChunkLightState {
      * @return the created state
      */
     static ChunkLightState blockLight(List<SectionOpacity> sections, ChunkLightPropagator propagator) {
-        return of(sections, propagator.propagateLevels(sections), false);
+        return new ChunkLightState(propagator.propagateLevels(sections), sections.size(), false, NO_HEIGHTMAP);
     }
 
     /**
@@ -212,38 +212,8 @@ public final class ChunkLightState {
      * @see #blockLight(List, ChunkLightPropagator)
      */
     static ChunkLightState skyLight(List<SectionOpacity> sections, ChunkLightPropagator propagator) {
-        return of(sections, propagator.propagateSkyLevels(sections), true);
-    }
-
-    /**
-     * Builds a state from an already calculated light.
-     *
-     * @param sections the light properties of every section of the chunk
-     * @param levels   one level per position, laid out like the levels of a state; taken over as is
-     * @param sky      whether the light is sky light
-     * @return the created state
-     */
-    private static ChunkLightState of(List<SectionOpacity> sections, byte[] levels, boolean sky) {
-        return new ChunkLightState(levels, sections.size(), sky, sky ? skyTopOf(sections) : NO_HEIGHTMAP);
-    }
-
-    /**
-     * Determines for every column of the chunk where the sky stops.
-     *
-     * @param sections the light properties of every section of the chunk
-     * @return the highest position which stops the sky per column
-     */
-    @Contract(pure = true)
-    private static int[] skyTopOf(List<SectionOpacity> sections) {
-        int height = sections.size() * LightNibbles.DIMENSION;
-        int[] skyTop = new int[LightNibbles.DIMENSION * LightNibbles.DIMENSION];
-
-        for (int z = 0; z < LightNibbles.DIMENSION; z++) {
-            for (int x = 0; x < LightNibbles.DIMENSION; x++) {
-                skyTop[column(x, z)] = columnTop(sections, height, x, z);
-            }
-        }
-        return skyTop;
+        byte[] levels = propagator.propagateSkyLevels(sections);
+        return new ChunkLightState(levels, sections.size(), true, propagator.skyTops());
     }
 
     /**
