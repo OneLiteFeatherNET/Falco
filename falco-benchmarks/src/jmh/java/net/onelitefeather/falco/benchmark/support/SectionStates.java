@@ -100,6 +100,30 @@ public final class SectionStates {
      */
     public static int[] lit(int lightSources, int occlusionPercent) {
         int entryCount = BenchmarkConstants.BLOCK_ENTRIES;
+        int[] values = new int[entryCount];
+        Random random = new Random(BenchmarkConstants.SEED);
+
+        for (int index = 0; index < entryCount; index++) {
+            values[index] = random.nextInt(100) < occlusionPercent ? FakeBlockLightSource.SOLID : FakeBlockLightSource.AIR;
+        }
+        return withLightSources(values, lightSources);
+    }
+
+    /**
+     * Replaces blocks of the given section with light emitting blocks, spread evenly over it.
+     * <p>
+     * The sources are spread evenly instead of being placed randomly. A random placement can
+     * cluster them, and a cluster performs far less work than the same amount of sources spread
+     * over the section because the searches of the cluster overlap immediately.
+     * </p>
+     *
+     * @param values       the section to write the sources into, changed in place
+     * @param lightSources the amount of light emitting blocks to place
+     * @return the given section
+     * @throws IllegalArgumentException if the section cannot hold the requested amount of sources
+     */
+    public static int[] withLightSources(int[] values, int lightSources) {
+        int entryCount = values.length;
 
         if (lightSources < 0 || lightSources > entryCount) {
             throw new IllegalArgumentException(
@@ -107,16 +131,6 @@ public final class SectionStates {
             );
         }
 
-        int[] values = new int[entryCount];
-        Random random = new Random(BenchmarkConstants.SEED);
-
-        for (int index = 0; index < entryCount; index++) {
-            values[index] = random.nextInt(100) < occlusionPercent ? FakeBlockLightSource.SOLID : FakeBlockLightSource.AIR;
-        }
-
-        // The sources are spread evenly instead of being placed randomly. A random placement can
-        // cluster them, and a cluster performs far less work than the same amount of sources spread
-        // over the section because the searches of the cluster overlap immediately.
         int stride = Math.max(entryCount / Math.max(lightSources, 1), 1);
 
         for (int source = 0; source < lightSources; source++) {

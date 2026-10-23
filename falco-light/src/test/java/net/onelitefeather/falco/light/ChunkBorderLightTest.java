@@ -74,6 +74,97 @@ class ChunkBorderLightTest {
         return (y << 8) | (z << 4) | x;
     }
 
+    /**
+     * Returns the x and z coordinate of a block on the given border, independent of how the state
+     * lays the border out internally.
+     *
+     * @param face   the border the block lies on
+     * @param offset the position along the remaining horizontal axis
+     * @return the x coordinate first and the z coordinate second
+     */
+    private static int[] borderColumn(BlockFace face, int offset) {
+        return switch (face) {
+            case WEST -> new int[]{0, offset};
+            case EAST -> new int[]{LightNibbles.DIMENSION - 1, offset};
+            case NORTH -> new int[]{offset, 0};
+            case SOUTH -> new int[]{offset, LightNibbles.DIMENSION - 1};
+            case TOP, BOTTOM -> throw new IllegalArgumentException("The face " + face + " is not horizontal");
+        };
+    }
+
+    @Test
+    void testEveryBorderReadsItsOwnEdge() {
+        int y = 20;
+        int offset = 5;
+
+        for (BlockFace face : List.of(BlockFace.WEST, BlockFace.EAST, BlockFace.NORTH, BlockFace.SOUTH)) {
+            int[] column = borderColumn(face, offset);
+            List<int[]> sections = airChunk(2);
+            sections.get(y >> 4)[index(column[0], y & 15, column[1])] = LAMP;
+            ChunkLightState state = ChunkLightState.blockLight(tables(sections));
+
+            byte[] border = state.border(face);
+
+            assertEquals(15, border[y * LightNibbles.DIMENSION + offset], "the lamp sits on the " + face + " border");
+        }
+    }
+
+    @Test
+    void testEveryBorderInjectsIntoItsOwnEdge() {
+        int y = 20;
+        int offset = 5;
+
+        for (BlockFace face : List.of(BlockFace.WEST, BlockFace.EAST, BlockFace.NORTH, BlockFace.SOUTH)) {
+            int[] column = borderColumn(face, offset);
+            List<SectionOpacity> tables = tables(airChunk(2));
+            ChunkLightState state = ChunkLightState.blockLight(tables);
+            byte[] border = new byte[2 * LightNibbles.DIMENSION * LightNibbles.DIMENSION];
+            border[y * LightNibbles.DIMENSION + offset] = 15;
+
+            state.injectBorder(tables, face, border);
+
+            assertEquals(14, state.get(column[0], y, column[1]), "the light enters through the " + face + " border");
+        }
+    }
+
+    @Test
+    void testInjectingFromTheNeighbourMatchesInjectingItsBorder() {
+        for (BlockFace face : List.of(BlockFace.WEST, BlockFace.EAST, BlockFace.NORTH, BlockFace.SOUTH)) {
+            // The lamp sits on the edge of the neighbour that faces this chunk.
+            int[] column = borderColumn(face.opposite(), 5);
+            List<int[]> neighbour = airChunk(2);
+            neighbour.get(1)[index(column[0], 4, column[1])] = LAMP;
+            ChunkLightState neighbourState = ChunkLightState.blockLight(tables(neighbour));
+
+            List<SectionOpacity> tables = tables(airChunk(2));
+            ChunkLightState copied = ChunkLightState.blockLight(tables);
+            ChunkLightState direct = ChunkLightState.blockLight(tables);
+
+            boolean copiedChanged = copied.injectBorder(tables, face, neighbourState.border(face.opposite()));
+            boolean directChanged = direct.injectBorder(tables, face, neighbourState);
+
+            assertEquals(copiedChanged, directChanged, "both injections report the same through " + face);
+
+            for (int y = 0; y < 2 * LightNibbles.DIMENSION; y++) {
+                for (int z = 0; z < LightNibbles.DIMENSION; z++) {
+                    for (int x = 0; x < LightNibbles.DIMENSION; x++) {
+                        assertEquals(copied.get(x, y, z), direct.get(x, y, z),
+                                "mismatch through " + face + " at " + x + " " + y + " " + z);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void testANeighbourOfAnotherHeightIsRejected() {
+        List<SectionOpacity> tables = tables(airChunk(2));
+        ChunkLightState state = ChunkLightState.blockLight(tables);
+        ChunkLightState neighbour = ChunkLightState.blockLight(tables(airChunk(1)));
+
+        assertThrows(IllegalArgumentException.class, () -> state.injectBorder(tables, BlockFace.WEST, neighbour));
+    }
+
     @Test
     void testTheBorderOfAChunkCanBeRead() {
         List<int[]> sections = airChunk(1);

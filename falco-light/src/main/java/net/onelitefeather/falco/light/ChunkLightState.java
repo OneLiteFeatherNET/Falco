@@ -2,6 +2,7 @@ package net.onelitefeather.falco.light;
 
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -44,9 +45,44 @@ public final class ChunkLightState {
     private static final int MASK = LightNibbles.DIMENSION - 1;
 
     /**
+     * The opposite of every face, indexed like {@link #FACES}, so the search reads it from a table
+     * instead of switching over the face for every neighbour it looks at.
+     */
+    private static final BlockFace[] OPPOSITES = opposites();
+
+    /**
      * The heightmap of a state which holds block light. Block light never reads it.
      */
     private static final int[] NO_HEIGHTMAP = new int[0];
+
+    /**
+     * The retraction queue of a state which has not retracted anything yet.
+     * <p>
+     * Only an update retracts, and most states never see one: a ring chunk of an area pass is
+     * copied, takes part in the border exchange and is thrown away. Sharing an empty queue spares
+     * every such copy 5 KB. Nothing is ever written into it, since the first write grows the queue.
+     * </p>
+     */
+    private static final int[] NO_REMOVALS = new int[0];
+
+    /**
+     * The levels belonging to {@link #NO_REMOVALS}.
+     */
+    private static final byte[] NO_REMOVAL_LEVELS = new byte[0];
+
+    /**
+     * Builds the table {@link #OPPOSITES} holds.
+     *
+     * @return the opposite of every face, indexed like {@link #FACES}
+     */
+    private static BlockFace[] opposites() {
+        BlockFace[] opposites = new BlockFace[FACES.length];
+
+        for (int index = 0; index < FACES.length; index++) {
+            opposites[index] = FACES[index].opposite();
+        }
+        return opposites;
+    }
 
     /**
      * The height of a column which nothing stops the sky in.
@@ -88,8 +124,8 @@ public final class ChunkLightState {
         this.height = sectionCount * LightNibbles.DIMENSION;
         this.sky = sky;
         this.skyTop = skyTop;
-        this.removalQueue = new int[INITIAL_QUEUE_SIZE];
-        this.removalLevels = new byte[INITIAL_QUEUE_SIZE];
+        this.removalQueue = NO_REMOVALS;
+        this.removalLevels = NO_REMOVAL_LEVELS;
         this.additionQueue = new int[INITIAL_QUEUE_SIZE];
     }
 
@@ -137,14 +173,30 @@ public final class ChunkLightState {
 
     /**
      * Makes room for one more entry in the retraction queue.
+     * <p>
+     * A state starts without a retraction queue, see {@link #NO_REMOVALS}, so the first entry
+     * creates it at {@link #INITIAL_QUEUE_SIZE} and every later one doubles it.
+     * </p>
      *
      * @param tail the amount of entries the queue currently holds
      */
     private void ensureRemovalRoom(int tail) {
         if (tail == this.removalQueue.length) {
-            this.removalQueue = Arrays.copyOf(this.removalQueue, this.removalQueue.length * 2);
-            this.removalLevels = Arrays.copyOf(this.removalLevels, this.removalLevels.length * 2);
+            int size = Math.max(INITIAL_QUEUE_SIZE, this.removalQueue.length * 2);
+            this.removalQueue = Arrays.copyOf(this.removalQueue, size);
+            this.removalLevels = Arrays.copyOf(this.removalLevels, size);
         }
+    }
+
+    /**
+     * Returns whether this state holds a retraction queue of its own.
+     *
+     * @return true once an update retracted something, otherwise false
+     */
+    @VisibleForTesting
+    @Contract(pure = true)
+    boolean holdsRemovalQueue() {
+        return this.removalQueue != NO_REMOVALS;
     }
 
     /**
@@ -154,7 +206,23 @@ public final class ChunkLightState {
      * @return the created state
      */
     public static ChunkLightState blockLight(List<SectionOpacity> sections) {
-        return of(sections, new ChunkLightPropagator().propagate(sections), false);
+        return blockLight(sections, new ChunkLightPropagator());
+    }
+
+    /**
+     * Calculates the block light of a chunk with the given propagator and keeps it for later updates.
+     * <p>
+     * A propagator sizes its buffers for a whole column, which is several hundred kilobytes for a
+     * tall world. A caller which builds many states one after another hands in the same propagator
+     * each time instead of having a new one allocated for every chunk.
+     * </p>
+     *
+     * @param sections   the light properties of every section of the chunk
+     * @param propagator the propagator to calculate with, used by nobody else during the call
+     * @return the created state
+     */
+    static ChunkLightState blockLight(List<SectionOpacity> sections, ChunkLightPropagator propagator) {
+        return new ChunkLightState(propagator.propagateLevels(sections), sections.size(), false, NO_HEIGHTMAP);
     }
 
     /**
@@ -164,53 +232,20 @@ public final class ChunkLightState {
      * @return the created state
      */
     public static ChunkLightState skyLight(List<SectionOpacity> sections) {
-        return of(sections, new ChunkLightPropagator().propagateSky(sections), true);
+        return skyLight(sections, new ChunkLightPropagator());
     }
 
     /**
-     * Builds a state from an already calculated light.
+     * Calculates the sky light of a chunk with the given propagator and keeps it for later updates.
      *
-     * @param sections the light properties of every section of the chunk
-     * @param light    the calculated light of every section
-     * @param sky      whether the light is sky light
+     * @param sections   the light properties of every section of the chunk
+     * @param propagator the propagator to calculate with, used by nobody else during the call
      * @return the created state
+     * @see #blockLight(List, ChunkLightPropagator)
      */
-    private static ChunkLightState of(List<SectionOpacity> sections, List<LightNibbles> light, boolean sky) {
-        int sectionCount = sections.size();
-        byte[] levels = new byte[sectionCount * LightNibbles.BLOCK_COUNT];
-
-        for (int section = 0; section < sectionCount; section++) {
-            LightNibbles nibbles = light.get(section);
-            int base = section * LightNibbles.DIMENSION;
-
-            for (int y = 0; y < LightNibbles.DIMENSION; y++) {
-                for (int z = 0; z < LightNibbles.DIMENSION; z++) {
-                    for (int x = 0; x < LightNibbles.DIMENSION; x++) {
-                        levels[index(x, base + y, z)] = (byte) nibbles.get(x, y, z);
-                    }
-                }
-            }
-        }
-        return new ChunkLightState(levels, sectionCount, sky, sky ? skyTopOf(sections) : NO_HEIGHTMAP);
-    }
-
-    /**
-     * Determines for every column of the chunk where the sky stops.
-     *
-     * @param sections the light properties of every section of the chunk
-     * @return the highest position which stops the sky per column
-     */
-    @Contract(pure = true)
-    private static int[] skyTopOf(List<SectionOpacity> sections) {
-        int height = sections.size() * LightNibbles.DIMENSION;
-        int[] skyTop = new int[LightNibbles.DIMENSION * LightNibbles.DIMENSION];
-
-        for (int z = 0; z < LightNibbles.DIMENSION; z++) {
-            for (int x = 0; x < LightNibbles.DIMENSION; x++) {
-                skyTop[column(x, z)] = columnTop(sections, height, x, z);
-            }
-        }
-        return skyTop;
+    static ChunkLightState skyLight(List<SectionOpacity> sections, ChunkLightPropagator propagator) {
+        byte[] levels = propagator.propagateSkyLevels(sections);
+        return new ChunkLightState(levels, sections.size(), true, propagator.skyTops());
     }
 
     /**
@@ -511,7 +546,8 @@ public final class ChunkLightState {
             int y = index >> 8;
             int next = level - 1;
 
-            for (BlockFace face : FACES) {
+            for (int faceIndex = 0; faceIndex < FACES.length; faceIndex++) {
+                BlockFace face = FACES[faceIndex];
                 int neighbourX = x + face.offsetX();
                 int neighbourY = y + face.offsetY();
                 int neighbourZ = z + face.offsetZ();
@@ -519,13 +555,15 @@ public final class ChunkLightState {
                 if (isOutside(neighbourX, neighbourY, neighbourZ)) {
                     continue;
                 }
-                if (blocksFace(sections, neighbourX, neighbourY, neighbourZ, face.opposite())) {
-                    continue;
-                }
 
                 int neighbourIndex = index(neighbourX, neighbourY, neighbourZ);
 
+                // The level is one array read, the occlusion a list lookup, a section and a table,
+                // and the level rejects far more often. Cheapest and most selective test first.
                 if (this.levels[neighbourIndex] >= next) {
+                    continue;
+                }
+                if (blocksFace(sections, neighbourX, neighbourY, neighbourZ, OPPOSITES[faceIndex])) {
                     continue;
                 }
                 this.levels[neighbourIndex] = (byte) next;
@@ -550,10 +588,15 @@ public final class ChunkLightState {
     public byte[] border(BlockFace face) {
         checkHorizontal(face);
         byte[] border = new byte[this.height * LightNibbles.DIMENSION];
+        int start = borderStart(face);
+        int stride = borderStride(face);
+        int slot = 0;
 
         for (int y = 0; y < this.height; y++) {
-            for (int offset = 0; offset < LightNibbles.DIMENSION; offset++) {
-                border[y * LightNibbles.DIMENSION + offset] = this.levels[borderIndex(face, y, offset)];
+            int index = (y << 8) + start;
+
+            for (int offset = 0; offset < LightNibbles.DIMENSION; offset++, index += stride) {
+                border[slot++] = this.levels[index];
             }
         }
         return border;
@@ -589,19 +632,72 @@ public final class ChunkLightState {
                             + " levels but the given one holds " + border.length
             );
         }
+        return inject(sections, face, border, 0, LightNibbles.DIMENSION, 1);
+    }
 
+    /**
+     * Feeds the light of a neighbouring chunk into this one, reading its border straight from it.
+     * <p>
+     * This is what an exchange over an area uses. {@link #border(BlockFace)} copies the edge into a
+     * new array only for it to be read once and thrown away, and an exchange does that for every
+     * face of every chunk in every round. Reading the levels of the neighbour in place gives the
+     * same result without the copy, since nothing writes to the neighbour while this chunk reads it.
+     * </p>
+     *
+     * @param sections  the light properties of every section of this chunk
+     * @param face      the border the light enters through
+     * @param neighbour the chunk which lies beyond that border
+     * @return true if at least one level of this chunk was raised, otherwise false
+     * @throws IllegalArgumentException if the face is not horizontal or the neighbour has another height
+     * @see #injectBorder(List, BlockFace, byte[])
+     */
+    boolean injectBorder(List<SectionOpacity> sections, BlockFace face, ChunkLightState neighbour) {
+        checkHorizontal(face);
+
+        if (neighbour.height != this.height) {
+            throw new IllegalArgumentException(
+                    "This chunk is " + this.height + " blocks high but the given neighbour is " + neighbour.height
+            );
+        }
+        BlockFace opposite = face.opposite();
+        return inject(sections, face, neighbour.levels, borderStart(opposite), 1 << 8, borderStride(opposite));
+    }
+
+    /**
+     * Raises the levels along one border from the given source and spreads them into the chunk.
+     * <p>
+     * The source is either a copied border or the levels of the neighbour itself. Both are walked by
+     * height first and along the border second, so the caller only describes where the walk starts
+     * and how far one step in either direction moves through the source.
+     * </p>
+     *
+     * @param sections        the light properties of every section of this chunk
+     * @param face            the border the light enters through
+     * @param source          the array holding the levels of the neighbouring border
+     * @param sourceStart     the index of the bottom block at offset zero in the source
+     * @param sourceRowStride the distance between two heights in the source
+     * @param sourceStride    the distance between two offsets in the source
+     * @return true if at least one level of this chunk was raised, otherwise false
+     */
+    private boolean inject(List<SectionOpacity> sections, BlockFace face, byte[] source,
+                           int sourceStart, int sourceRowStride, int sourceStride) {
         int tail = 0;
+        int start = borderStart(face);
+        int stride = borderStride(face);
 
         for (int y = 0; y < this.height; y++) {
+            int index = (y << 8) + start - stride;
+            int sourceIndex = y * sourceRowStride + sourceStart - sourceStride;
+
             for (int offset = 0; offset < LightNibbles.DIMENSION; offset++) {
-                int incoming = border[y * LightNibbles.DIMENSION + offset] - 1;
+                // Advanced first, so every continue below still moves on to the next block.
+                index += stride;
+                sourceIndex += sourceStride;
+                int incoming = source[sourceIndex] - 1;
 
                 if (incoming <= 0) {
                     continue;
                 }
-
-                int index = borderIndex(face, y, offset);
-
                 if (this.levels[index] >= incoming) {
                     continue;
                 }
@@ -619,20 +715,38 @@ public final class ChunkLightState {
     }
 
     /**
-     * Calculates the index of a block which lies on the given border.
+     * Calculates the index of the first block of the given border at the bottom of the column.
+     * <p>
+     * A border is walked by height first and along the remaining horizontal axis second. The face
+     * is the same for every block of that walk, so it is resolved once into this start and the
+     * {@link #borderStride(BlockFace) stride} instead of once per block.
+     * </p>
      *
-     * @param face   the border the block lies on
-     * @param y      the y coordinate inside the column
-     * @param offset the position along the remaining horizontal axis
-     * @return the index of the block
+     * @param face the border to walk
+     * @return the index of the block at offset zero and height zero
      */
     @Contract(pure = true)
-    private static int borderIndex(BlockFace face, int y, int offset) {
+    private static int borderStart(BlockFace face) {
         return switch (face) {
-            case WEST -> index(0, y, offset);
-            case EAST -> index(LightNibbles.DIMENSION - 1, y, offset);
-            case NORTH -> index(offset, y, 0);
-            case SOUTH -> index(offset, y, LightNibbles.DIMENSION - 1);
+            case WEST, NORTH -> index(0, 0, 0);
+            case EAST -> index(LightNibbles.DIMENSION - 1, 0, 0);
+            case SOUTH -> index(0, 0, LightNibbles.DIMENSION - 1);
+            case TOP, BOTTOM -> throw new IllegalArgumentException("The face " + face + " is not horizontal");
+        };
+    }
+
+    /**
+     * Calculates how far apart two neighbouring blocks of the given border lie in the index.
+     *
+     * @param face the border to walk
+     * @return the distance between two blocks one offset apart
+     * @see #borderStart(BlockFace)
+     */
+    @Contract(pure = true)
+    private static int borderStride(BlockFace face) {
+        return switch (face) {
+            case WEST, EAST -> index(0, 0, 1);
+            case NORTH, SOUTH -> index(1, 0, 0);
             case TOP, BOTTOM -> throw new IllegalArgumentException("The face " + face + " is not horizontal");
         };
     }
@@ -661,26 +775,10 @@ public final class ChunkLightState {
         List<LightNibbles> result = new ArrayList<>(this.sectionCount);
 
         for (int section = 0; section < this.sectionCount; section++) {
-            int base = section * LightNibbles.DIMENSION;
-            LightNibbles nibbles = LightNibbles.uniform(0);
-            boolean uniform = true;
-            int first = this.levels[index(0, base, 0)];
-
-            for (int y = 0; y < LightNibbles.DIMENSION; y++) {
-                for (int z = 0; z < LightNibbles.DIMENSION; z++) {
-                    for (int x = 0; x < LightNibbles.DIMENSION; x++) {
-                        int level = this.levels[index(x, base + y, z)];
-
-                        if (level != first) {
-                            uniform = false;
-                        }
-                        if (level != 0) {
-                            nibbles.set(x, y, z, level);
-                        }
-                    }
-                }
-            }
-            result.add(uniform ? LightNibbles.uniform(first) : nibbles);
+            // The levels of a section lie next to each other, because the index of a position puts
+            // its y coordinate into the highest bits. One pass packs them and detects a uniform
+            // section, where writing them one by one would check and shift every single level.
+            result.add(LightNibbles.ofLevels(this.levels, section * LightNibbles.BLOCK_COUNT));
         }
         return result;
     }
