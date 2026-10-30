@@ -34,7 +34,7 @@ dependencyResolutionManagement {
             version("slf4j", "2.0.20")
             version("annotations", "26.1.0")
             version("jmh", "1.37")
-            version("jmhPlugin", "0.7.3")
+            version("jmhPlugin", "0.7.4")
             version("japicmpPlugin", "0.4.6")
             version("adventureBom", "5.2.0")
             version("archunit", "1.5.1")
