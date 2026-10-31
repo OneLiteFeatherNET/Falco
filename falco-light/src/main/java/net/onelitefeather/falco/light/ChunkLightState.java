@@ -217,8 +217,8 @@ public final class ChunkLightState {
      * Determines where the sky stops in a single column.
      * <p>
      * The walk starts at the top of the chunk and ends at the first block which light cannot enter
-     * from above, exactly as the initial sky propagation walks a column. Everything above that
-     * block sees the open sky, everything below it does not.
+     * from above or which dims it, exactly as the initial sky propagation walks a column. Everything
+     * above that block sees the open sky at the full level, everything below it does not.
      * </p>
      *
      * @param sections the light properties of every section of the chunk
@@ -230,7 +230,7 @@ public final class ChunkLightState {
     @Contract(pure = true)
     private static int columnTop(List<SectionOpacity> sections, int height, int x, int z) {
         for (int y = height - 1; y >= 0; y--) {
-            if (blocksFace(sections, x, y, z, BlockFace.TOP)) {
+            if (blocksFace(sections, x, y, z, BlockFace.TOP) || dimsSkyLight(sections, x, y, z)) {
                 return y;
             }
         }
@@ -322,6 +322,11 @@ public final class ChunkLightState {
         if (y > currentTop && y > previousTop) {
             additions = seedSky(additions, index(x, y, z));
         }
+        // A column which now ends at a dimming block passes the sky on one level weaker. Seeded
+        // like the full propagation does, so a dimming block at the top of the chunk is lit too.
+        if (currentTop >= 0 && !blocksFace(sections, x, currentTop, z, BlockFace.TOP)) {
+            additions = seedDimmedSky(additions, index(x, currentTop, z));
+        }
         spread(sections, seedNeighbours(additions, x, y, z));
     }
 
@@ -352,6 +357,26 @@ public final class ChunkLightState {
         // Guarded like every other write into the queue since it stopped being sized for the whole
         // chunk. A column which opens up cannot follow a retraction in the same call, so no reachable
         // path arrives here with a full queue — which is a reason to keep the guard, not to drop it.
+        ensureRoom(queued);
+        this.additionQueue[queued] = index;
+        return queued + 1;
+    }
+
+    /**
+     * Gives a dimming block at the end of an open column the level the sky passes on to it and
+     * hands it to the second pass.
+     *
+     * @param queued the amount of positions which are already queued for the second pass
+     * @param index  the index of the dimming block
+     * @return the amount of queued positions
+     */
+    private int seedDimmedSky(int queued, int index) {
+        int dimmed = LightNibbles.MAX_LEVEL - 1;
+
+        if (this.levels[index] >= dimmed) {
+            return queued;
+        }
+        this.levels[index] = (byte) dimmed;
         ensureRoom(queued);
         this.additionQueue[queued] = index;
         return queued + 1;
@@ -697,6 +722,19 @@ public final class ChunkLightState {
      */
     private static boolean blocksFace(List<SectionOpacity> sections, int x, int y, int z, BlockFace face) {
         return sections.get(y >> 4).blocksFace(x, y & MASK, z, face);
+    }
+
+    /**
+     * Checks whether sky light loses a level when it falls into the given position.
+     *
+     * @param sections the light properties of every section
+     * @param x        the x coordinate inside the chunk
+     * @param y        the y coordinate inside the column
+     * @param z        the z coordinate inside the chunk
+     * @return true if the block dims sky light, otherwise false
+     */
+    private static boolean dimsSkyLight(List<SectionOpacity> sections, int x, int y, int z) {
+        return sections.get(y >> 4).dimsSkyLight(x, y & MASK, z);
     }
 
     /**

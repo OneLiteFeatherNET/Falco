@@ -130,6 +130,12 @@ public final class ChunkLightPropagator {
     private static final int TOP_BIT = 1 << BlockFace.TOP.ordinal();
 
     /**
+     * The bits of a flat occlusion byte which end the fall of the sky through a column: a closed
+     * top face, or a block that dims the light falling into it.
+     */
+    private static final int SKY_STOP_BITS = TOP_BIT | SectionOpacity.DIMS_SKY_BIT;
+
+    /**
      * The amount of columns a chunk holds.
      */
     private static final int COLUMN_COUNT = LightNibbles.DIMENSION * LightNibbles.DIMENSION;
@@ -341,9 +347,10 @@ public final class ChunkLightPropagator {
      * Lights every block which sees the open sky and queues the few of them that can spread it.
      * <p>
      * Every column is walked from the top of the chunk downwards. As long as light can enter the
-     * block from above it receives the full level, which is why an open column is lit to the very
-     * bottom. The walk of a column ends at the first block that stops the light, and where it ended
-     * is kept per column — that is the heightmap this method builds on the way past.
+     * block from above without being dimmed it receives the full level, which is why an open column
+     * is lit to the very bottom. The walk of a column ends at the first block that stops or dims the
+     * light, and where it ended is kept per column — that is the heightmap this method builds on the
+     * way past.
      * </p>
      * <p>
      * <b>Lighting a position and queueing it are two different things, and this is the one place
@@ -364,6 +371,8 @@ public final class ChunkLightPropagator {
      * @return the amount of queued positions
      */
     private int seedSky(int height) {
+        int tail = 0;
+
         for (int z = 0; z < LightNibbles.DIMENSION; z++) {
             for (int x = 0; x < LightNibbles.DIMENSION; x++) {
                 int y = height - 1;
@@ -371,16 +380,25 @@ public final class ChunkLightPropagator {
                 for (; y >= 0; y--) {
                     int index = index(x, y, z);
 
-                    if ((this.occlusion[index] & TOP_BIT) != 0) {
+                    if ((this.occlusion[index] & SKY_STOP_BITS) != 0) {
                         break;
                     }
                     this.levels[index] = LightNibbles.MAX_LEVEL;
                 }
                 this.skyBottom[column(x, z)] = y + 1;
+
+                // A column which ends at a dimming block rather than a closed one passes the sky on
+                // one level weaker, and from there it spreads like any other light. The block is
+                // seeded directly instead of the open position above it, because a dimming block at
+                // the very top of the chunk has no such position inside the column.
+                if (y >= 0 && (this.occlusion[index(x, y, z)] & TOP_BIT) == 0) {
+                    int index = index(x, y, z);
+                    this.levels[index] = LightNibbles.MAX_LEVEL - 1;
+                    ensureRoom(tail);
+                    this.queue[tail++] = index | (NO_FACE << POSITION_BITS);
+                }
             }
         }
-
-        int tail = 0;
 
         for (int z = 0; z < LightNibbles.DIMENSION; z++) {
             for (int x = 0; x < LightNibbles.DIMENSION; x++) {

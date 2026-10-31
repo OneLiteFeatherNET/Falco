@@ -43,6 +43,24 @@ class MinestomBlockLightSourceTest {
     }
 
     @Test
+    void testTintedGlassBlocksEveryFace() {
+        // Its shape occludes nothing, but it takes all fifteen levels from the light entering it.
+        for (BlockFace face : BlockFace.values()) {
+            assertTrue(this.source.blocksFace(Block.TINTED_GLASS.stateId(), face), "tinted glass must block " + face);
+        }
+    }
+
+    @Test
+    void testLeavesAndWaterDimTheSkyButAirAndGlassDoNot() {
+        assertTrue(this.source.dimsSkyLight(Block.OAK_LEAVES.stateId()));
+        assertTrue(this.source.dimsSkyLight(Block.WATER.stateId()));
+        assertTrue(this.source.dimsSkyLight(Block.GLASS_PANE.withProperty("waterlogged", "true").stateId()));
+        assertFalse(this.source.dimsSkyLight(Block.AIR.stateId()));
+        assertFalse(this.source.dimsSkyLight(Block.GLASS.stateId()));
+        assertFalse(this.source.dimsSkyLight(Integer.MAX_VALUE), "an unknown state dims nothing");
+    }
+
+    @Test
     void testGlowstoneReportsItsEmission() {
         assertEquals(15, this.source.emission(Block.GLOWSTONE.stateId()));
     }

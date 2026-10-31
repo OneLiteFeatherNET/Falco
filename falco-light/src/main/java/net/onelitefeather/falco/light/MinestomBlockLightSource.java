@@ -63,7 +63,28 @@ public final class MinestomBlockLightSource implements BlockLightSource {
         if (block == null) {
             return false;
         }
+        // A block which takes all fifteen levels lets nothing through, whatever its shape. Tinted
+        // glass is the one state of the game for which that differs from its shape: it is drawn
+        // like glass and therefore occludes no face, but it stops light completely.
+        if (block.registry().lightBlocked() >= LightNibbles.MAX_LEVEL) {
+            return true;
+        }
         return block.occlusionShape().isFaceFull(toServerFace(face));
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The registry gives every state the amount of levels light loses entering it, and in the
+     * current game data that amount is always zero, one or fifteen. Fifteen is answered by
+     * {@link #blocksFace(int, BlockFace)} as a block that stops light on every face, and one is
+     * a block that dims the sky. A value in between would be treated like one here.
+     * </p>
+     */
+    @Override
+    public boolean dimsSkyLight(int stateId) {
+        Block block = resolve(stateId);
+        return block != null && block.registry().lightBlocked() > 0;
     }
 
     /**

@@ -39,13 +39,27 @@ public final class SectionOpacity {
     private static final int NOT_UNIFORM = Integer.MIN_VALUE;
 
     /**
-     * The amount of bits the occluded faces of a block occupy in a resolved state.
-     * One bit per face, so a resolved state fits into a short together with its emission.
+     * The bits which carry the occluded faces of a block, one bit per face.
      */
-    private static final int OCCLUSION_BITS = 6;
+    private static final int FACE_MASK = (1 << FACES.length) - 1;
 
     /**
-     * The bits which carry the occluded faces of a resolved state.
+     * The bit of a resolved state which marks a block that dims sky light falling into it.
+     * <p>
+     * It sits in the same byte as the occluded faces, right above them, so the propagators read it
+     * with the occlusion they already load and no table of its own is needed.
+     * </p>
+     */
+    static final int DIMS_SKY_BIT = 1 << FACES.length;
+
+    /**
+     * The amount of bits the occlusion byte of a block occupies in a resolved state: the occluded
+     * faces and the dimming bit, so a resolved state fits into a short together with its emission.
+     */
+    private static final int OCCLUSION_BITS = FACES.length + 1;
+
+    /**
+     * The bits which carry the occlusion byte of a resolved state.
      */
     private static final int OCCLUSION_MASK = (1 << OCCLUSION_BITS) - 1;
 
@@ -102,7 +116,7 @@ public final class SectionOpacity {
             int properties = resolve(uniform, source);
             byte occluded = (byte) (properties & OCCLUSION_MASK);
             byte emitted = (byte) (properties >>> OCCLUSION_BITS);
-            return new SectionOpacity(null, null, occluded, emitted, emitted != 0, occluded == 0);
+            return new SectionOpacity(null, null, occluded, emitted, emitted != 0, (occluded & FACE_MASK) == 0);
         }
 
         byte[] occlusion = new byte[stateIds.length];
@@ -132,7 +146,7 @@ public final class SectionOpacity {
             anyEmission |= emitted;
             anyOcclusion |= occluded;
         }
-        return new SectionOpacity(occlusion, emission, (byte) 0, (byte) 0, anyEmission != 0, anyOcclusion == 0);
+        return new SectionOpacity(occlusion, emission, (byte) 0, (byte) 0, anyEmission != 0, (anyOcclusion & FACE_MASK) == 0);
     }
 
     /**
@@ -145,7 +159,7 @@ public final class SectionOpacity {
      *
      * @param stateId the state id to resolve
      * @param source  the source which describes the light properties of a block
-     * @return the occluded faces in the low bits and the emission above them
+     * @return the occluded faces and the dimming bit in the low bits and the emission above them
      */
     @Contract(pure = true)
     private static int resolve(int stateId, BlockLightSource source) {
@@ -155,6 +169,9 @@ public final class SectionOpacity {
             if (source.blocksFace(stateId, face)) {
                 mask |= 1 << face.ordinal();
             }
+        }
+        if (source.dimsSkyLight(stateId)) {
+            mask |= DIMS_SKY_BIT;
         }
         return mask | (source.emission(stateId) << OCCLUSION_BITS);
     }
@@ -315,7 +332,24 @@ public final class SectionOpacity {
     }
 
     /**
-     * Writes the occluded faces of every block of this section into one flat array.
+     * Checks whether sky light loses a level when it falls into the block at the given position.
+     *
+     * @param x the x coordinate inside the section
+     * @param y the y coordinate inside the section
+     * @param z the z coordinate inside the section
+     * @return true if the block dims sky light, otherwise false
+     * @see BlockLightSource#dimsSkyLight(int)
+     */
+    @Contract(pure = true)
+    public boolean dimsSkyLight(int x, int y, int z) {
+        byte[] table = this.occlusion;
+        byte mask = table == null ? this.uniformOcclusion : table[index(x, y, z)];
+        return (mask & DIMS_SKY_BIT) != 0;
+    }
+
+    /**
+     * Writes the occluded faces of every block of this section into one flat array, together with
+     * the bit {@link #DIMS_SKY_BIT} of every block that dims sky light.
      * <p>
      * A propagation over a whole chunk reads the occlusion of a neighbour once per face per queued
      * position, and reaching it through the section costs an index into the list, an interface call

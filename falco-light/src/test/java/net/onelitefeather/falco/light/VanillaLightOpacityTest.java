@@ -2,6 +2,7 @@ package net.onelitefeather.falco.light;
 
 import net.minestom.server.instance.block.Block;
 import net.minestom.testing.extension.MicrotusExtension;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -109,6 +110,25 @@ class VanillaLightOpacityTest {
         return sections.stream().map(states -> SectionOpacity.of(states, this.source)).toList();
     }
 
+    /**
+     * Asserts that the given state holds exactly what a sky light calculation from scratch would
+     * produce.
+     *
+     * @param state    the incrementally updated state
+     * @param sections the state ids of every section after the change
+     */
+    private void assertMatchesFullRecalculation(ChunkLightState state, List<int[]> sections) {
+        ChunkLightState fresh = ChunkLightState.skyLight(tables(sections));
+
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int z = 0; z < LightNibbles.DIMENSION; z++) {
+                for (int x = 0; x < LightNibbles.DIMENSION; x++) {
+                    assertEquals(fresh.get(x, y, z), state.get(x, y, z), "mismatch at " + x + "/" + y + "/" + z);
+                }
+            }
+        }
+    }
+
     @Test
     void testTintedGlassBlocksBlockLight() {
         List<int[]> sections = airChunk(1);
@@ -160,6 +180,69 @@ class VanillaLightOpacityTest {
     }
 
     @Test
+    void testADimmingLayerAtTheTopOfTheChunkIsLit() {
+        // There is no open position above the layer inside the chunk, so the sky has to be handed
+        // to the layer itself.
+        List<int[]> sections = airChunk(2);
+        fillLayer(sections, HEIGHT - 1, Block.OAK_LEAVES);
+
+        ChunkLightState state = ChunkLightState.skyLight(tables(sections));
+
+        assertEquals(14, state.get(8, HEIGHT - 1, 8), "the top layer receives the sky one level weaker");
+        assertEquals(13, state.get(8, HEIGHT - 2, 8), "and passes it on one level weaker again");
+    }
+
+    @Test
+    void testPlacingADimmingBlockMatchesAFullRecalculation() {
+        List<int[]> sections = airChunk(2);
+        ChunkLightState state = ChunkLightState.skyLight(tables(sections));
+
+        place(sections, 8, LAYER, 8, Block.OAK_LEAVES);
+        state.update(tables(sections), 8, LAYER, 8);
+
+        assertEquals(14, state.get(8, LAYER, 8), "the leaves receive the sky one level weaker");
+        assertMatchesFullRecalculation(state, sections);
+    }
+
+    @Test
+    void testRemovingADimmingBlockMatchesAFullRecalculation() {
+        List<int[]> sections = airChunk(2);
+        fillLayer(sections, LAYER, Block.WATER);
+        ChunkLightState state = ChunkLightState.skyLight(tables(sections));
+
+        place(sections, 8, LAYER, 8, Block.AIR);
+        state.update(tables(sections), 8, LAYER, 8);
+
+        assertEquals(15, state.get(8, 0, 8), "the opened column sees the sky down to the bottom");
+        assertMatchesFullRecalculation(state, sections);
+    }
+
+    @Test
+    void testPlacingADimmingBlockAtTheTopOfTheChunkMatchesAFullRecalculation() {
+        List<int[]> sections = airChunk(2);
+        ChunkLightState state = ChunkLightState.skyLight(tables(sections));
+
+        place(sections, 8, HEIGHT - 1, 8, Block.OAK_LEAVES);
+        state.update(tables(sections), 8, HEIGHT - 1, 8);
+
+        assertEquals(14, state.get(8, HEIGHT - 1, 8), "the leaves receive the sky one level weaker");
+        assertMatchesFullRecalculation(state, sections);
+    }
+
+    @Test
+    void testPlacingADimmingBlockBelowAnotherOneMatchesAFullRecalculation() {
+        // The changed block lies below the top of its column, so the top does not move.
+        List<int[]> sections = airChunk(2);
+        fillLayer(sections, LAYER, Block.OAK_LEAVES);
+        ChunkLightState state = ChunkLightState.skyLight(tables(sections));
+
+        place(sections, 8, LAYER - 5, 8, Block.WATER);
+        state.update(tables(sections), 8, LAYER - 5, 8);
+
+        assertMatchesFullRecalculation(state, sections);
+    }
+
+    @Test
     void testSkyLightFallsThroughACarpetUnchanged() {
         List<int[]> sections = airChunk(2);
         fillLayer(sections, LAYER, Block.WHITE_CARPET);
@@ -171,6 +254,7 @@ class VanillaLightOpacityTest {
     }
 
     @Test
+    @Disabled("Needs Block#lightUsesShape, which arrives with Minestom 26.3 (Minestom/Minestom#3421)")
     void testBlockLightRisesThroughACarpet() {
         // A carpet has a full bottom face, but vanilla does not let its shape stop light, so light
         // from below passes it like air.
@@ -185,6 +269,7 @@ class VanillaLightOpacityTest {
     }
 
     @Test
+    @Disabled("Needs Block#lightUsesShape, which arrives with Minestom 26.3 (Minestom/Minestom#3421)")
     void testLightCannotLeaveATopSlabThroughItsTopFace() {
         // A closed layer of top slabs with one hole, the hole capped by stone. Light from below
         // reaches the hole and enters the slabs through their open sides, but a slab uses its shape
