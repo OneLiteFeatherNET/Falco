@@ -133,16 +133,28 @@ public final class LightNibbles {
             );
         }
 
-        byte[] packed = new byte[ARRAY_LENGTH];
         int first = levels[offset];
-        int differing = 0;
+        int end = offset + BLOCK_COUNT;
+        int position = offset + 1;
+
+        // Most sections of a world are dark or fully lit, and those are answered without a table.
+        // Looking for the first differing level before packing keeps them from allocating one only
+        // to throw it away, and for every other section the scan stops after a few positions.
+        while (position < end && levels[position] == first) {
+            position++;
+        }
+
+        if (position == end) {
+            return new LightNibbles(checkLevel(first));
+        }
+
+        byte[] packed = new byte[ARRAY_LENGTH];
         int outOfRange = 0;
 
         for (int index = 0; index < ARRAY_LENGTH; index++) {
             int low = levels[offset + (index << 1)];
             int high = levels[offset + (index << 1) + 1];
             packed[index] = (byte) ((low & 0x0F) | ((high & 0x0F) << 4));
-            differing |= (low ^ first) | (high ^ first);
             outOfRange |= low | high;
         }
 
@@ -150,10 +162,6 @@ public final class LightNibbles {
         // sets a bit no level may reach, and one accumulated value carries the bits of all of them.
         if ((outOfRange & ~0x0F) != 0) {
             throw new IllegalArgumentException("A light level must be within [0, " + MAX_LEVEL + "]");
-        }
-
-        if (differing == 0) {
-            return new LightNibbles(first);
         }
 
         LightNibbles nibbles = new LightNibbles(0);

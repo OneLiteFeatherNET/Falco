@@ -69,8 +69,8 @@ class ChunkLightServiceConcurrencyTest {
         List<Chunk> chunks = lampChunks(instance);
         List<List<byte[]>> expected = new ArrayList<>(chunks.size());
 
-        // The reference is taken one chunk after the other. A service which keeps nothing between
-        // two calls has to reproduce it no matter how many threads call it.
+        // The reference is taken one chunk after the other. A service whose pool never hands one
+        // propagator to two calls at once has to reproduce it no matter how many threads call it.
         for (Chunk chunk : chunks) {
             ChunkLightService reference = new ChunkLightService();
             reference.calculate(chunk);

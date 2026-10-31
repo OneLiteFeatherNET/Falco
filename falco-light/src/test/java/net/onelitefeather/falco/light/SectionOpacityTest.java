@@ -300,6 +300,30 @@ class SectionOpacityTest {
     }
 
     @Test
+    void testAMixedSectionWithoutALightSourceHoldsNoEmissionTable() {
+        int[] states = new int[LightNibbles.BLOCK_COUNT];
+        states[LightNibbles.BLOCK_COUNT - 1] = STONE;
+        SectionOpacity opacity = SectionOpacity.of(states, SOURCE);
+
+        assertFalse(opacity.isUniform(), "the section has to be mixed, or the test proves nothing");
+        assertFalse(opacity.hasEmission());
+        assertFalse(opacity.holdsEmissionTable(), "a table of zeros carries nothing");
+        assertEquals(0, opacity.emission(0, 0, 0));
+        assertEquals(0, opacity.emission(15, 15, 15));
+    }
+
+    @Test
+    void testAMixedSectionWithALightSourceKeepsItsEmissionTable() {
+        int[] states = new int[LightNibbles.BLOCK_COUNT];
+        states[LightNibbles.BLOCK_COUNT - 1] = GLOWSTONE;
+        SectionOpacity opacity = SectionOpacity.of(states, SOURCE);
+
+        assertTrue(opacity.holdsEmissionTable());
+        assertEquals(15, opacity.emission(15, 15, 15));
+        assertEquals(0, opacity.emission(0, 0, 0));
+    }
+
+    @Test
     void testAUniformSectionIsRecognised() {
         // Whole sections of a world hold one repeated state. Such a section needs no per position
         // table at all, which saves both the lookups and the two arrays.

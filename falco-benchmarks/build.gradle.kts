@@ -23,6 +23,7 @@ dependencies {
     testImplementation(sourceSets["jmh"].output)
     testImplementation(project(":falco-anvil"))
     testImplementation(project(":falco-instance"))
+    testImplementation(project(":falco-light"))
     testImplementation(libs.adventure.nbt)
     testImplementation(libs.annotations)
     testImplementation(libs.jmh.core)

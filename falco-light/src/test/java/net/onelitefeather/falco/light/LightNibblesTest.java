@@ -262,6 +262,29 @@ class LightNibblesTest {
     }
 
     @Test
+    void testARepeatedLevelOutsideTheAllowedRangeIsRejected() {
+        // A uniform section is answered without packing anything, so the range check must not
+        // depend on the packing loop.
+        byte[] levels = new byte[LightNibbles.BLOCK_COUNT];
+        Arrays.fill(levels, (byte) 42);
+
+        assertThrows(IllegalArgumentException.class, () -> LightNibbles.ofLevels(levels, 0));
+    }
+
+    @Test
+    void testALevelArrayWhichDiffersOnlyAtTheLastPositionIsNotUniform() {
+        byte[] levels = new byte[LightNibbles.BLOCK_COUNT];
+        Arrays.fill(levels, (byte) 5);
+        levels[LightNibbles.BLOCK_COUNT - 1] = 9;
+
+        LightNibbles nibbles = LightNibbles.ofLevels(levels, 0);
+
+        assertFalse(nibbles.isUniform());
+        assertEquals(5, nibbles.get(0, 0, 0));
+        assertEquals(9, nibbles.get(15, 15, 15));
+    }
+
+    @Test
     void testALevelArrayWhichIsTooShortIsRejected() {
         assertThrows(IllegalArgumentException.class, () -> LightNibbles.ofLevels(new byte[10], 0));
         assertThrows(

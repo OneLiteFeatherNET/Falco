@@ -3,6 +3,7 @@ package net.onelitefeather.falco.light;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import java.util.Arrays;
 
@@ -61,6 +62,7 @@ public final class SectionOpacity {
      *
      * @param occlusion        the occluded faces of every block, or null for a uniform section
      * @param emission         the emitted light level of every block, or null for a uniform section
+     *                         and for a section without any light source
      * @param uniformOcclusion the occluded faces of a uniform section
      * @param uniformEmission  the emitted light level of a uniform section
      * @param hasEmission      whether any block of the section emits light
@@ -132,7 +134,12 @@ public final class SectionOpacity {
             anyEmission |= emitted;
             anyOcclusion |= occluded;
         }
-        return new SectionOpacity(occlusion, emission, (byte) 0, (byte) 0, anyEmission != 0, anyOcclusion == 0);
+
+        // Most sections hold no light source at all, and a table of zeros answers nothing a missing
+        // one does not. It is still filled during the walk, since skipping it there costs more time
+        // than the allocation saves, but it is not kept for as long as the section lives.
+        byte @Nullable [] emissionTable = anyEmission != 0 ? emission : null;
+        return new SectionOpacity(occlusion, emissionTable, (byte) 0, (byte) 0, anyEmission != 0, anyOcclusion == 0);
     }
 
     /**
@@ -390,6 +397,17 @@ public final class SectionOpacity {
     @Contract(pure = true)
     public boolean isUniform() {
         return this.occlusion == null;
+    }
+
+    /**
+     * Checks whether this section keeps a table with the emission of every block.
+     *
+     * @return true if the section holds a per position emission table, otherwise false
+     */
+    @VisibleForTesting
+    @Contract(pure = true)
+    boolean holdsEmissionTable() {
+        return this.emission != null;
     }
 
     /**
