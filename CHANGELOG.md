@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.2](https://github.com/OneLiteFeatherNET/Falco/compare/v3.0.1...v3.0.2) (2026-10-31)
+
+
+### Performance Improvements
+
+* **light:** reduce the number of iterations in light calculations ([#107](https://github.com/OneLiteFeatherNET/Falco/issues/107)) ([7845e33](https://github.com/OneLiteFeatherNET/Falco/commit/7845e336a4d6b0c71bae634eae4a4cb3fadf3676))
+
 ## [3.0.1](https://github.com/OneLiteFeatherNET/Falco/compare/v3.0.0...v3.0.1) (2026-10-10)
 
 

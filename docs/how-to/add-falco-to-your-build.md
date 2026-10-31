@@ -25,12 +25,12 @@ snapshot endpoints are both public. Every coordinate is listed in
 
    ```kotlin
    dependencies {
-       implementation(platform("net.onelitefeather:falco-bom:3.0.1"))
+       implementation(platform("net.onelitefeather:falco-bom:3.0.2"))
 
        implementation("net.onelitefeather:falco-anvil")
        implementation("net.onelitefeather:falco-light")
        implementation("net.onelitefeather:falco-instance")
-       implementation("net.onelitefeather:falco-migration:3.0.1") // not in the BOM, so it takes its version here
+       implementation("net.onelitefeather:falco-migration:3.0.2") // not in the BOM, so it takes its version here
    }
    ```
 
@@ -55,10 +55,10 @@ Version each module individually instead of step 2:
 <!-- x-release-please-start-version -->
 ```kotlin
 dependencies {
-    implementation("net.onelitefeather:falco-anvil:3.0.1")
-    implementation("net.onelitefeather:falco-light:3.0.1")
-    implementation("net.onelitefeather:falco-instance:3.0.1")
-    implementation("net.onelitefeather:falco-migration:3.0.1")
+    implementation("net.onelitefeather:falco-anvil:3.0.2")
+    implementation("net.onelitefeather:falco-light:3.0.2")
+    implementation("net.onelitefeather:falco-instance:3.0.2")
+    implementation("net.onelitefeather:falco-migration:3.0.2")
 }
 ```
 <!-- x-release-please-end -->
@@ -97,7 +97,7 @@ Import `falco-bom` in `<dependencyManagement>`, so that the modules it constrain
     <dependency>
       <groupId>net.onelitefeather</groupId>
       <artifactId>falco-bom</artifactId>
-      <version>3.0.1</version> <!-- x-release-please-version -->
+      <version>3.0.2</version> <!-- x-release-please-version -->
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -125,7 +125,7 @@ its own:
   <dependency>
     <groupId>net.onelitefeather</groupId>
     <artifactId>falco-migration</artifactId>
-    <version>3.0.1</version> <!-- x-release-please-version -->
+    <version>3.0.2</version> <!-- x-release-please-version -->
   </dependency>
   <dependency>
     <groupId>net.minestom</groupId>
