@@ -12,6 +12,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Function;
 
 /**
  * The {@link ChunkLightService} class calculates the block light of a chunk and hands the result to
@@ -33,9 +36,9 @@ import java.util.List;
  * does not recompute what was just calculated.
  * </p>
  * <p>
- * A single instance may be used by as many threads as one likes. The service holds nothing beyond
- * the source it was built with, which only answers questions about a block and never changes, so
- * every call brings its own working state and two calls cannot reach each other. That matters more
+ * A single instance may be used by as many threads as one likes. Beyond the source it was built
+ * with, which only answers questions about a block and never changes, the service holds only idle
+ * propagators, and a call takes one for itself alone, so two calls cannot reach each other. That matters more
  * here than elsewhere: a server lights the chunks around its players in parallel and keeps one
  * service for the whole instance, and because {@code set} clears the update flag, a result which two
  * threads had corrupted would never be recomputed. The world would simply carry wrong light.
@@ -57,11 +60,11 @@ import java.util.List;
  * path that carries the obligation.
  * </p>
  * <p>
- * The working state of a call is the propagator, which keeps buffers and is therefore built per
- * call rather than kept in a field. Its buffers are the entire cost of that choice, and an
- * allocation per chunk is far cheaper than either handing every thread its own service or letting
- * the threads take turns on a shared one, which would give up exactly the parallelism this service
- * exists to allow.
+ * The working state of a call is the propagator, which keeps buffers for a whole column. A call
+ * takes one from a pool, and returns it when it is done, so no two calls ever hold the same one at
+ * once. The pool keeps the parallelism this service exists to allow — a thread which finds it empty
+ * builds a new propagator rather than waiting — and spares a server the buffers of one propagator
+ * per lit chunk, which used to be the largest allocation of every call.
  * </p>
  * <p>
  * This type is experimental. The light engine is new and its API may still change.
@@ -75,8 +78,6 @@ import java.util.List;
 public final class ChunkLightService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ChunkLightService.class);
-
-    private static final BlockFace[] HORIZONTAL_FACES = {BlockFace.NORTH, BlockFace.SOUTH, BlockFace.WEST, BlockFace.EAST};
 
     /**
      * The amount of chunks the exchanged area reaches beyond the chunk in the middle.
@@ -98,6 +99,17 @@ public final class ChunkLightService {
     private static final int MAX_EXCHANGE_ROUNDS = 16;
 
     private final BlockLightSource source;
+
+    /**
+     * The propagators no call is currently using.
+     * <p>
+     * A propagator holds buffers for a whole column, several hundred kilobytes for a tall world. A
+     * ThreadLocal would not keep them, because a scheduler runs every area on a virtual thread of its
+     * own, so they are kept here instead. The queue never grows beyond the amount of calls that ran
+     * at the same time, which is what a server already bounds by the processor count.
+     * </p>
+     */
+    private final Queue<ChunkLightPropagator> propagators = new ConcurrentLinkedQueue<>();
 
     /**
      * Creates a service which reads the block properties from the registry of the server.
@@ -126,7 +138,31 @@ public final class ChunkLightService {
      * @param chunk the chunk to light
      */
     public void calculate(Chunk chunk) {
-        applyLight(chunk, new ChunkLightPropagator().propagate(opacityOf(chunk)), false);
+        List<SectionOpacity> opacity = opacityOf(chunk);
+        applyLight(chunk, withPropagator(propagator -> propagator.propagate(opacity)), false);
+    }
+
+    /**
+     * Runs the given work with a propagator nobody else is using during the call.
+     * <p>
+     * The propagator is taken from the pool, or built if the pool is empty, and returned afterwards
+     * even if the work fails. The work must not keep it beyond the call, since the next caller
+     * overwrites its buffers.
+     * </p>
+     *
+     * @param work the work to run
+     * @param <T>  the type of the result
+     * @return what the work returned
+     */
+    <T> T withPropagator(Function<ChunkLightPropagator, T> work) {
+        @Nullable ChunkLightPropagator pooled = this.propagators.poll();
+        ChunkLightPropagator propagator = pooled != null ? pooled : new ChunkLightPropagator();
+
+        try {
+            return work.apply(propagator);
+        } finally {
+            this.propagators.offer(propagator);
+        }
     }
 
     /**
@@ -197,7 +233,7 @@ public final class ChunkLightService {
      */
     public void calculateSky(Chunk chunk) {
         List<SectionOpacity> opacity = opacityOf(chunk);
-        List<LightNibbles> light = new ChunkLightPropagator().propagateSky(opacity);
+        List<LightNibbles> light = withPropagator(propagator -> propagator.propagateSky(opacity));
         applyLight(chunk, light, true);
     }
 
@@ -291,7 +327,7 @@ public final class ChunkLightService {
 
                 List<SectionOpacity> opacity = opacityOf(chunk);
                 neighbourhood[slot(offsetX, offsetZ)] =
-                        new NeighbourhoodEntry(chunk, opacity, ChunkLightState.blockLight(opacity));
+                        new NeighbourhoodEntry(chunk, opacity, withPropagator(propagator -> ChunkLightState.blockLight(opacity, propagator)));
             }
         }
         return neighbourhood;
@@ -305,58 +341,47 @@ public final class ChunkLightService {
      * @param chunkZ        the chunk z coordinate of the middle of the area
      */
     private static void exchangeUntilSettled(@Nullable NeighbourhoodEntry[] neighbourhood, int chunkX, int chunkZ) {
-        for (int round = 0; round < MAX_EXCHANGE_ROUNDS; round++) {
-            if (!exchange(neighbourhood)) {
-                return;
+        // The loaded chunks are numbered in slot order, which walks the area in a fixed order so
+        // that two runs over the same chunks do the same work in the same sequence.
+        int[] indices = new int[neighbourhood.length];
+        List<ChunkLightState> states = new ArrayList<>(neighbourhood.length);
+        List<List<SectionOpacity>> opacity = new ArrayList<>(neighbourhood.length);
+
+        for (int slot = 0; slot < neighbourhood.length; slot++) {
+            @Nullable NeighbourhoodEntry entry = neighbourhood[slot];
+            indices[slot] = entry == null ? -1 : states.size();
+
+            if (entry != null) {
+                states.add(entry.state());
+                opacity.add(entry.opacity());
             }
         }
-        LOGGER.warn(
-                "The light of a chunk and its neighbours did not settle after {} exchange rounds chunk=[{},{}]",
-                MAX_EXCHANGE_ROUNDS, chunkX, chunkZ
-        );
-    }
 
-    /**
-     * Hands the border of every loaded neighbour to every loaded chunk of the area once.
-     * <p>
-     * The area is walked in a fixed order so that two runs over the same chunks do the same work
-     * in the same sequence.
-     * </p>
-     *
-     * @param neighbourhood the chunks of the exchanged area
-     * @return true if at least one chunk raised a level, otherwise false
-     */
-    private static boolean exchange(@Nullable NeighbourhoodEntry[] neighbourhood) {
-        boolean changed = false;
+        int[] neighbours = new int[states.size() * BorderExchange.FACES.length];
 
         for (int offsetZ = -NEIGHBOURHOOD_RADIUS; offsetZ <= NEIGHBOURHOOD_RADIUS; offsetZ++) {
             for (int offsetX = -NEIGHBOURHOOD_RADIUS; offsetX <= NEIGHBOURHOOD_RADIUS; offsetX++) {
-                @Nullable NeighbourhoodEntry entry = neighbourhood[slot(offsetX, offsetZ)];
+                int chunk = indices[slot(offsetX, offsetZ)];
 
-                if (entry == null) {
+                if (chunk < 0) {
                     continue;
                 }
 
-                for (BlockFace face : HORIZONTAL_FACES) {
-                    int neighbourX = offsetX + face.offsetX();
-                    int neighbourZ = offsetZ + face.offsetZ();
-
-                    if (isOutside(neighbourX, neighbourZ)) {
-                        continue;
-                    }
-
-                    @Nullable NeighbourhoodEntry neighbour = neighbourhood[slot(neighbourX, neighbourZ)];
-
-                    if (neighbour == null) {
-                        continue;
-                    }
-                    changed |= entry.state().injectBorder(
-                            entry.opacity(), face, neighbour.state().border(face.opposite())
-                    );
+                for (int face = 0; face < BorderExchange.FACES.length; face++) {
+                    int neighbourX = offsetX + BorderExchange.FACES[face].offsetX();
+                    int neighbourZ = offsetZ + BorderExchange.FACES[face].offsetZ();
+                    neighbours[chunk * BorderExchange.FACES.length + face] =
+                            isOutside(neighbourX, neighbourZ) ? -1 : indices[slot(neighbourX, neighbourZ)];
                 }
             }
         }
-        return changed;
+
+        if (!new BorderExchange(states, opacity, neighbours).settle(MAX_EXCHANGE_ROUNDS)) {
+            LOGGER.warn(
+                    "The light of a chunk and its neighbours did not settle after {} exchange rounds chunk=[{},{}]",
+                    MAX_EXCHANGE_ROUNDS, chunkX, chunkZ
+            );
+        }
     }
 
     /**

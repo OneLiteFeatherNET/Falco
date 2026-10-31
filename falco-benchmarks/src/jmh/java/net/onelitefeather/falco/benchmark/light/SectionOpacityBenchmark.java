@@ -42,6 +42,12 @@ import java.util.concurrent.TimeUnit;
  *   <li>A resolve cost above zero measures what the cache saves. Seven resolutions happen per
  *       distinct state, one per face plus the emission, instead of seven per block.</li>
  * </ul>
+ * <p>
+ * A third parameter, the amount of light sources, decides whether the section keeps an emission
+ * table at all. It is there because a change which only made sections without a light source
+ * cheaper once made the whole engine slower on a world full of them, and this benchmark could not
+ * tell.
+ * </p>
  *
  * @author TheMeinerLP
  * @version 1.0.0
@@ -68,6 +74,19 @@ public class SectionOpacityBenchmark {
     @Param({"0", "50"})
     public int resolveCost;
 
+    /**
+     * The amount of light emitting blocks the section holds.
+     * <p>
+     * Zero is the section most of a world consists of, and a table keeps no emission for it. Four
+     * is a section below the surface of {@link TerrainAreaBenchmark}, which has to keep one. Without
+     * this a change to the emission path is invisible here and only shows up on the terrain. The
+     * sources replace blocks of the section, so they add one distinct state and turn a uniform
+     * section into a mixed one.
+     * </p>
+     */
+    @Param({"0", "4"})
+    public int lightSources;
+
     private int[] stateIds;
     private BlockLightSource source;
 
@@ -82,13 +101,15 @@ public class SectionOpacityBenchmark {
      * <p>
      * The states start above {@link FakeBlockLightSource#FILLER_BASE} so every one of them behaves
      * like air. The benchmark measures how often a state is resolved, not what the answer is, and a
-     * mixture of solid and transparent blocks would only add noise to that.
+     * mixture of solid and transparent blocks would only add noise to that. The light sources are
+     * the one exception, because whether a section emits decides which tables it keeps.
      * </p>
      */
     @Setup(Level.Trial)
     public void setUp() {
-        this.stateIds = SectionStates.distinct(
-                BenchmarkConstants.BLOCK_ENTRIES, this.distinctStates, FakeBlockLightSource.FILLER_BASE
+        this.stateIds = SectionStates.withLightSources(
+                SectionStates.distinct(BenchmarkConstants.BLOCK_ENTRIES, this.distinctStates, FakeBlockLightSource.FILLER_BASE),
+                this.lightSources
         );
         this.source = new FakeBlockLightSource(this.resolveCost);
     }

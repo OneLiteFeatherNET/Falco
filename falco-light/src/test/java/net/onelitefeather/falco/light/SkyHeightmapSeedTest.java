@@ -4,10 +4,12 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import java.util.Random;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -320,5 +322,46 @@ class SkyHeightmapSeedTest {
         roof(sections, ceiling, STONE);
 
         assertMatchesReference(sections, "a single column with a ceiling");
+    }
+
+    @Test
+    void testTheHeightmapHandedToTheStateIsWhereEachColumnFirstStopsTheSky() {
+        int sectionCount = 4;
+        Random random = new Random(SEED);
+        int[] ceiling = new int[LightNibbles.DIMENSION * LightNibbles.DIMENSION];
+        int[] floor = new int[ceiling.length];
+
+        // A floor under every ceiling, so a column stops the sky twice and only the upper block may
+        // count. A column without a ceiling keeps its floor and stops the sky there instead.
+        for (int column = 0; column < ceiling.length; column++) {
+            floor[column] = random.nextInt(LightNibbles.DIMENSION);
+            ceiling[column] = random.nextInt(4) == 0
+                    ? -1
+                    : LightNibbles.DIMENSION + random.nextInt((sectionCount - 1) * LightNibbles.DIMENSION);
+        }
+        List<int[]> sections = airChunk(sectionCount);
+        roof(sections, floor, STONE);
+        roof(sections, ceiling, SLAB);
+
+        int[] expected = new int[ceiling.length];
+
+        for (int column = 0; column < ceiling.length; column++) {
+            expected[column] = ceiling[column] >= 0 ? ceiling[column] : floor[column];
+        }
+        ChunkLightPropagator propagator = new ChunkLightPropagator();
+        propagator.propagateSkyLevels(tables(sections));
+
+        assertArrayEquals(expected, propagator.skyTops(), "the highest block which stops the sky per column");
+    }
+
+    @Test
+    void testAnOpenColumnHandsOverNoHeight() {
+        ChunkLightPropagator propagator = new ChunkLightPropagator();
+        propagator.propagateSkyLevels(tables(airChunk(2)));
+
+        int[] expected = new int[LightNibbles.DIMENSION * LightNibbles.DIMENSION];
+        Arrays.fill(expected, -1);
+
+        assertArrayEquals(expected, propagator.skyTops(), "a chunk of air stops the sky nowhere");
     }
 }
