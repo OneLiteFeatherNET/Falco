@@ -28,7 +28,7 @@ Consuming Falco needs no credentials. Only building Falco itself does — see
 | | |
 | --- | --- |
 | Kind | `java-library` |
-| Current version | `3.0.1` <!-- x-release-please-version --> |
+| Current version | `3.0.2` <!-- x-release-please-version --> |
 | Since | `0.1.0` |
 | Javadoc | [latest release](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-anvil/latest) |
 
@@ -39,7 +39,7 @@ An Anvil region-file chunk loader for Minestom.
 | | |
 | --- | --- |
 | Kind | `java-library` |
-| Current version | `3.0.1` <!-- x-release-please-version --> |
+| Current version | `3.0.2` <!-- x-release-please-version --> |
 | Since | `0.1.0` |
 | Javadoc | [latest release](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-light/latest) |
 
@@ -50,7 +50,7 @@ A block- and sky-light engine for Minestom.
 | | |
 | --- | --- |
 | Kind | `java-library` |
-| Current version | `3.0.1` <!-- x-release-please-version --> |
+| Current version | `3.0.2` <!-- x-release-please-version --> |
 | Since | `0.1.0` |
 | Javadoc | [latest release](https://repo.onelitefeather.dev/javadoc/releases/net/onelitefeather/falco-instance/latest) |
 
@@ -62,7 +62,7 @@ sections on demand.
 | | |
 | --- | --- |
 | Kind | `java-library` |
-| Current version | `3.0.1` <!-- x-release-please-version --> |
+| Current version | `3.0.2` <!-- x-release-please-version --> |
 | Since | `2.0.0` |
 | Javadoc | not yet rendered at a stable address |
 
@@ -74,7 +74,7 @@ Lifts a world older than the running server to it. Needed only when loading such
 | | |
 | --- | --- |
 | Kind | `java-platform` |
-| Current version | `3.0.1` <!-- x-release-please-version --> |
+| Current version | `3.0.2` <!-- x-release-please-version --> |
 | Since | `1.0.0` |
 | Javadoc | none — the artefact carries no classes |
 
