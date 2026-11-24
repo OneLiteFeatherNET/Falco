@@ -66,7 +66,7 @@ supported. Only gzip (1), zlib (2) and none (3) can be read`
 
 `falco-bom` is not served for releases before `1.0.0`: it was added after `0.3.0` was cut. A 404 for
 `falco-bom` at a version below `1.0.0` is therefore expected, and the modules of those releases are
-declared with their own versions. `falco-migration` is not in the BOM. See
+declared with their own versions. See
 [Reference Modules and coordinates](modules-and-coordinates.md) for every coordinate.
 
 Related: [Explanation The chunk version guard](../explanation/the-chunk-version-guard.md) · [How-to Migrate a world from an older version](../how-to/migrate-a-world-from-an-older-version.md) ·

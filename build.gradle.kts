@@ -63,13 +63,6 @@ project(":falco-bom") {
 
 val publishedModules = listOf(project(":falco-anvil"), project(":falco-light"), project(":falco-instance"), project(":falco-migration"), project(":falco-bom"))
 
-// falco-migration has never been released, so no artefact exists for japicmp to compare against.
-// The baseline check further down refuses an unresolvable baseline on purpose — a comparison against
-// nothing passes no matter what changed — so the module stays out of that one check until its first
-// release exists, and out of nothing else. Delete this list once falco-migration is on the
-// repository; the module then joins the same API guarantee as its siblings.
-val modulesWithoutAnApiBaseline = listOf(project(":falco-migration"))
-
 configure(publishedModules) {
     apply(plugin = "maven-publish")
 
@@ -124,11 +117,12 @@ val apiBreaks: Map<String, String> = if (!apiBreaksFile.exists()) emptyMap() els
         .entries
         .associate { it.key.toString() to it.value.toString().trim() }
 
-configure(publishedModules - project(":falco-bom") - modulesWithoutAnApiBaseline) {
+configure(publishedModules - project(":falco-bom")) {
     apply(plugin = "me.champeau.gradle.japicmp")
 
+    val baselineVersion = providers.gradleProperty("apiBaselineVersion.${project.name}").orElse(apiBaselineVersion).get()
     val apiBaseline = configurations.detachedConfiguration(
-        dependencies.create("net.onelitefeather:${project.name}:$apiBaselineVersion")
+        dependencies.create("net.onelitefeather:${project.name}:$baselineVersion")
     ).apply {
         isTransitive = false
     }
@@ -161,10 +155,10 @@ configure(publishedModules - project(":falco-bom") - modulesWithoutAnApiBaseline
             }
             val resolved = apiBaseline.resolve()
             require(resolved.isNotEmpty()) {
-                "the API baseline net.onelitefeather:${project.name}:$apiBaselineVersion resolved to nothing"
+                "the API baseline net.onelitefeather:${project.name}:$baselineVersion resolved to nothing"
             }
             require(resolved.none { it.absolutePath.contains("${File.separator}build${File.separator}libs${File.separator}") }) {
-                "the API baseline resolved to this build's own jar instead of $apiBaselineVersion from the repository, " +
+                "the API baseline resolved to this build's own jar instead of $baselineVersion from the repository, " +
                         "so the comparison would pass no matter what changed"
             }
         }
