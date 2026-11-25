@@ -21,7 +21,7 @@ layout.
    }
 
    dependencies {
-       implementation(platform("net.onelitefeather:falco-bom:3.0.1"))
+       implementation(platform("net.onelitefeather:falco-bom:3.0.2"))
        implementation("net.onelitefeather:falco-anvil")
        implementation("net.onelitefeather:falco-light")
 
