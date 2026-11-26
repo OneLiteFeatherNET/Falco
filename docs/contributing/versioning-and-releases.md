@@ -19,7 +19,7 @@ The version lives in exactly one place in the build, `build.gradle.kts` at the r
 version = "1.0.0" // x-release-please-version
 ```
 
-All four published modules — `falco-anvil`, `falco-light`, `falco-instance` and the BOM that pins
+All five published modules — `falco-anvil`, `falco-light`, `falco-instance`, `falco-migration` and the BOM that pins
 them (see [Build Setup](build-setup.md)) — always release together, so the version is declared once here
 and inherited by every subproject through `subprojects { version = rootProject.version }`. Nothing
 else in the build carries a version number.

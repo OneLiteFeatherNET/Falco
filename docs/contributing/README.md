@@ -48,7 +48,7 @@ a republication of the BOM without a single commit in this repository.
 The eight modules are `falco-anvil`, `falco-light`, `falco-instance`, `falco-migration`,
 `falco-bom`, `falco-benchmarks`, `falco-demo` and `falco-archunit`; `falco-anvil`, `falco-light`,
 `falco-instance` and `falco-migration` are published, `falco-bom` publishes only version constraints
-for `falco-anvil`, `falco-light` and `falco-instance`, and `falco-benchmarks`, `falco-demo` and
+for `falco-anvil`, `falco-light`, `falco-instance` and `falco-migration`, and `falco-benchmarks`, `falco-demo` and
 `falco-archunit` are not published at all.
 
 **The Minestom version is the one that would invalidate a comparison silently.** Every head-to-head

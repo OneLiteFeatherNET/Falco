@@ -30,15 +30,14 @@ snapshot endpoints are both public. Every coordinate is listed in
        implementation("net.onelitefeather:falco-anvil")
        implementation("net.onelitefeather:falco-light")
        implementation("net.onelitefeather:falco-instance")
-       implementation("net.onelitefeather:falco-migration:3.0.2") // not in the BOM, so it takes its version here
+       implementation("net.onelitefeather:falco-migration")
    }
    ```
 
    <!-- x-release-please-end -->
 
-   Take only the modules you need. The platform constrains a version for `falco-anvil`, `falco-light`
-   and `falco-instance`; it does not pull in one you did not declare, and it does not cover
-   `falco-migration`.
+   Take only the modules you need. The platform constrains a version for `falco-anvil`, `falco-light`,
+   `falco-instance` and `falco-migration`; it does not pull in one you did not declare.
 
 3. Declare Minestom yourself. Falco does not bring it:
 
@@ -105,8 +104,7 @@ Import `falco-bom` in `<dependencyManagement>`, so that the modules it constrain
 </dependencyManagement>
 ```
 
-Then declare the modules you need. The three modules in the BOM have no version; `falco-migration` takes
-its own:
+Then declare the modules you need. The four modules in the BOM have no version:
 
 ```xml
 <dependencies>
@@ -125,7 +123,6 @@ its own:
   <dependency>
     <groupId>net.onelitefeather</groupId>
     <artifactId>falco-migration</artifactId>
-    <version>3.0.2</version> <!-- x-release-please-version -->
   </dependency>
   <dependency>
     <groupId>net.minestom</groupId>

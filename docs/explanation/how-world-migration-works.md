@@ -11,8 +11,7 @@ table, [Reference Migration modes](../reference/migration-modes.md).
 > `net.onelitefeather.falco.anvil`.
 >
 > **Off unless asked for.** A deployment that puts no migration engine on the classpath carries no
-> migration code at all. `falco-migration` has not been released yet, which is why it is the one
-> module excluded from the `checkApiCompatibility` baseline check.
+> migration code at all.
 
 ## The problem this solves
 

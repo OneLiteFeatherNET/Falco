@@ -78,10 +78,9 @@ Lifts a world older than the running server to it. Needed only when loading such
 | Since | `1.0.0` |
 | Javadoc | none — the artefact carries no classes |
 
-Carries one version constraint for each of the three modules `falco-anvil`, `falco-light` and
-`falco-instance` ([`falco-bom/build.gradle.kts`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-bom/build.gradle.kts)),
-so a build states the version once for those. `falco-migration` is published but is not in the BOM,
-so its version is stated on its own dependency line. A platform constrains versions; it does not pull
+Carries one version constraint for each of the four modules `falco-anvil`, `falco-light`,
+`falco-instance` and `falco-migration` ([`falco-bom/build.gradle.kts`](https://github.com/OneLiteFeatherNET/Falco/blob/main/falco-bom/build.gradle.kts)),
+so a build states the version once for all of them. A platform constrains versions; it does not pull
 in a module that was not declared.
 
 `falco-bom` was added after `0.3.0` was cut, so releases before `1.0.0` do not serve it.

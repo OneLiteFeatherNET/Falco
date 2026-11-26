@@ -34,8 +34,8 @@ artefact next to the real ones, which nobody wants to consume.
 | `falco-demo` | no | `java-library`, `jacoco` from the root |
 | `falco-archunit` | no | `java-library`, `jacoco` from the root |
 
-`falco-anvil`, `falco-light` and `falco-instance` are the three library modules the project actually
-ships. `falco-bom` is a Maven BOM pinning those three to one version (see
+`falco-anvil`, `falco-light`, `falco-instance` and `falco-migration` are the four library modules the
+project actually ships. `falco-bom` is a Maven BOM pinning those four to one version (see
 [Publishing](publishing.md)). `falco-benchmarks` and `falco-demo` are tooling modules that are never
 published — see [Benchmarks and Demo](benchmarks-and-demo.md). `falco-archunit` is never published
 either and is the odd one out: it has no `main` source set at all, only tests, and it exists to hold
@@ -162,7 +162,12 @@ a test run, what the `-Werror` doclint policy enforces, and where the test heap 
 
 ```properties
 apiBaselineVersion=1.0.0
+apiBaselineVersion.falco-migration=3.0.2
 ```
+
+A module can compare against its own baseline by setting `apiBaselineVersion.<module>=<version>` in
+`gradle.properties`; a module without such a line uses the shared `apiBaselineVersion`. falco-migration
+uses 3.0.2 because its first release was 2.0.0, so the shared baseline 1.0.0 does not exist for it.
 
 **This property is raised by hand after every release.** Release Please rewrites `version` through
 its `x-release-please-version` marker and knows nothing about this one. Forgetting it compares

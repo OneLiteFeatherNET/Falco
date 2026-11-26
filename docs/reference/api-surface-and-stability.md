@@ -15,7 +15,7 @@ Which packages are public, what stability each carries, and which types are anno
 | `net.onelitefeather.falco.anvil` | `falco-anvil` | experimental — all 24 public types annotated | checked against the last release |
 | `net.onelitefeather.falco.light` | `falco-light` | experimental — all public types annotated | checked against the last release |
 | `net.onelitefeather.falco.instance` | `falco-instance` | see the module Javadoc | checked against the last release |
-| `net.onelitefeather.falco.migration` | `falco-migration` | experimental — all public types annotated | **excluded** — not yet released |
+| `net.onelitefeather.falco.migration` | `falco-migration` | experimental — all public types annotated | checked against the last release |
 
 **Experimental means:** signatures, class layout and behaviour may change in a minor release. Do not
 rely on these types in code you cannot adapt.
